@@ -1,0 +1,11 @@
+[build]
+builder = "nixpacks"
+buildCommand = "npm install && cd frontend && npm install && npm run build"
+
+[deploy]
+startCommand = "node server.js"
+healthcheckPath = "/api/health"
+restartPolicyType = "on_failure"
+
+[volumes]
+mountPath = "/app/data"

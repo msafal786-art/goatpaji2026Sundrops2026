@@ -1,0 +1,261 @@
+import React, { useState, useEffect, useRef } from 'react'
+import { api } from '../api.js'
+import { useAuth } from '../App.jsx'
+import { T } from '../theme.js'
+
+const EMPTY = {
+  company_id: '', load_number: '', broker_name: '', broker_order: '', broker_contact: '',
+  broker_email: '', commodity: '', weight: '', miles: '', trailer_type: '', bol: '', rate: '',
+  pickup_name: '', pickup_address: '', pickup_city: '', pickup_state: '', pickup_zip: '',
+  pickup_date: '', pickup_time: '', pickup_phone: '', pickup_refs: '',
+  delivery_name: '', delivery_address: '', delivery_city: '', delivery_state: '', delivery_zip: '',
+  delivery_date: '', delivery_time: '', delivery_phone: '', delivery_refs: '',
+  special_instructions: '', driver_id: '', truck_id: ''
+}
+
+export default function LoadForm({ load, onClose, onSave }) {
+  const { user } = useAuth()
+  const [form, setForm] = useState(load ? { ...EMPTY, ...load, driver_id: load.driver_id || '', truck_id: load.truck_id || '' } : { ...EMPTY })
+  const [companies, setCompanies] = useState([])
+  const [drivers, setDrivers] = useState([])
+  const [trucks, setTrucks] = useState([])
+  const [parsing, setParsing] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [parseError, setParseError] = useState('')
+  const fileRef = useRef()
+
+  useEffect(() => {
+    if (user.role === 'dispatcher') api.companies().then(setCompanies)
+    api.drivers().then(setDrivers)
+    api.trucks().then(setTrucks)
+  }, [])
+
+  function set(k, v) { setForm(f => ({ ...f, [k]: v })) }
+
+  async function handleFileParse(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    setParsing(true)
+    setParseError('')
+    try {
+      const data = await api.parseRateCon(file)
+      setForm(f => ({
+        ...f,
+        load_number: data.load_number || f.load_number,
+        broker_name: data.broker_name || f.broker_name,
+        broker_order: data.broker_order || f.broker_order,
+        broker_contact: data.broker_contact || f.broker_contact,
+        broker_email: data.broker_email || f.broker_email,
+        commodity: data.commodity || f.commodity,
+        weight: data.weight || f.weight,
+        miles: data.miles || f.miles,
+        trailer_type: data.trailer_type || f.trailer_type,
+        bol: data.bol || f.bol,
+        rate: data.rate ? data.rate.replace(/[$,]/g, '') : f.rate,
+        pickup_name: data.pickup_name || f.pickup_name,
+        pickup_address: data.pickup_address || f.pickup_address,
+        pickup_city: data.pickup_city || f.pickup_city,
+        pickup_state: data.pickup_state || f.pickup_state,
+        pickup_zip: data.pickup_zip || f.pickup_zip,
+        pickup_date: data.pickup_date || f.pickup_date,
+        pickup_time: data.pickup_time || f.pickup_time,
+        pickup_phone: data.pickup_phone || f.pickup_phone,
+        pickup_refs: data.pickup_refs || f.pickup_refs,
+        delivery_name: data.delivery_name || f.delivery_name,
+        delivery_address: data.delivery_address || f.delivery_address,
+        delivery_city: data.delivery_city || f.delivery_city,
+        delivery_state: data.delivery_state || f.delivery_state,
+        delivery_zip: data.delivery_zip || f.delivery_zip,
+        delivery_date: data.delivery_date || f.delivery_date,
+        delivery_time: data.delivery_time || f.delivery_time,
+        delivery_phone: data.delivery_phone || f.delivery_phone,
+        delivery_refs: data.delivery_refs || f.delivery_refs,
+        special_instructions: data.special_instructions || f.special_instructions,
+      }))
+    } catch (err) {
+      setParseError(err.message)
+    } finally {
+      setParsing(false)
+    }
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setSaving(true)
+    setError('')
+    try {
+      const payload = { ...form }
+      if (!payload.driver_id) payload.driver_id = null
+      if (!payload.truck_id) payload.truck_id = null
+      if (user.role === 'company_owner') payload.company_id = user.company_id
+      const saved = load ? await api.updateLoad(load.id, payload) : await api.createLoad(payload)
+      onSave(saved)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div style={modalBg} onClick={onClose}>
+      <div style={modalBox} onClick={e => e.stopPropagation()}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
+          <h2 style={{ fontSize: 18, fontWeight: 700, color: T.text }}>{load ? 'Edit Load' : 'Add Load'}</h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: T.text3 }}>×</button>
+        </div>
+
+        {/* PDF Parser */}
+        <div style={{ background: T.blue + '18', border: `1.5px dashed ${T.blue}60`, borderRadius: 10, padding: '16px', marginBottom: 20, textAlign: 'center' }}>
+          <div style={{ fontSize: 13, color: T.text2, marginBottom: 8 }}>Upload Rate Confirmation PDF to auto-fill fields</div>
+          <input type="file" accept=".pdf" ref={fileRef} onChange={handleFileParse} style={{ display: 'none' }} />
+          <button type="button" style={{ padding: '8px 18px', background: T.blue, color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}
+            onClick={() => fileRef.current.click()} disabled={parsing}>
+            {parsing ? 'Reading PDF…' : 'Choose PDF'}
+          </button>
+          {parseError && <div style={{ color: T.red, fontSize: 12, marginTop: 8 }}>{parseError}</div>}
+        </div>
+
+        <form onSubmit={handleSubmit}>
+          {user.role === 'dispatcher' && (
+            <Section title="Company">
+              <Row>
+                <Field label="Company *">
+                  <select style={inputS} value={form.company_id} onChange={e => set('company_id', e.target.value)} required>
+                    <option value="">Select company…</option>
+                    {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </Field>
+              </Row>
+            </Section>
+          )}
+
+          <Section title="Broker / Load Info">
+            <Row>
+              <Field label="Load Number"><input style={inputS} value={form.load_number} onChange={e => set('load_number', e.target.value)} /></Field>
+              <Field label="Broker Name"><input style={inputS} value={form.broker_name} onChange={e => set('broker_name', e.target.value)} /></Field>
+              <Field label="Order #"><input style={inputS} value={form.broker_order} onChange={e => set('broker_order', e.target.value)} /></Field>
+            </Row>
+            <Row>
+              <Field label="Broker Contact"><input style={inputS} value={form.broker_contact} onChange={e => set('broker_contact', e.target.value)} /></Field>
+              <Field label="Broker Email"><input style={inputS} value={form.broker_email} onChange={e => set('broker_email', e.target.value)} /></Field>
+              <Field label="Rate ($)"><input style={inputS} value={form.rate} onChange={e => set('rate', e.target.value)} /></Field>
+            </Row>
+            <Row>
+              <Field label="Commodity"><input style={inputS} value={form.commodity} onChange={e => set('commodity', e.target.value)} /></Field>
+              <Field label="Weight"><input style={inputS} value={form.weight} onChange={e => set('weight', e.target.value)} /></Field>
+              <Field label="Miles"><input style={inputS} value={form.miles} onChange={e => set('miles', e.target.value)} /></Field>
+            </Row>
+            <Row>
+              <Field label="Trailer Type"><input style={inputS} value={form.trailer_type} onChange={e => set('trailer_type', e.target.value)} /></Field>
+              <Field label="BOL #"><input style={inputS} value={form.bol} onChange={e => set('bol', e.target.value)} /></Field>
+            </Row>
+          </Section>
+
+          <Section title="Pickup">
+            <Row>
+              <Field label="Shipper Name"><input style={inputS} value={form.pickup_name} onChange={e => set('pickup_name', e.target.value)} /></Field>
+              <Field label="Address"><input style={inputS} value={form.pickup_address} onChange={e => set('pickup_address', e.target.value)} /></Field>
+            </Row>
+            <Row>
+              <Field label="City"><input style={inputS} value={form.pickup_city} onChange={e => set('pickup_city', e.target.value)} /></Field>
+              <Field label="State"><input style={inputS} value={form.pickup_state} onChange={e => set('pickup_state', e.target.value)} /></Field>
+              <Field label="ZIP"><input style={inputS} value={form.pickup_zip} onChange={e => set('pickup_zip', e.target.value)} /></Field>
+            </Row>
+            <Row>
+              <Field label="Date"><input style={inputS} placeholder="YYYY-MM-DD" value={form.pickup_date} onChange={e => set('pickup_date', e.target.value)} /></Field>
+              <Field label="Time"><input style={inputS} value={form.pickup_time} onChange={e => set('pickup_time', e.target.value)} /></Field>
+              <Field label="Phone"><input style={inputS} value={form.pickup_phone} onChange={e => set('pickup_phone', e.target.value)} /></Field>
+            </Row>
+            <Row>
+              <Field label="References (PU#, PO#, etc)"><input style={inputS} value={form.pickup_refs} onChange={e => set('pickup_refs', e.target.value)} /></Field>
+            </Row>
+          </Section>
+
+          <Section title="Delivery">
+            <Row>
+              <Field label="Consignee Name"><input style={inputS} value={form.delivery_name} onChange={e => set('delivery_name', e.target.value)} /></Field>
+              <Field label="Address"><input style={inputS} value={form.delivery_address} onChange={e => set('delivery_address', e.target.value)} /></Field>
+            </Row>
+            <Row>
+              <Field label="City"><input style={inputS} value={form.delivery_city} onChange={e => set('delivery_city', e.target.value)} /></Field>
+              <Field label="State"><input style={inputS} value={form.delivery_state} onChange={e => set('delivery_state', e.target.value)} /></Field>
+              <Field label="ZIP"><input style={inputS} value={form.delivery_zip} onChange={e => set('delivery_zip', e.target.value)} /></Field>
+            </Row>
+            <Row>
+              <Field label="Date"><input style={inputS} placeholder="YYYY-MM-DD" value={form.delivery_date} onChange={e => set('delivery_date', e.target.value)} /></Field>
+              <Field label="Time"><input style={inputS} value={form.delivery_time} onChange={e => set('delivery_time', e.target.value)} /></Field>
+              <Field label="Phone"><input style={inputS} value={form.delivery_phone} onChange={e => set('delivery_phone', e.target.value)} /></Field>
+            </Row>
+            <Row>
+              <Field label="References (PO#, AO#, etc)"><input style={inputS} value={form.delivery_refs} onChange={e => set('delivery_refs', e.target.value)} /></Field>
+            </Row>
+          </Section>
+
+          <Section title="Assign Driver & Truck">
+            <Row>
+              <Field label="Driver">
+                <select style={inputS} value={form.driver_id} onChange={e => set('driver_id', e.target.value)}>
+                  <option value="">Unassigned</option>
+                  {drivers.map(d => (
+                    <option key={d.id} value={d.id}>{d.full_name} — {d.company_name}{d.status !== 'available' ? ` (${d.status})` : ''}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Truck / Trailer">
+                <select style={inputS} value={form.truck_id} onChange={e => set('truck_id', e.target.value)}>
+                  <option value="">None</option>
+                  {trucks.map(t => (
+                    <option key={t.id} value={t.id}>T:{t.tractor_number} / Tr:{t.trailer_number} — {t.company_name}{t.status !== 'available' ? ` (${t.status})` : ''}</option>
+                  ))}
+                </select>
+              </Field>
+            </Row>
+          </Section>
+
+          <Section title="Special Instructions">
+            <textarea style={{ ...inputS, width: '100%', height: 80, resize: 'vertical' }}
+              value={form.special_instructions} onChange={e => set('special_instructions', e.target.value)}
+              placeholder="Carrier instructions, requirements…" />
+          </Section>
+
+          {error && <div style={{ color: T.red, fontSize: 13, marginBottom: 12, padding: '8px 12px', background: T.red + '18', borderRadius: 6 }}>{error}</div>}
+
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+            <button type="button" style={secBtn} onClick={onClose}>Cancel</button>
+            <button type="submit" style={primaryBtn} disabled={saving}>{saving ? 'Saving…' : load ? 'Update Load' : 'Create Load'}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function Section({ title, children }) {
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10, paddingBottom: 6, borderBottom: `1px solid ${T.sep}` }}>{title}</div>
+      {children}
+    </div>
+  )
+}
+
+function Row({ children }) {
+  return <div style={{ display: 'flex', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>{children}</div>
+}
+
+function Field({ label, children }) {
+  return (
+    <div style={{ flex: 1, minWidth: 140 }}>
+      <label style={{ fontSize: 11, fontWeight: 600, color: T.text3, display: 'block', marginBottom: 5 }}>{label}</label>
+      {children}
+    </div>
+  )
+}
+
+const inputS = { width: '100%', padding: '9px 11px', border: `1px solid ${T.sep}`, borderRadius: 8, fontSize: 13, background: T.bg2, color: T.text, outline: 'none', boxSizing: 'border-box' }
+const modalBg = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 1000, overflowY: 'auto' }
+const modalBox = { background: T.bg1, borderRadius: '18px 18px 0 0', padding: '24px', width: '100%', maxWidth: 700, border: `1px solid ${T.sep}`, maxHeight: '94vh', overflowY: 'auto' }
+const primaryBtn = { padding: '10px 22px', background: T.blue, color: '#fff', border: 'none', borderRadius: 9, cursor: 'pointer', fontWeight: 600, fontSize: 14 }
+const secBtn = { padding: '10px 18px', background: T.bg2, color: T.text2, border: `1px solid ${T.sep}`, borderRadius: 9, cursor: 'pointer', fontWeight: 600, fontSize: 14 }
