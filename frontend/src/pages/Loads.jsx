@@ -49,6 +49,13 @@ function LoadTile({ load, onStatusUpdate, onEdit }) {
     onStatusUpdate()
   }
 
+  async function handleInvoice(e) {
+    e.stopPropagation()
+    if (!confirm(`Mark load ${load.load_number || '#'+load.id} as invoiced and complete?`)) return
+    await api.updateLoadStatus(load.id, 'completed')
+    onStatusUpdate()
+  }
+
   const pickupCity = [load.pickup_city, load.pickup_state].filter(Boolean).join(', ')
   const delivCity = [load.delivery_city, load.delivery_state].filter(Boolean).join(', ')
 
@@ -82,10 +89,17 @@ function LoadTile({ load, onStatusUpdate, onEdit }) {
                 {late ? 'Late' : s.label}
                 {load.dispatch_sent ? ' ✓' : ''}
               </span>
-              <button onClick={e => { e.stopPropagation(); onEdit(load) }} style={{
-                fontSize: 11, padding: '3px 8px', background: 'rgba(255,255,255,0.07)',
-                border: `1px solid ${T.sep}`, borderRadius: 6, cursor: 'pointer', color: T.text2, fontWeight: 600,
-              }}>Edit</button>
+              {load.status === 'delivered' ? (
+                <button onClick={handleInvoice} style={{
+                  fontSize: 11, padding: '3px 8px', background: T.green + '22',
+                  border: `1px solid ${T.green}60`, borderRadius: 6, cursor: 'pointer', color: T.green, fontWeight: 700,
+                }}>Invoice ✓</button>
+              ) : (
+                <button onClick={e => { e.stopPropagation(); onEdit(load) }} style={{
+                  fontSize: 11, padding: '3px 8px', background: 'rgba(255,255,255,0.07)',
+                  border: `1px solid ${T.sep}`, borderRadius: 6, cursor: 'pointer', color: T.text2, fontWeight: 600,
+                }}>Edit</button>
+              )}
             </div>
           </div>
           {/* Row 2: driver + company */}
@@ -204,7 +218,7 @@ function LoadTile({ load, onStatusUpdate, onEdit }) {
           )}
         </div>
 
-        {/* Status + Edit */}
+        {/* Status + Edit/Invoice */}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
           <span style={{
             fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 20,
@@ -216,13 +230,17 @@ function LoadTile({ load, onStatusUpdate, onEdit }) {
             {late ? 'Late' : s.label}
             {load.dispatch_sent ? ' ✓' : ''}
           </span>
-          <button
-            onClick={e => { e.stopPropagation(); onEdit(load) }}
-            style={{
+          {load.status === 'delivered' ? (
+            <button onClick={handleInvoice} style={{
+              fontSize: 11, padding: '4px 10px', background: T.green + '22',
+              border: `1px solid ${T.green}60`, borderRadius: 6, cursor: 'pointer', color: T.green, fontWeight: 700,
+            }}>Invoice ✓</button>
+          ) : (
+            <button onClick={e => { e.stopPropagation(); onEdit(load) }} style={{
               fontSize: 11, padding: '4px 10px', background: 'rgba(255,255,255,0.07)',
               border: `1px solid ${T.sep}`, borderRadius: 6, cursor: 'pointer', color: T.text2, fontWeight: 600,
-            }}
-          >Edit</button>
+            }}>Edit</button>
+          )}
         </div>
       </div>
 
@@ -268,7 +286,7 @@ const STATUS_TABS = [
   { key: 'assigned',   label: 'Assigned' },
   { key: 'dispatched', label: 'Dispatched' },
   { key: 'in_transit', label: 'In Transit' },
-  { key: 'delivered',  label: 'Delivered' },
+  { key: 'invoice',    label: 'To Invoice' },
   { key: 'completed',  label: 'Completed' },
   { key: 'all',        label: 'All' },
 ]
@@ -311,10 +329,13 @@ export default function Loads() {
     return () => clearInterval(interval)
   }, [fetchLoads])
 
+  const ACTIVE_STATUSES = ['pending','assigned','dispatched','in_transit']
+
   const filtered = loads.filter(l => {
     if (activeTab === 'all') return true
-    if (activeTab === 'active') return l.status !== 'completed'
+    if (activeTab === 'active') return ACTIVE_STATUSES.includes(l.status)
     if (activeTab === 'late') return isLate(l)
+    if (activeTab === 'invoice') return l.status === 'delivered'
     return l.status === activeTab
   })
 
@@ -327,8 +348,9 @@ export default function Loads() {
 
   const countTab = (key) => {
     if (key === 'all') return loads.length
-    if (key === 'active') return loads.filter(l => l.status !== 'completed').length
+    if (key === 'active') return loads.filter(l => ACTIVE_STATUSES.includes(l.status)).length
     if (key === 'late') return loads.filter(isLate).length
+    if (key === 'invoice') return loads.filter(l => l.status === 'delivered').length
     return loads.filter(l => l.status === key).length
   }
 

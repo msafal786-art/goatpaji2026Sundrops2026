@@ -82,6 +82,9 @@ export default function LoadDetail() {
             {!load.dispatch_sent && load.driver_id && (
               <Btn color={T.green} onClick={handleMarkDispatched}>Mark Dispatched</Btn>
             )}
+            {load.status === 'delivered' && (
+              <Btn color={T.green} onClick={() => handleStatus('completed')}>✓ Mark Invoiced</Btn>
+            )}
             <Btn onClick={() => setShowEdit(true)}>Edit</Btn>
           </div>
         )}
