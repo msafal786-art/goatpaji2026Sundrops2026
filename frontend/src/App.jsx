@@ -165,6 +165,7 @@ export default function App() {
   }
 
   function handleLogout() {
+    if (!window.confirm('Sign out of Dispatch Portal?')) return
     localStorage.removeItem('token')
     setUser(null)
   }

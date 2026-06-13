@@ -43,7 +43,7 @@ export default function Login({ onLogin }) {
                 width: '100%', padding: '11px 14px', background: T.bg2, border: `1px solid ${T.sep}`,
                 borderRadius: 10, fontSize: 15, color: T.text, outline: 'none', boxSizing: 'border-box',
               }}
-              value={username} onChange={e => setUsername(e.target.value)} placeholder="dispatcher" required
+              value={username} onChange={e => setUsername(e.target.value)} placeholder="Username or email" required autoComplete="username"
             />
           </div>
           <div style={{ marginBottom: 20 }}>
@@ -69,9 +69,6 @@ export default function Login({ onLogin }) {
             {loading ? 'Signing in…' : 'Sign In'}
           </button>
         </form>
-        <p style={{ marginTop: 24, fontSize: 12, color: T.text3, textAlign: 'center' }}>
-          dispatcher / dispatch123
-        </p>
       </div>
     </div>
   )
