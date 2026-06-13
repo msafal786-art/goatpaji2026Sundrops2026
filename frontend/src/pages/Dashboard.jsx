@@ -162,23 +162,49 @@ function buildDeliveryPie(loads, targetDate) {
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function Dashboard() {
   const { user } = useAuth()
+  const navigate = useNavigate()
   const mobile = useIsMobile()
   const [stats, setStats] = useState(null)
   const [loads, setLoads] = useState([])
+  const [revenue, setRevenue] = useState(null)
 
   useEffect(() => {
     api.stats().then(setStats)
-    api.loads().then(setLoads)
+    api.loads().then(data => {
+      setLoads(data)
+      // Revenue summary for owners/dispatchers
+      const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 60)
+      const cutoffStr = cutoff.toISOString().slice(0,10)
+      const recent = data.filter(l => l.delivery_date >= cutoffStr && l.rate)
+      const totalRev = recent.reduce((s, l) => s + Number(l.rate || 0), 0)
+      const byMonth = {}
+      for (const l of recent) {
+        const mo = l.delivery_date?.slice(0,7)
+        if (mo) byMonth[mo] = (byMonth[mo] || 0) + Number(l.rate || 0)
+      }
+      setRevenue({ total: totalRev, byMonth, count: recent.length })
+    })
   }, [])
 
   const getCount = (arr, s) => arr?.find(x => x.status === s)?.count || 0
   const total = arr => arr?.reduce((s, x) => s + x.count, 0) || 0
 
+  const now = new Date()
+
+  // Loads with pickup within 24h and no driver assigned / not yet dispatched
+  const urgentUnassigned = loads.filter(l => {
+    if (!l.pickup_date) return false
+    if (['dispatched','in_transit','delivered','completed'].includes(l.status)) return false
+    if (l.driver_id) return false
+    const pickup = new Date(l.pickup_date + 'T' + (l.pickup_time?.match(/(\d+:\d+)/)?.[1] || '06:00'))
+    const hoursUntil = (pickup - now) / 36e5
+    return hoursUntil >= 0 && hoursUntil <= 24
+  })
+
   const activeLoads = loads.filter(l => l.status !== 'completed')
   const recentCompleted = loads.filter(l => l.status === 'completed').slice(0, 4)
 
   // Delivery planning pie data
-  const now = new Date()
   const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1)
   const dayAfter = new Date(now); dayAfter.setDate(now.getDate() + 2)
   const todayData = buildDeliveryPie(loads, dateStr(now))
@@ -193,6 +219,41 @@ export default function Dashboard() {
         </h1>
         <p style={{ color: T.text2, fontSize: 13, marginTop: 4 }}>Here's your operation at a glance.</p>
       </div>
+
+      {/* ── Urgent: pickup within 24h, no driver ── */}
+      {urgentUnassigned.length > 0 && (
+        <div style={{
+          background: `linear-gradient(135deg, ${T.red}18 0%, ${T.orange}0e 100%)`,
+          border: `1px solid ${T.red}55`, borderRadius: 14,
+          padding: '14px 18px', marginBottom: 24,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <span style={{ fontSize: 16 }}>🚨</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: T.red }}>
+              {urgentUnassigned.length} load{urgentUnassigned.length > 1 ? 's' : ''} pickup within 24h — NO DRIVER ASSIGNED
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {urgentUnassigned.map(l => (
+              <div key={l.id} onClick={() => navigate(`/loads/${l.id}`)}
+                style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer',
+                  background: 'rgba(255,69,58,0.10)', borderRadius: 9, padding: '8px 12px',
+                  border: `1px solid ${T.red}30` }}>
+                <span style={{ fontSize: 12, fontWeight: 700, color: T.text, minWidth: 90 }}>
+                  {l.load_number || `#${l.id}`}
+                </span>
+                <span style={{ fontSize: 11, color: T.text2, flex: 1 }}>{l.broker_name}</span>
+                <span style={{ fontSize: 11, color: T.text2 }}>
+                  {l.pickup_city}, {l.pickup_state} → {l.delivery_city}, {l.delivery_state}
+                </span>
+                <span style={{ fontSize: 11, fontWeight: 700, color: T.red, whiteSpace: 'nowrap' }}>
+                  {l.pickup_date} {l.pickup_time || ''}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {stats && (
         <>
@@ -223,6 +284,32 @@ export default function Dashboard() {
                 <StatPill label="Maint." value={getCount(stats.trucks,'maintenance')} color={T.red} />
               </div>
             </div>
+          </div>
+        </>
+      )}
+
+      {/* Revenue summary — dispatcher + company owners */}
+      {revenue && revenue.total > 0 && (
+        <>
+          <Label>Revenue — Last 60 Days</Label>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 24 }}>
+            <div style={{ background: T.bg1, borderRadius: 14, padding: '16px 20px', border: `1px solid ${T.sep}`, borderTop: `3px solid ${T.green}`, flex: 1, minWidth: 180 }}>
+              <div style={{ fontSize: 11, color: T.text3, marginBottom: 4 }}>Total Revenue</div>
+              <div style={{ fontSize: 26, fontWeight: 700, color: T.green, letterSpacing: -1 }}>
+                ${revenue.total.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              </div>
+              <div style={{ fontSize: 11, color: T.text3, marginTop: 4 }}>{revenue.count} loads delivered</div>
+            </div>
+            {Object.entries(revenue.byMonth).sort().map(([mo, amt]) => (
+              <div key={mo} style={{ background: T.bg1, borderRadius: 14, padding: '16px 20px', border: `1px solid ${T.sep}`, borderTop: `3px solid ${T.blue}`, flex: 1, minWidth: 140 }}>
+                <div style={{ fontSize: 11, color: T.text3, marginBottom: 4 }}>
+                  {new Date(mo + '-02').toLocaleString('default', { month: 'long', year: 'numeric' })}
+                </div>
+                <div style={{ fontSize: 22, fontWeight: 700, color: T.blue, letterSpacing: -0.5 }}>
+                  ${amt.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                </div>
+              </div>
+            ))}
           </div>
         </>
       )}

@@ -56,7 +56,12 @@ app.post('/api/login', (req, res) => {
 });
 
 app.get('/api/me', auth, (req, res) => {
-  const user = db.prepare('SELECT id, username, role, company_id, full_name, email, phone FROM users WHERE id = ?').get(req.user.id);
+  const user = db.prepare(`
+    SELECT u.id, u.username, u.role, u.company_id, u.full_name, u.email, u.phone,
+           c.name as company_name
+    FROM users u LEFT JOIN companies c ON u.company_id = c.id
+    WHERE u.id = ?
+  `).get(req.user.id);
   if (user.role === 'driver') {
     user.driver = db.prepare('SELECT * FROM drivers WHERE user_id = ?').get(user.id);
   }
@@ -378,7 +383,7 @@ app.post('/api/parse-rate-con', auth, requireRole('dispatcher', 'company_owner')
     const base64 = fileBuffer.toString('base64');
 
     const response = await anthropic.messages.create({
-      model: 'claude-opus-4-8',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 2000,
       messages: [{
         role: 'user',

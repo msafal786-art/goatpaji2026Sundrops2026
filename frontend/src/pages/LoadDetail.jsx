@@ -135,6 +135,9 @@ export default function LoadDetail() {
           <Field label="Order #" value={load.broker_order} />
           <Field label="Contact" value={load.broker_contact} />
           <Field label="Email" value={load.broker_email} />
+          {(user.role === 'dispatcher' || user.role === 'company_owner') && load.rate && (
+            <Field label="Rate" value={`$${Number(load.rate).toLocaleString()}`} bold />
+          )}
         </Card>
         <Card title="Load Info">
           <Field label="Commodity" value={load.commodity} />

@@ -42,7 +42,11 @@ function Sidebar({ user, onLogout }) {
       borderRight: `1px solid ${T.sep}`,
     }}>
       <div style={{ padding: '20px 16px 16px', borderBottom: `1px solid ${T.sep}` }}>
-        <div style={{ fontSize: 15, fontWeight: 700, color: T.text, letterSpacing: -0.3 }}>Dispatch Portal</div>
+        <div style={{ fontSize: 15, fontWeight: 700, color: T.text, letterSpacing: -0.3 }}>
+          {user.role === 'company_owner' && user.company_name
+            ? user.company_name.replace(' INC','').replace(' LLC','').replace('THE FRONTLINE FREIGHT','FRONTLINE').replace(' TRANS','').replace(' LOGISTICS','').replace(' BROS','')
+            : 'Dispatch Portal'}
+        </div>
         <div style={{ fontSize: 11, color: T.text3, marginTop: 2 }}>Freight Management</div>
       </div>
       <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto' }}>
@@ -130,7 +134,9 @@ function AppShell({ children, user, onLogout }) {
       }}>
         {mobile && (
           <div style={{ fontSize: 14, fontWeight: 700, color: T.text, marginBottom: 16, letterSpacing: -0.3 }}>
-            Dispatch Portal
+            {user.role === 'company_owner' && user.company_name
+              ? user.company_name.replace(' INC','').replace(' LLC','').replace('THE FRONTLINE FREIGHT','FRONTLINE').replace(' TRANS','').replace(' LOGISTICS','').replace(' BROS','')
+              : 'Dispatch Portal'}
           </div>
         )}
         {children}

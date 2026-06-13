@@ -15,6 +15,27 @@ function isLate(load) {
   return (pickupPassed && notPickedUp) || (deliveryPassed && notDelivered)
 }
 
+// Urgency color: overrides status color for unassigned/near-pickup loads
+function urgencyColor(load) {
+  const s = STATUS[load.status] || STATUS.pending
+  if (isLate(load)) return T.red                          // overdue — red
+  if (['in_transit'].includes(load.status)) return T.green // moving — green
+  if (['dispatched'].includes(load.status)) return T.orange // dispatched, on way to pickup — warm amber
+  if (['delivered'].includes(load.status)) return T.teal   // delivered — teal
+  if (['completed'].includes(load.status)) return T.text3  // done — muted
+
+  // Pending/assigned: check proximity to pickup
+  if (load.pickup_date) {
+    const now = new Date()
+    const pickup = new Date(load.pickup_date + 'T06:00')
+    const hoursUntil = (pickup - now) / 36e5
+    if (!load.driver_id && hoursUntil <= 24 && hoursUntil >= 0) return T.red   // urgent unassigned
+    if (!load.driver_id) return 'rgba(235,235,245,0.22)'                         // unassigned, far out — pale
+    if (hoursUntil <= 24) return T.orange                                         // assigned, pickup soon — warm
+  }
+  return s.color
+}
+
 function pickupAlertNeeded(load) {
   if (!load.pickup_date) return false
   const now = new Date()
@@ -37,7 +58,7 @@ function LoadTile({ load, onStatusUpdate, onEdit }) {
   const late = isLate(load)
   const alert = pickupAlertNeeded(load)
   const s = STATUS[load.status] || STATUS.pending
-  const statusColor = late ? T.red : s.color
+  const statusColor = urgencyColor(load)
   const compColor = carrierColor(load.company_name)
   const shortCompany = load.company_name
     ? load.company_name.replace(' INC','').replace(' LLC','').replace('THE FRONTLINE FREIGHT','FRONTLINE').replace(' BROS','')
