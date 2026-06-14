@@ -52,10 +52,8 @@ function pickupAlertNeeded(load) {
   return pickupDT < now && ['pending','assigned','dispatched'].includes(load.status)
 }
 
-function LoadTile({ load, onStatusUpdate, onEdit, onStatusDrawer }) {
+function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer }) {
   const navigate = useNavigate()
-  const mobile = useIsMobile()
-  const [hovered, setHovered] = useState(false)
   const late = isLate(load)
   const alert = pickupAlertNeeded(load)
   const s = STATUS[load.status] || STATUS.pending
@@ -79,161 +77,94 @@ function LoadTile({ load, onStatusUpdate, onEdit, onStatusDrawer }) {
   }
 
   const pickupCity = [load.pickup_city, load.pickup_state].filter(Boolean).join(', ')
-  const delivCity = [load.delivery_city, load.delivery_state].filter(Boolean).join(', ')
+  const delivCity  = [load.delivery_city, load.delivery_state].filter(Boolean).join(', ')
 
-  const tile = {
-    position: 'relative',
-    background: hovered ? T.bg2 : T.bg1,
-    border: `1px solid ${T.sep}`,
-    borderLeft: `3px solid ${accentColor}`,
-    borderRadius: 10,
-    marginBottom: 5,
-    overflow: 'hidden',
-    transition: 'background 0.12s',
-    cursor: 'pointer',
-  }
-
-  if (mobile) {
-    return (
-      <div
-        style={tile}
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
-      >
-        <div onClick={() => navigate(`/loads/${load.id}`)} style={{ padding: '11px 13px 11px 14px' }}>
-          {/* Row 1 */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-            <div>
-              <span style={{ fontSize: 13, fontWeight: 600, color: T.text, letterSpacing: -0.2 }}>
-                {late && <span style={{ color: T.red, marginRight: 4, fontWeight: 800 }}>!</span>}
-                {load.load_number || `#${load.id}`}
-              </span>
-              {load.broker_name && (
-                <div style={{ fontSize: 11, color: T.text3, marginTop: 1 }}>{load.broker_name}</div>
-              )}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }} onClick={e => e.stopPropagation()}>
-              <StatusPill color={accentColor} label={late ? 'Late' : s.label} sent={load.dispatch_sent} />
-              <ActionBtn color={T.blue} onClick={e => { e.stopPropagation(); onStatusDrawer(load) }}>Status</ActionBtn>
-              {load.status === 'delivered'
-                ? <ActionBtn color={T.green} onClick={handleInvoice}>Invoice ✓</ActionBtn>
-                : <ActionBtn color={T.text2} onClick={e => { e.stopPropagation(); onEdit(load) }}>Edit</ActionBtn>
-              }
-            </div>
-          </div>
-          {/* Row 2: driver + company */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-            <span style={{ fontSize: 12, fontWeight: 500, color: load.driver_name ? T.text : T.orange }}>
-              {load.driver_name || '— Assign Driver —'}
-            </span>
-            {shortCompany && (
-              <span style={{ fontSize: 10, background: compColor + '1a', color: compColor, padding: '2px 8px', borderRadius: 20, fontWeight: 600, border: `1px solid ${compColor}33` }}>
-                {shortCompany}
-              </span>
-            )}
-          </div>
-          {/* Row 3: truck */}
-          {(load.tractor_number || load.truck_trailer) && (
-            <div style={{ fontSize: 10, color: T.text3, marginBottom: 7, letterSpacing: 0.1 }}>
-              {load.tractor_number && `Truck ${load.tractor_number}`}{load.tractor_number && load.truck_trailer && ' · '}{load.truck_trailer && `Trailer ${load.truck_trailer}`}
-            </div>
-          )}
-          {/* Row 4: route */}
-          <div style={{ display: 'flex', alignItems: 'stretch', gap: 8, marginTop: 4 }}>
-            <div style={{ flex: 1, borderRight: `1px solid ${T.sep}`, paddingRight: 8 }}>
-              <div style={{ fontSize: 9, fontWeight: 600, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 3 }}>Pickup</div>
-              <div style={{ fontSize: 12, color: T.text, fontWeight: 500, lineHeight: 1.3 }}>{pickupCity || load.pickup_name || '—'}</div>
-              {load.pickup_date && <div style={{ fontSize: 10, color: T.text3, marginTop: 2 }}>{load.pickup_date}{load.pickup_time && ` · ${load.pickup_time}`}</div>}
-            </div>
-            <div style={{ flex: 1, paddingLeft: 8 }}>
-              <div style={{ fontSize: 9, fontWeight: 600, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 3 }}>Delivery</div>
-              <div style={{ fontSize: 12, color: T.text, fontWeight: 500, lineHeight: 1.3 }}>{delivCity || load.delivery_name || '—'}</div>
-              {load.delivery_date && <div style={{ fontSize: 10, color: T.text3, marginTop: 2 }}>{load.delivery_date}{load.delivery_time && ` · ${load.delivery_time}`}</div>}
-            </div>
-          </div>
-        </div>
-        {alert && <AlertBar mobile onStatusClick={handleStatusClick} onView={() => navigate(`/loads/${load.id}`)} />}
-      </div>
-    )
-  }
+  const rowBg = late
+    ? (T.isDark ? 'rgba(255,69,58,0.08)' : 'rgba(255,59,48,0.06)')
+    : load.status === 'in_transit'
+      ? (T.isDark ? 'rgba(48,209,88,0.06)' : 'rgba(48,209,88,0.05)')
+      : load.status === 'dispatched'
+        ? (T.isDark ? 'rgba(191,90,242,0.06)' : 'rgba(191,90,242,0.04)')
+        : 'transparent'
 
   return (
-    <div
-      style={tile}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
-      <div
+    <>
+      <tr
         onClick={() => navigate(`/loads/${load.id}`)}
-        style={{ padding: '10px 14px 10px 15px', display: 'flex', alignItems: 'center', gap: 16 }}
+        style={{ borderBottom: `1px solid ${T.sep}`, background: rowBg, cursor: 'pointer', transition: 'background 0.1s' }}
+        onMouseEnter={e => e.currentTarget.style.background = T.bg2}
+        onMouseLeave={e => e.currentTarget.style.background = rowBg}
       >
-        {/* Load # + broker */}
-        <div style={{ minWidth: 115, flexShrink: 0 }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: T.text, letterSpacing: -0.1 }}>
-            {late && <span style={{ color: T.red, marginRight: 4, fontWeight: 800 }}>!</span>}
-            {load.load_number || `#${load.id}`}
+        {/* Load # */}
+        <td style={{ padding: '7px 10px 7px 14px', whiteSpace: 'nowrap', borderLeft: `3px solid ${accentColor}` }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: late ? T.red : T.text }}>
+            {late && '! '}{load.load_number || `#${load.id}`}
           </div>
-          <div style={{ fontSize: 10, color: T.text3, marginTop: 3, maxWidth: 115, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {load.broker_name || <span style={{ color: 'transparent' }}>—</span>}
+          <div style={{ fontSize: 10, color: T.text3, marginTop: 1, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {load.broker_name}
           </div>
-        </div>
+        </td>
 
-        {/* Driver */}
-        <div style={{ minWidth: 120, flexShrink: 0 }}>
-          <div style={{ fontSize: 9, fontWeight: 600, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 3 }}>Driver</div>
-          <div style={{ fontSize: 12, fontWeight: 500, color: load.driver_name ? T.text : T.orange }}>
+        {/* Driver / Carrier */}
+        <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: load.driver_name ? T.text : T.orange }}>
             {load.driver_name || '— Assign —'}
           </div>
-          {(load.tractor_number || load.truck_trailer) && (
-            <div style={{ fontSize: 9, color: T.text3, marginTop: 2 }}>
-              {load.tractor_number && `T ${load.tractor_number}`}{load.tractor_number && load.truck_trailer && ' · '}{load.truck_trailer && `Tr ${load.truck_trailer}`}
+          {shortCompany && (
+            <div style={{ fontSize: 10, fontWeight: 700, color: compColor, marginTop: 1 }}>{shortCompany}</div>
+          )}
+        </td>
+
+        {/* Ship Date */}
+        <td style={{ padding: '7px 10px', whiteSpace: 'nowrap', fontSize: 11, color: T.text2 }}>
+          {load.pickup_date || '—'}
+          {load.pickup_time && <div style={{ fontSize: 10, color: T.text3 }}>{load.pickup_time}</div>}
+        </td>
+
+        {/* Del Date */}
+        <td style={{ padding: '7px 10px', whiteSpace: 'nowrap', fontSize: 11, color: T.text2 }}>
+          {load.delivery_date || '—'}
+          {load.delivery_time && <div style={{ fontSize: 10, color: T.text3 }}>{load.delivery_time}</div>}
+        </td>
+
+        {/* Origin */}
+        <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
+          <div style={{ fontSize: 12, color: T.text }}>{pickupCity || load.pickup_name || '—'}</div>
+        </td>
+
+        {/* Destination */}
+        <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
+          <div style={{ fontSize: 12, color: T.text }}>{delivCity || load.delivery_name || '—'}</div>
+        </td>
+
+        {/* Status */}
+        <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
+          <span style={{
+            fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
+            background: accentColor + '20', color: accentColor,
+          }}>
+            {late ? 'LATE' : s.label.toUpperCase()}{load.dispatch_sent ? ' ✓' : ''}
+          </span>
+          {alert && (
+            <div style={{ display: 'flex', gap: 4, marginTop: 4 }} onClick={e => e.stopPropagation()}>
+              <button style={alertBtn(T.green)}  onClick={e => handleStatusClick(e, 'in_transit')}>Picked Up</button>
+              <button style={alertBtn(T.blue)}   onClick={e => handleStatusClick(e, 'dispatched')}>Loaded</button>
             </div>
           )}
-        </div>
+        </td>
 
-        {/* Divider */}
-        <div style={{ width: 1, height: 38, background: T.sep, flexShrink: 0 }} />
-
-        {/* Pickup */}
-        <div style={{ minWidth: 135, flexShrink: 0 }}>
-          <div style={{ fontSize: 9, fontWeight: 600, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 3 }}>Pickup</div>
-          <div style={{ fontSize: 12, color: T.text, fontWeight: 500 }}>{pickupCity || load.pickup_name || '—'}</div>
-          {load.pickup_date && <div style={{ fontSize: 10, color: T.text3, marginTop: 2 }}>{load.pickup_date}{load.pickup_time && ` · ${load.pickup_time}`}</div>}
-        </div>
-
-        <div style={{ color: T.text3, fontSize: 12, flexShrink: 0 }}>→</div>
-
-        {/* Delivery */}
-        <div style={{ minWidth: 135, flexShrink: 0 }}>
-          <div style={{ fontSize: 9, fontWeight: 600, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 3 }}>Delivery</div>
-          <div style={{ fontSize: 12, color: T.text, fontWeight: 500 }}>{delivCity || load.delivery_name || '—'}</div>
-          {load.delivery_date && <div style={{ fontSize: 10, color: T.text3, marginTop: 2 }}>{load.delivery_date}{load.delivery_time && ` · ${load.delivery_time}`}</div>}
-        </div>
-
-        {/* Company chip */}
-        {shortCompany && (
-          <div style={{ flexShrink: 0 }}>
-            <span style={{
-              fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 20,
-              background: compColor + '1a', color: compColor, border: `1px solid ${compColor}33`,
-              whiteSpace: 'nowrap',
-            }}>{shortCompany}</span>
+        {/* Actions */}
+        <td style={{ padding: '7px 14px 7px 6px', whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
+          <div style={{ display: 'flex', gap: 5 }}>
+            <button style={tblBtn(T.blue)}  onClick={() => onStatusDrawer(load)}>Status</button>
+            {load.status === 'delivered'
+              ? <button style={tblBtn(T.green)} onClick={handleInvoice}>Invoice</button>
+              : <button style={tblBtn(T.text2)} onClick={() => onEdit(load)}>Edit</button>
+            }
           </div>
-        )}
-
-        {/* Status + actions */}
-        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-          <StatusPill color={accentColor} label={late ? 'Late' : s.label} sent={load.dispatch_sent} />
-          <ActionBtn color={T.blue} onClick={e => { e.stopPropagation(); onStatusDrawer(load) }}>Status</ActionBtn>
-          {load.status === 'delivered'
-            ? <ActionBtn color={T.green} onClick={handleInvoice}>Invoice ✓</ActionBtn>
-            : <ActionBtn color={T.text2} onClick={e => { e.stopPropagation(); onEdit(load) }}>Edit</ActionBtn>
-          }
-        </div>
-      </div>
-
-      {alert && <AlertBar onStatusClick={handleStatusClick} onView={() => navigate(`/loads/${load.id}`)} />}
-    </div>
+        </td>
+      </tr>
+    </>
   )
 }
 
@@ -249,6 +180,13 @@ function StatusPill({ color, label, sent }) {
       {label}{sent ? ' ✓' : ''}
     </span>
   )
+}
+
+function tblBtn(color) {
+  return {
+    fontSize: 11, padding: '3px 9px', borderRadius: 5, cursor: 'pointer', fontWeight: 600,
+    background: color + '18', border: `1px solid ${color}40`, color,
+  }
 }
 
 function ActionBtn({ color, onClick, children }) {
@@ -578,22 +516,41 @@ export default function Loads() {
         })}
       </div>
 
-      {/* Load tiles */}
+      {/* Load table */}
       {sorted.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '48px 20px', color: T.text3, background: T.bg1, borderRadius: 12, border: `1px solid ${T.sep}` }}>
           <div style={{ fontSize: 14, fontWeight: 600 }}>No loads in this view</div>
         </div>
       ) : (
-        <div>
-          {sorted.map(l => (
-            <LoadTile
-              key={l.id}
-              load={l}
-              onStatusUpdate={fetchLoads}
-              onEdit={(load) => { setEditLoad(load); setShowForm(true) }}
-              onStatusDrawer={setDrawerLoad}
-            />
-          ))}
+        <div style={{ border: `1px solid ${T.sep}`, borderRadius: 10, overflow: 'hidden' }}>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 780 }}>
+              <thead>
+                <tr style={{ background: T.bg2, borderBottom: `2px solid ${T.sep}` }}>
+                  {['Load #', 'Driver / Carrier', 'Ship Date', 'Del Date', 'Origin', 'Destination', 'Status', ''].map((h, i) => (
+                    <th key={i} style={{
+                      padding: i === 0 ? '8px 10px 8px 14px' : '8px 10px',
+                      fontSize: 10, fontWeight: 700, color: T.text3,
+                      textTransform: 'uppercase', letterSpacing: 0.7,
+                      textAlign: 'left', whiteSpace: 'nowrap',
+                      borderLeft: i === 0 ? '3px solid transparent' : undefined,
+                    }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {sorted.map(l => (
+                  <LoadRow
+                    key={l.id}
+                    load={l}
+                    onStatusUpdate={fetchLoads}
+                    onEdit={(load) => { setEditLoad(load); setShowForm(true) }}
+                    onStatusDrawer={setDrawerLoad}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
