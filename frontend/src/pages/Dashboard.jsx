@@ -168,11 +168,10 @@ export default function Dashboard() {
   const [loads, setLoads] = useState([])
   const [revenue, setRevenue] = useState(null)
 
-  useEffect(() => {
+  function fetchAll() {
     api.stats().then(setStats)
     api.loads().then(data => {
       setLoads(data)
-      // Revenue summary for owners/dispatchers
       const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 60)
       const cutoffStr = cutoff.toISOString().slice(0,10)
       const recent = data.filter(l => l.delivery_date >= cutoffStr && l.rate)
@@ -184,6 +183,12 @@ export default function Dashboard() {
       }
       setRevenue({ total: totalRev, byMonth, count: recent.length })
     })
+  }
+
+  useEffect(() => {
+    fetchAll()
+    const interval = setInterval(fetchAll, 15000)
+    return () => clearInterval(interval)
   }, [])
 
   const getCount = (arr, s) => arr?.find(x => x.status === s)?.count || 0

@@ -23,6 +23,8 @@ export default function Drivers() {
   useEffect(() => {
     load()
     if (user.role === 'dispatcher') api.companies().then(setCompanies)
+    const interval = setInterval(load, 15000)
+    return () => clearInterval(interval)
   }, [])
 
   async function load() { setDrivers(await api.drivers()) }

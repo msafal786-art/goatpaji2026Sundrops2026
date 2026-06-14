@@ -336,7 +336,7 @@ export default function Loads() {
   }, [fetchLoads])
 
   useEffect(() => {
-    const interval = setInterval(fetchLoads, 60000)
+    const interval = setInterval(fetchLoads, 15000)
     return () => clearInterval(interval)
   }, [fetchLoads])
 
@@ -376,8 +376,11 @@ export default function Loads() {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: mobile ? 12 : 18 }}>
         <div>
           <h1 style={{ fontSize: mobile ? 20 : 24, fontWeight: 700, color: T.text, letterSpacing: -0.4 }}>Load Board</h1>
-          <div style={{ fontSize: 11, color: T.text3, marginTop: 3 }}>
-            {loads.length} loads · {lastRefresh.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 3 }}>
+            <span style={{ width: 6, height: 6, borderRadius: '50%', background: T.green, display: 'inline-block', opacity: 0.9 }} />
+            <span style={{ fontSize: 11, color: T.text3 }}>
+              {loads.length} loads · syncs every 15s · {lastRefresh.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+            </span>
           </div>
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
