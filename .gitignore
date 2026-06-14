@@ -2,7 +2,7 @@ node_modules/
 frontend/node_modules/
 frontend/dist/
 .env
-#*.db
+*.db
 *.db-shm
 *.db-wal
 uploads/
