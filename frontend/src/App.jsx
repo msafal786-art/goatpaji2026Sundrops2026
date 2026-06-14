@@ -5,6 +5,7 @@ import { T, applyTheme } from './theme.js'
 import { ThemeProvider } from './ThemeContext.jsx'
 import { useIsMobile } from './hooks/useIsMobile.js'
 import Login from './pages/Login.jsx'
+import Landing from './pages/Landing.jsx'
 import Dashboard from './pages/Dashboard.jsx'
 import Loads from './pages/Loads.jsx'
 import LoadDetail from './pages/LoadDetail.jsx'
@@ -216,7 +217,11 @@ export default function App() {
     <AuthContext.Provider value={{ user, setUser }}>
       <BrowserRouter>
         {!user ? (
-          <Routes><Route path="*" element={<Login onLogin={handleLogin} />} /></Routes>
+          <Routes>
+            <Route path="/" element={<Landing />} />
+            <Route path="/login" element={<Login onLogin={handleLogin} />} />
+            <Route path="*" element={<Navigate to="/" />} />
+          </Routes>
         ) : user.role === 'driver' ? (
           <Routes><Route path="*" element={<DriverView user={user} onLogout={handleLogout} />} /></Routes>
         ) : (
