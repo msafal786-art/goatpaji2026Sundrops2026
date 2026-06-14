@@ -5,158 +5,174 @@ import { useAuth } from '../App.jsx'
 import { T, STATUS, carrierColor } from '../theme.js'
 import { useIsMobile } from '../hooks/useIsMobile.js'
 
-// ── Pie / Donut chart ─────────────────────────────────────────────────────────
-const PIE_PALETTE = [
-  '#0a84ff','#30d158','#bf5af2','#ff9f0a','#ff453a',
-  '#5ac8f5','#ffd60a','#5e5ce6','#ff6b6b','#4ecdc4',
-]
+// ── helpers ───────────────────────────────────────────────────────────────────
+function dateStr(d) { return d.toISOString().slice(0, 10) }
+function fmt$(n) { return '$' + Number(n).toLocaleString(undefined, { maximumFractionDigits: 0 }) }
+function getCount(arr, s) { return arr?.find(x => x.status === s)?.count || 0 }
+function sumCount(arr) { return arr?.reduce((s, x) => s + x.count, 0) || 0 }
 
-function PieChart({ data, title, subtitle }) {
-  if (!data || data.length === 0) {
-    return (
-      <div style={{ background: T.bg1, borderRadius: 16, padding: '20px', border: `1px solid ${T.sep}`, flex: 1 }}>
-        <div style={{ fontSize: 12, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 }}>{title}</div>
-        <div style={{ fontSize: 11, color: T.text3, marginBottom: 16 }}>{subtitle}</div>
-        <div style={{ textAlign: 'center', padding: '24px 0', color: T.text3, fontSize: 13 }}>No deliveries</div>
-      </div>
-    )
-  }
+function isLate(load) {
+  const now = new Date()
+  const pickupPassed = load.pickup_date && new Date(load.pickup_date + 'T06:00') < now
+  const notPickedUp = ['pending', 'assigned'].includes(load.status)
+  const deliveryPassed = load.delivery_date && new Date(load.delivery_date + 'T00:00') < now
+  const notDelivered = !['delivered', 'completed'].includes(load.status)
+  return (pickupPassed && notPickedUp) || (deliveryPassed && notDelivered)
+}
 
-  const total = data.reduce((s, d) => s + d.value, 0)
-  const size = 140
-  const cx = size / 2, cy = size / 2
-  const r = 52, innerR = 32
-
-  let angle = -Math.PI / 2
-  const slices = data.map((d, i) => {
-    const sweep = (d.value / total) * 2 * Math.PI
-    const x1 = cx + r * Math.cos(angle)
-    const y1 = cy + r * Math.sin(angle)
-    angle += sweep
-    const x2 = cx + r * Math.cos(angle)
-    const y2 = cy + r * Math.sin(angle)
-    const ix1 = cx + innerR * Math.cos(angle)
-    const iy1 = cy + innerR * Math.sin(angle)
-    const ix2 = cx + innerR * Math.cos(angle - sweep)
-    const iy2 = cy + innerR * Math.sin(angle - sweep)
-    const large = sweep > Math.PI ? 1 : 0
-    const path = [
-      `M ${x1} ${y1}`,
-      `A ${r} ${r} 0 ${large} 1 ${x2} ${y2}`,
-      `L ${ix1} ${iy1}`,
-      `A ${innerR} ${innerR} 0 ${large} 0 ${ix2} ${iy2}`,
-      'Z'
-    ].join(' ')
-    return { ...d, path, color: d.color || PIE_PALETTE[i % PIE_PALETTE.length] }
-  })
-
+// ── Stat card ─────────────────────────────────────────────────────────────────
+function KPI({ label, value, color, sub, onClick }) {
+  const [hov, setHov] = useState(false)
   return (
-    <div style={{ background: T.bg1, borderRadius: 16, padding: '20px', border: `1px solid ${T.sep}`, flex: 1 }}>
-      <div style={{ fontSize: 12, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 2 }}>{title}</div>
-      <div style={{ fontSize: 11, color: T.text3, marginBottom: 16 }}>{subtitle}</div>
-      <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
-        <svg width={size} height={size} style={{ flexShrink: 0 }}>
-          {slices.map((s, i) => (
-            <path key={i} d={s.path} fill={s.color} opacity={0.9} />
-          ))}
-          <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle"
-            fill={T.text} fontSize="18" fontWeight="700">{total}</text>
-          <text x={cx} y={cy + 14} textAnchor="middle" dominantBaseline="middle"
-            fill={T.text3} fontSize="9">drivers</text>
-        </svg>
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 5 }}>
-          {slices.map((s, i) => (
-            <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
-              <span style={{ width: 8, height: 8, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
-              <span style={{ fontSize: 11, color: T.text, fontWeight: 500, flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.label}</span>
-              <span style={{ fontSize: 11, color: T.text3, flexShrink: 0 }}>{s.value}</span>
-            </div>
-          ))}
-        </div>
+    <div
+      onClick={onClick}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      style={{
+        background: hov && onClick ? T.bg2 : T.bg1,
+        border: `1px solid ${T.sep}`,
+        borderRadius: 14,
+        padding: '18px 20px',
+        flex: 1,
+        minWidth: 0,
+        cursor: onClick ? 'pointer' : 'default',
+        transition: 'background 0.12s',
+        position: 'relative',
+        overflow: 'hidden',
+      }}
+    >
+      <div style={{
+        position: 'absolute', top: 0, left: 0, right: 0, height: 3,
+        background: color, borderRadius: '14px 14px 0 0',
+      }} />
+      <div style={{ fontSize: 11, fontWeight: 600, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 }}>
+        {label}
+      </div>
+      <div style={{ fontSize: 32, fontWeight: 700, color, letterSpacing: -1.5, lineHeight: 1 }}>
+        {value}
+      </div>
+      {sub && <div style={{ fontSize: 11, color: T.text3, marginTop: 6 }}>{sub}</div>}
+    </div>
+  )
+}
+
+// ── Progress bar row ──────────────────────────────────────────────────────────
+function BarRow({ label, value, total, color }) {
+  const pct = total > 0 ? Math.round((value / total) * 100) : 0
+  return (
+    <div style={{ marginBottom: 10 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+        <span style={{ fontSize: 12, color: T.text2, fontWeight: 500 }}>{label}</span>
+        <span style={{ fontSize: 12, color: T.text3 }}>{value} / {total}</span>
+      </div>
+      <div style={{ height: 5, background: T.bg3, borderRadius: 3, overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${pct}%`, background: color, borderRadius: 3, transition: 'width 0.4s ease' }} />
       </div>
     </div>
   )
 }
 
-// ── Stat pill ─────────────────────────────────────────────────────────────────
-function StatPill({ label, value, color }) {
-  return (
-    <div style={{
-      background: T.bg1, borderRadius: 14, padding: '16px 18px',
-      border: `1px solid ${T.sep}`, flex: 1, minWidth: 100,
-      borderTop: `3px solid ${color}`,
-    }}>
-      <div style={{ fontSize: 28, fontWeight: 700, color, lineHeight: 1, letterSpacing: -1 }}>{value}</div>
-      <div style={{ fontSize: 12, color: T.text2, marginTop: 5 }}>{label}</div>
-    </div>
-  )
-}
-
-// ── Mini load card ────────────────────────────────────────────────────────────
-function MiniLoadCard({ load }) {
+// ── Compact load row ──────────────────────────────────────────────────────────
+function LoadRow({ load }) {
   const navigate = useNavigate()
+  const [hov, setHov] = useState(false)
   const s = STATUS[load.status] || STATUS.pending
-  const compColor = carrierColor(load.company_name)
+  const late = isLate(load)
+  const dotColor = late ? T.red : s.color
+
   return (
     <div
       onClick={() => navigate(`/loads/${load.id}`)}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
       style={{
-        background: `linear-gradient(135deg, ${s.color}22 0%, ${s.color}0e 100%)`,
-        borderRadius: 12, padding: '12px 14px',
-        border: `1px solid ${s.color}55`, cursor: 'pointer',
-        transition: 'filter 0.12s',
+        display: 'flex', alignItems: 'center', gap: 10,
+        padding: '9px 12px', borderRadius: 9, cursor: 'pointer',
+        background: hov ? T.bg2 : 'transparent',
+        borderLeft: `2px solid ${dotColor}`,
+        marginBottom: 2,
+        transition: 'background 0.1s',
       }}
-      onMouseEnter={e => e.currentTarget.style.filter = 'brightness(1.15)'}
-      onMouseLeave={e => e.currentTarget.style.filter = 'none'}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
-        <div>
-          <div style={{ fontSize: 13, fontWeight: 700, color: T.text }}>{load.load_number || `#${load.id}`}</div>
-          <div style={{ fontSize: 11, color: T.text3, marginTop: 1 }}>{load.broker_name}</div>
-        </div>
-        <span style={{ fontSize: 10, fontWeight: 700, color: s.color, textTransform: 'uppercase', letterSpacing: 0.4 }}>
-          {s.label}
-        </span>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-        <div style={{ flex: 1 }}>
-          <div style={{ fontSize: 11, color: T.text, fontWeight: 600 }}>{load.pickup_city}, {load.pickup_state}</div>
-          <div style={{ fontSize: 10, color: T.text3 }}>{load.pickup_date}</div>
-        </div>
-        <div style={{ color: T.text3, fontSize: 14 }}>→</div>
-        <div style={{ flex: 1, textAlign: 'right' }}>
-          <div style={{ fontSize: 11, color: T.text, fontWeight: 600 }}>{load.delivery_city}, {load.delivery_state}</div>
-          <div style={{ fontSize: 10, color: T.text3 }}>{load.delivery_date}</div>
-        </div>
-      </div>
-      <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${s.color}25`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <span style={{ fontSize: 11, color: load.driver_name ? T.text2 : T.orange }}>
-          {load.driver_name || 'Unassigned'}
-        </span>
-        {load.company_name && (
-          <span style={{ fontSize: 10, color: compColor, fontWeight: 700 }}>
-            {load.company_name.replace(' INC','').replace(' LLC','').replace('THE FRONTLINE FREIGHT','FRONTLINE').replace(' BROS','')}
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: T.text, whiteSpace: 'nowrap' }}>
+            {load.load_number || `#${load.id}`}
           </span>
-        )}
+          {load.broker_name && (
+            <span style={{ fontSize: 11, color: T.text3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {load.broker_name}
+            </span>
+          )}
+        </div>
+        <div style={{ fontSize: 11, color: T.text2, marginTop: 2 }}>
+          {[load.pickup_city, load.pickup_state].filter(Boolean).join(', ')}
+          {' → '}
+          {[load.delivery_city, load.delivery_state].filter(Boolean).join(', ')}
+        </div>
+      </div>
+      <div style={{ textAlign: 'right', flexShrink: 0 }}>
+        <div style={{ fontSize: 11, color: dotColor, fontWeight: 600 }}>
+          {late ? 'Late' : s.label}
+        </div>
+        <div style={{ fontSize: 10, color: T.text3 }}>
+          {load.driver_name || <span style={{ color: T.orange }}>Unassigned</span>}
+        </div>
       </div>
     </div>
   )
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-function dateStr(d) { return d.toISOString().slice(0, 10) }
-
-function buildDeliveryPie(loads, targetDate) {
-  const delivering = loads.filter(l =>
-    l.delivery_date === targetDate && !['completed'].includes(l.status) && l.driver_name
+// ── Revenue bar chart ─────────────────────────────────────────────────────────
+function RevenueChart({ byMonth }) {
+  const entries = Object.entries(byMonth).sort()
+  if (entries.length === 0) return null
+  const max = Math.max(...entries.map(([, v]) => v))
+  return (
+    <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end', height: 60, marginTop: 8 }}>
+      {entries.map(([mo, amt]) => {
+        const h = max > 0 ? Math.max(4, Math.round((amt / max) * 52)) : 4
+        const label = new Date(mo + '-02').toLocaleString('default', { month: 'short' })
+        return (
+          <div key={mo} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+            <span style={{ fontSize: 9, color: T.text3, letterSpacing: 0.3 }}>
+              {fmt$(amt)}
+            </span>
+            <div style={{ width: '100%', height: h, background: T.blue, borderRadius: 3, opacity: 0.85 }} />
+            <span style={{ fontSize: 9, color: T.text3 }}>{label}</span>
+          </div>
+        )
+      })}
+    </div>
   )
-  // Group by driver
-  const map = {}
-  for (const l of delivering) {
-    const k = l.driver_name
-    map[k] = (map[k] || 0) + 1
-  }
-  return Object.entries(map).map(([label, value]) => ({ label, value }))
+}
+
+// ── Section header ────────────────────────────────────────────────────────────
+function SectionHead({ title, action, actionTo }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.9 }}>
+        {title}
+      </div>
+      {action && (
+        <Link to={actionTo} style={{ fontSize: 12, color: T.blue, textDecoration: 'none', fontWeight: 600 }}>
+          {action}
+        </Link>
+      )}
+    </div>
+  )
+}
+
+// ── Card wrapper ──────────────────────────────────────────────────────────────
+function Card({ children, style }) {
+  return (
+    <div style={{
+      background: T.bg1, border: `1px solid ${T.sep}`,
+      borderRadius: 14, padding: '16px 18px', ...style,
+    }}>
+      {children}
+    </div>
+  )
 }
 
 // ── Main ──────────────────────────────────────────────────────────────────────
@@ -167,18 +183,20 @@ export default function Dashboard() {
   const [stats, setStats] = useState(null)
   const [loads, setLoads] = useState([])
   const [revenue, setRevenue] = useState(null)
+  const [now, setNow] = useState(new Date())
 
   function fetchAll() {
     api.stats().then(setStats)
     api.loads().then(data => {
       setLoads(data)
-      const cutoff = new Date(); cutoff.setDate(cutoff.getDate() - 60)
-      const cutoffStr = cutoff.toISOString().slice(0,10)
+      const cutoff = new Date()
+      cutoff.setDate(cutoff.getDate() - 60)
+      const cutoffStr = cutoff.toISOString().slice(0, 10)
       const recent = data.filter(l => l.delivery_date >= cutoffStr && l.rate)
       const totalRev = recent.reduce((s, l) => s + Number(l.rate || 0), 0)
       const byMonth = {}
       for (const l of recent) {
-        const mo = l.delivery_date?.slice(0,7)
+        const mo = l.delivery_date?.slice(0, 7)
         if (mo) byMonth[mo] = (byMonth[mo] || 0) + Number(l.rate || 0)
       }
       setRevenue({ total: totalRev, byMonth, count: recent.length })
@@ -187,179 +205,245 @@ export default function Dashboard() {
 
   useEffect(() => {
     fetchAll()
-    const interval = setInterval(fetchAll, 15000)
-    return () => clearInterval(interval)
+    const poll = setInterval(fetchAll, 15000)
+    const clock = setInterval(() => setNow(new Date()), 30000)
+    return () => { clearInterval(poll); clearInterval(clock) }
   }, [])
 
-  const getCount = (arr, s) => arr?.find(x => x.status === s)?.count || 0
-  const total = arr => arr?.reduce((s, x) => s + x.count, 0) || 0
+  // Derived data
+  const activeLoads = loads.filter(l => ['pending','assigned','dispatched','in_transit'].includes(l.status))
+  const lateLoads = loads.filter(isLate)
+  const inTransit = loads.filter(l => l.status === 'in_transit')
+  const toInvoice = loads.filter(l => l.status === 'delivered')
 
-  const now = new Date()
-
-  // Loads with pickup within 24h and no driver assigned / not yet dispatched
   const urgentUnassigned = loads.filter(l => {
     if (!l.pickup_date) return false
     if (['dispatched','in_transit','delivered','completed'].includes(l.status)) return false
     if (l.driver_id) return false
     const pickup = new Date(l.pickup_date + 'T' + (l.pickup_time?.match(/(\d+:\d+)/)?.[1] || '06:00'))
-    const hoursUntil = (pickup - now) / 36e5
-    return hoursUntil >= 0 && hoursUntil <= 24
+    const hrs = (pickup - now) / 36e5
+    return hrs >= 0 && hrs <= 24
   })
 
-  const activeLoads = loads.filter(l => l.status !== 'completed')
-  const recentCompleted = loads.filter(l => l.status === 'completed').slice(0, 4)
+  const driverTotal = sumCount(stats?.drivers)
+  const truckTotal = sumCount(stats?.trucks)
+  const todayStr = dateStr(now)
 
-  // Delivery planning pie data
-  const tomorrow = new Date(now); tomorrow.setDate(now.getDate() + 1)
-  const dayAfter = new Date(now); dayAfter.setDate(now.getDate() + 2)
-  const todayData = buildDeliveryPie(loads, dateStr(now))
-  const tomorrowData = buildDeliveryPie(loads, dateStr(tomorrow))
-  const dayAfterData = buildDeliveryPie(loads, dateStr(dayAfter))
+  // Who's delivering today / tomorrow
+  const delivToday = loads.filter(l => l.delivery_date === todayStr && !['completed'].includes(l.status) && l.driver_name)
+  const delivTomorrow = loads.filter(l => {
+    const tom = new Date(now); tom.setDate(now.getDate() + 1)
+    return l.delivery_date === dateStr(tom) && !['completed'].includes(l.status) && l.driver_name
+  })
+
+  const greeting = (() => {
+    const h = now.getHours()
+    if (h < 12) return 'Good morning'
+    if (h < 17) return 'Good afternoon'
+    return 'Good evening'
+  })()
+
+  const dateLabel = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
 
   return (
     <div>
-      <div style={{ marginBottom: 28 }}>
-        <h1 style={{ fontSize: 28, fontWeight: 700, color: T.text, letterSpacing: -0.5 }}>
-          {user.full_name?.split(' ')[0] || 'Dispatcher'}
-        </h1>
-        <p style={{ color: T.text2, fontSize: 13, marginTop: 4 }}>Here's your operation at a glance.</p>
+
+      {/* ── Header ── */}
+      <div style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', flexWrap: 'wrap', gap: 8 }}>
+        <div>
+          <h1 style={{ fontSize: mobile ? 22 : 26, fontWeight: 700, color: T.text, letterSpacing: -0.6, lineHeight: 1.1 }}>
+            {greeting}, {user.full_name?.split(' ')[0] || user.username}
+          </h1>
+          <div style={{ fontSize: 12, color: T.text3, marginTop: 4 }}>{dateLabel}</div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ width: 7, height: 7, borderRadius: '50%', background: T.green, display: 'inline-block' }} />
+          <span style={{ fontSize: 11, color: T.text3 }}>Live · 15s sync</span>
+        </div>
       </div>
 
-      {/* ── Urgent: pickup within 24h, no driver ── */}
+      {/* ── Urgent alert ── */}
       {urgentUnassigned.length > 0 && (
         <div style={{
-          background: `linear-gradient(135deg, ${T.red}18 0%, ${T.orange}0e 100%)`,
-          border: `1px solid ${T.red}55`, borderRadius: 14,
-          padding: '14px 18px', marginBottom: 24,
+          background: T.bg1, border: `1px solid ${T.red}55`,
+          borderLeft: `4px solid ${T.red}`,
+          borderRadius: 12, padding: '12px 16px', marginBottom: 20,
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-            <span style={{ fontSize: 16 }}>🚨</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: 14 }}>🚨</span>
             <span style={{ fontSize: 13, fontWeight: 700, color: T.red }}>
-              {urgentUnassigned.length} load{urgentUnassigned.length > 1 ? 's' : ''} pickup within 24h — NO DRIVER ASSIGNED
+              {urgentUnassigned.length} load{urgentUnassigned.length > 1 ? 's' : ''} picking up in &lt;24h — no driver assigned
             </span>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {urgentUnassigned.map(l => (
-              <div key={l.id} onClick={() => navigate(`/loads/${l.id}`)}
-                style={{ display: 'flex', alignItems: 'center', gap: 12, cursor: 'pointer',
-                  background: 'rgba(255,69,58,0.10)', borderRadius: 9, padding: '8px 12px',
-                  border: `1px solid ${T.red}30` }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: T.text, minWidth: 90 }}>
-                  {l.load_number || `#${l.id}`}
-                </span>
-                <span style={{ fontSize: 11, color: T.text2, flex: 1 }}>{l.broker_name}</span>
-                <span style={{ fontSize: 11, color: T.text2 }}>
-                  {l.pickup_city}, {l.pickup_state} → {l.delivery_city}, {l.delivery_state}
-                </span>
-                <span style={{ fontSize: 11, fontWeight: 700, color: T.red, whiteSpace: 'nowrap' }}>
-                  {l.pickup_date} {l.pickup_time || ''}
-                </span>
+              <div key={l.id}
+                onClick={() => navigate(`/loads/${l.id}`)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer',
+                  padding: '7px 10px', borderRadius: 8, background: T.bg2,
+                  fontSize: 12,
+                }}
+              >
+                <span style={{ fontWeight: 700, color: T.text, minWidth: 80 }}>{l.load_number || `#${l.id}`}</span>
+                <span style={{ color: T.text2, flex: 1 }}>{l.broker_name}</span>
+                <span style={{ color: T.text3 }}>{[l.pickup_city, l.pickup_state].filter(Boolean).join(', ')} → {[l.delivery_city, l.delivery_state].filter(Boolean).join(', ')}</span>
+                <span style={{ color: T.red, fontWeight: 600, whiteSpace: 'nowrap' }}>{l.pickup_date}</span>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {stats && (
-        <>
-          <Label>Load Status</Label>
-          <div style={{ display: 'grid', gridTemplateColumns: mobile ? 'repeat(3,1fr)' : 'repeat(auto-fill, minmax(100px, 1fr))', gap: 8, marginBottom: 20 }}>
-            <StatPill label="Total" value={total(stats.loads)} color={T.text2} />
-            <StatPill label="Pending" value={getCount(stats.loads,'pending')} color={T.orange} />
-            <StatPill label="Assigned" value={getCount(stats.loads,'assigned')} color={T.blue} />
-            <StatPill label="Dispatched" value={getCount(stats.loads,'dispatched')} color={T.purple} />
-            <StatPill label="In Transit" value={getCount(stats.loads,'in_transit')} color={T.green} />
-            <StatPill label="Delivered" value={getCount(stats.loads,'delivered')} color={T.teal} />
-          </div>
-
-          <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 24 }}>
-            <div style={{ flex: 1, minWidth: 200 }}>
-              <Label>Drivers</Label>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 }}>
-                <StatPill label="Available" value={getCount(stats.drivers,'available')} color={T.green} />
-                <StatPill label="On Load" value={getCount(stats.drivers,'on_load')} color={T.blue} />
-                <StatPill label="Off Duty" value={getCount(stats.drivers,'off_duty')} color={T.text3} />
-              </div>
-            </div>
-            <div style={{ flex: 1, minWidth: 200 }}>
-              <Label>Trucks</Label>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 }}>
-                <StatPill label="Available" value={getCount(stats.trucks,'available')} color={T.green} />
-                <StatPill label="On Load" value={getCount(stats.trucks,'on_load')} color={T.blue} />
-                <StatPill label="Maint." value={getCount(stats.trucks,'maintenance')} color={T.red} />
-              </div>
-            </div>
-          </div>
-        </>
-      )}
-
-      {/* Revenue summary — dispatcher + company owners */}
-      {revenue && revenue.total > 0 && (
-        <>
-          <Label>Revenue — Last 60 Days</Label>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 24 }}>
-            <div style={{ background: T.bg1, borderRadius: 14, padding: '16px 20px', border: `1px solid ${T.sep}`, borderTop: `3px solid ${T.green}`, flex: 1, minWidth: 180 }}>
-              <div style={{ fontSize: 11, color: T.text3, marginBottom: 4 }}>Total Revenue</div>
-              <div style={{ fontSize: 26, fontWeight: 700, color: T.green, letterSpacing: -1 }}>
-                ${revenue.total.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-              </div>
-              <div style={{ fontSize: 11, color: T.text3, marginTop: 4 }}>{revenue.count} loads delivered</div>
-            </div>
-            {Object.entries(revenue.byMonth).sort().map(([mo, amt]) => (
-              <div key={mo} style={{ background: T.bg1, borderRadius: 14, padding: '16px 20px', border: `1px solid ${T.sep}`, borderTop: `3px solid ${T.blue}`, flex: 1, minWidth: 140 }}>
-                <div style={{ fontSize: 11, color: T.text3, marginBottom: 4 }}>
-                  {new Date(mo + '-02').toLocaleString('default', { month: 'long', year: 'numeric' })}
-                </div>
-                <div style={{ fontSize: 22, fontWeight: 700, color: T.blue, letterSpacing: -0.5 }}>
-                  ${amt.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-                </div>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
-
-      {/* Route Planning Pies */}
-      <Label>Route Planning — Drivers Delivering</Label>
-      <div style={{ display: 'flex', flexDirection: mobile ? 'column' : 'row', gap: 14, marginBottom: 28 }}>
-        <PieChart data={todayData} title="Today" subtitle={dateStr(now)} />
-        <PieChart data={tomorrowData} title="Tomorrow" subtitle={dateStr(tomorrow)} />
-        <PieChart data={dayAfterData} title="Day After" subtitle={dateStr(dayAfter)} />
+      {/* ── KPI row ── */}
+      <div style={{ display: 'flex', gap: 10, marginBottom: 20, flexWrap: mobile ? 'wrap' : 'nowrap' }}>
+        <KPI
+          label="Active Loads"
+          value={activeLoads.length}
+          color={T.blue}
+          sub={`${toInvoice.length} to invoice`}
+          onClick={() => navigate('/loads')}
+        />
+        <KPI
+          label="In Transit"
+          value={inTransit.length}
+          color={T.green}
+          sub="on the road"
+          onClick={() => navigate('/loads')}
+        />
+        {lateLoads.length > 0 && (
+          <KPI
+            label="Late"
+            value={lateLoads.length}
+            color={T.red}
+            sub="need attention"
+            onClick={() => navigate('/loads')}
+          />
+        )}
+        {revenue && (
+          <KPI
+            label="Revenue (60d)"
+            value={fmt$(revenue.total)}
+            color={T.green}
+            sub={`${revenue.count} loads`}
+          />
+        )}
       </div>
 
-      {/* Active Loads grid */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-        <Label inline>Active Loads <span style={{ color: T.text3, fontWeight: 400 }}>({activeLoads.length})</span></Label>
-        <Link to="/loads" style={{ fontSize: 12, color: T.blue, textDecoration: 'none', fontWeight: 600 }}>View all</Link>
+      {/* ── Main body: 2 columns on desktop ── */}
+      <div style={{ display: 'flex', gap: 16, flexDirection: mobile ? 'column' : 'row', alignItems: 'flex-start' }}>
+
+        {/* ── Left column: loads ── */}
+        <div style={{ flex: 2, minWidth: 0 }}>
+
+          {/* Active loads */}
+          <Card style={{ marginBottom: 14 }}>
+            <SectionHead title={`Active Loads (${activeLoads.length})`} action="View all →" actionTo="/loads" />
+            {activeLoads.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: '24px 0', color: T.text3, fontSize: 13 }}>
+                No active loads · <Link to="/loads" style={{ color: T.blue, textDecoration: 'none' }}>add one</Link>
+              </div>
+            ) : (
+              <div>
+                {/* Late first */}
+                {lateLoads.slice(0, 5).map(l => <LoadRow key={l.id + 'l'} load={l} />)}
+                {/* Then rest of active, skip duplicates */}
+                {activeLoads
+                  .filter(l => !isLate(l))
+                  .slice(0, mobile ? 6 : 12)
+                  .map(l => <LoadRow key={l.id} load={l} />)
+                }
+                {activeLoads.length > (mobile ? 6 : 12) + lateLoads.length && (
+                  <div style={{ textAlign: 'center', paddingTop: 8 }}>
+                    <Link to="/loads" style={{ fontSize: 12, color: T.blue, textDecoration: 'none' }}>
+                      + {activeLoads.length - (mobile ? 6 : 12)} more
+                    </Link>
+                  </div>
+                )}
+              </div>
+            )}
+          </Card>
+
+          {/* Delivering today / tomorrow */}
+          {(delivToday.length > 0 || delivTomorrow.length > 0) && (
+            <Card style={{ marginBottom: 14 }}>
+              <SectionHead title="Deliveries" />
+              {delivToday.length > 0 && (
+                <>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.7, marginBottom: 6 }}>Today</div>
+                  {delivToday.map(l => <LoadRow key={l.id} load={l} />)}
+                </>
+              )}
+              {delivTomorrow.length > 0 && (
+                <>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.7, marginTop: 10, marginBottom: 6 }}>Tomorrow</div>
+                  {delivTomorrow.map(l => <LoadRow key={l.id} load={l} />)}
+                </>
+              )}
+            </Card>
+          )}
+        </div>
+
+        {/* ── Right column: fleet + revenue ── */}
+        <div style={{ flex: 1, minWidth: mobile ? '100%' : 220 }}>
+
+          {/* Fleet status */}
+          {stats && (
+            <Card style={{ marginBottom: 14 }}>
+              <SectionHead title="Fleet" />
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: T.text3, marginBottom: 8 }}>Drivers</div>
+                <BarRow label="Available" value={getCount(stats.drivers,'available')} total={driverTotal} color={T.green} />
+                <BarRow label="On Load"   value={getCount(stats.drivers,'on_load')}   total={driverTotal} color={T.blue} />
+                <BarRow label="Off Duty"  value={getCount(stats.drivers,'off_duty')}  total={driverTotal} color={T.text3} />
+              </div>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 600, color: T.text3, marginBottom: 8 }}>Trucks</div>
+                <BarRow label="Available"    value={getCount(stats.trucks,'available')}    total={truckTotal} color={T.green} />
+                <BarRow label="On Load"      value={getCount(stats.trucks,'on_load')}      total={truckTotal} color={T.blue} />
+                <BarRow label="Maintenance"  value={getCount(stats.trucks,'maintenance')}  total={truckTotal} color={T.red} />
+              </div>
+            </Card>
+          )}
+
+          {/* Load status breakdown */}
+          {stats && (
+            <Card style={{ marginBottom: 14 }}>
+              <SectionHead title="Load Status" />
+              {[
+                { label: 'Pending',    key: 'pending',    color: T.orange },
+                { label: 'Assigned',   key: 'assigned',   color: T.blue },
+                { label: 'Dispatched', key: 'dispatched', color: T.purple },
+                { label: 'In Transit', key: 'in_transit', color: T.green },
+                { label: 'Delivered',  key: 'delivered',  color: T.teal },
+              ].map(({ label, key, color }) => {
+                const n = getCount(stats.loads, key)
+                return (
+                  <div key={key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', borderBottom: `1px solid ${T.sep}` }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, display: 'inline-block' }} />
+                      <span style={{ fontSize: 13, color: T.text2 }}>{label}</span>
+                    </div>
+                    <span style={{ fontSize: 14, fontWeight: 600, color: n > 0 ? color : T.text3 }}>{n}</span>
+                  </div>
+                )
+              })}
+            </Card>
+          )}
+
+          {/* Revenue chart */}
+          {revenue && revenue.total > 0 && (
+            <Card>
+              <SectionHead title="Revenue — 60 days" />
+              <div style={{ fontSize: 26, fontWeight: 700, color: T.green, letterSpacing: -1, lineHeight: 1 }}>
+                {fmt$(revenue.total)}
+              </div>
+              <div style={{ fontSize: 11, color: T.text3, marginTop: 3 }}>{revenue.count} loads delivered</div>
+              <RevenueChart byMonth={revenue.byMonth} />
+            </Card>
+          )}
+        </div>
       </div>
-
-      {activeLoads.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '40px', color: T.text3, background: T.bg1, borderRadius: 14, border: `1px solid ${T.sep}` }}>
-          No active loads.{' '}
-          <Link to="/loads" style={{ color: T.blue, textDecoration: 'none' }}>Add one</Link>
-        </div>
-      ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr' : 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10, marginBottom: 28 }}>
-          {activeLoads.map(l => <MiniLoadCard key={l.id} load={l} />)}
-        </div>
-      )}
-
-      {recentCompleted.length > 0 && (
-        <>
-          <Label>Recently Completed</Label>
-          <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr' : 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }}>
-            {recentCompleted.map(l => <MiniLoadCard key={l.id} load={l} />)}
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
-
-function Label({ children, inline }) {
-  return (
-    <div style={{ fontSize: 11, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 1, marginBottom: inline ? 0 : 10 }}>
-      {children}
     </div>
   )
 }
