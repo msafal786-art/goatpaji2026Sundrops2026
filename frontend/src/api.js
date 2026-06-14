@@ -85,5 +85,6 @@ export const api = {
   stats: () => req('GET', '/stats'),
 
   search: (q) => req('GET', `/search?q=${encodeURIComponent(q)}`),
+  recommendations: () => req('GET', '/recommendations'),
   get: (path) => req('GET', path.replace(/^\/api/, '')),
 }

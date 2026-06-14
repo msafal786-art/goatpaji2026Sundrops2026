@@ -257,10 +257,12 @@ function loadsQuery(where = '', params = []) {
   return db.prepare(`
     SELECT l.*,
       d.full_name as driver_name, d.phone as driver_phone,
+      rd.full_name as relay_driver_name,
       t.tractor_number, t.trailer_number as truck_trailer,
       c.name as company_name
     FROM loads l
     LEFT JOIN drivers d ON l.driver_id = d.id
+    LEFT JOIN drivers rd ON l.relay_driver_id = rd.id
     LEFT JOIN trucks t ON l.truck_id = t.id
     LEFT JOIN companies c ON l.company_id = c.id
     ${where}
@@ -582,6 +584,83 @@ app.get('/api/search', auth, (req, res) => {
     LIMIT 100
   `).all(like, like, like, like, like, like, ...companyParam);
   res.json(rows);
+});
+
+// ── Lane recommendations ──────────────────────────────────────────────────────
+app.get('/api/recommendations', auth, (req, res) => {
+  const isOwner = req.user.role === 'company_owner';
+  const companyClause = isOwner ? 'AND l.company_id = ?' : '';
+  const companyParam = isOwner ? [req.user.company_id] : [];
+
+  // Active delivery destinations — where trucks are heading right now
+  const activeDestinations = db.prepare(`
+    SELECT DISTINCT delivery_state, delivery_city, COUNT(*) as trucks_delivering
+    FROM loads
+    WHERE status IN ('in_transit','dispatched','assigned','pending')
+    AND delivery_state IS NOT NULL AND delivery_state != ''
+    ${companyClause}
+    GROUP BY delivery_state
+    ORDER BY trucks_delivering DESC
+  `).all(...companyParam);
+
+  const results = [];
+
+  for (const dest of activeDestinations) {
+    const fromState = dest.delivery_state;
+
+    // Top outbound lanes from this state in history
+    const lanes = db.prepare(`
+      SELECT
+        pickup_state, pickup_city,
+        delivery_state, delivery_city,
+        COUNT(*) as load_count,
+        ROUND(AVG(CASE WHEN rate IS NOT NULL AND CAST(rate AS REAL) > 0 THEN CAST(rate AS REAL) END), 0) as avg_rate,
+        MIN(CAST(rate AS REAL)) as min_rate,
+        MAX(CAST(rate AS REAL)) as max_rate
+      FROM loads
+      WHERE status = 'completed'
+      AND pickup_state = ?
+      AND delivery_state != ?
+      AND broker_name IS NOT NULL AND broker_name != ''
+      GROUP BY pickup_state, delivery_state
+      HAVING load_count >= 2
+      ORDER BY load_count DESC
+      LIMIT 6
+    `).all(fromState, fromState);
+
+    for (const lane of lanes) {
+      // Top brokers for this specific lane
+      const brokers = db.prepare(`
+        SELECT
+          broker_name,
+          COUNT(*) as times_used,
+          broker_contact,
+          broker_email,
+          ROUND(AVG(CASE WHEN rate IS NOT NULL AND CAST(rate AS REAL) > 0 THEN CAST(rate AS REAL) END), 0) as avg_rate
+        FROM loads
+        WHERE status = 'completed'
+        AND pickup_state = ?
+        AND delivery_state = ?
+        AND broker_name IS NOT NULL AND broker_name != ''
+        GROUP BY broker_name
+        ORDER BY times_used DESC
+        LIMIT 5
+      `).all(fromState, lane.delivery_state);
+
+      lane.brokers = brokers;
+    }
+
+    if (lanes.length > 0) {
+      results.push({
+        delivery_state: dest.delivery_state,
+        delivery_city: dest.delivery_city,
+        trucks_delivering: dest.trucks_delivering,
+        outbound_lanes: lanes,
+      });
+    }
+  }
+
+  res.json(results);
 });
 
 // ── Serve frontend ────────────────────────────────────────────────────────────

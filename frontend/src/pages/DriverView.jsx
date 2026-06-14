@@ -1,152 +1,171 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
 import { api } from '../api.js'
 import { T, STATUS } from '../theme.js'
 
-export default function DriverView({ user, onLogout }) {
-  const [loads, setLoads] = useState([])
-  const [expanded, setExpanded] = useState(null)
+const font = "-apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif"
 
-  useEffect(() => { api.loads().then(setLoads) }, [])
+function openMaps(addr) {
+  const q = encodeURIComponent(addr)
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent)
+  window.open(isIOS ? `maps://maps.apple.com/?q=${q}` : `https://maps.google.com/?q=${q}`, '_blank')
+}
 
-  async function updateStatus(id, status) {
-    await api.updateLoadStatus(id, status)
-    setLoads(ls => ls.map(l => l.id === id ? { ...l, status } : l))
-  }
+function InfoRow({ label, value, mono, href }) {
+  if (!value) return null
+  return (
+    <div style={{ display: 'flex', gap: 10, padding: '9px 0', borderBottom: `1px solid ${T.sep}` }}>
+      <span style={{ fontSize: 12, color: T.text3, fontWeight: 500, minWidth: 90, flexShrink: 0 }}>{label}</span>
+      {href
+        ? <a href={href} style={{ fontSize: 13, color: T.blue, textDecoration: 'none', fontWeight: 600 }}>{value}</a>
+        : <span style={{ fontSize: 13, color: T.text, fontFamily: mono ? 'monospace' : undefined, wordBreak: 'break-all' }}>{value}</span>
+      }
+    </div>
+  )
+}
 
-  const activeLoads = loads.filter(l => !['completed'].includes(l.status))
-  const completedLoads = loads.filter(l => l.status === 'completed').slice(0, 5)
+function LocationBlock({ type, load }) {
+  const isPickup = type === 'pickup'
+  const color = isPickup ? T.blue : T.purple
+  const city = isPickup
+    ? [load.pickup_city, load.pickup_state].filter(Boolean).join(', ')
+    : [load.delivery_city, load.delivery_state].filter(Boolean).join(', ')
+  const name    = isPickup ? load.pickup_name    : load.delivery_name
+  const address = isPickup ? load.pickup_address : load.delivery_address
+  const date    = isPickup ? load.pickup_date    : load.delivery_date
+  const time    = isPickup ? load.pickup_time    : load.delivery_time
+  const phone   = isPickup ? load.pickup_phone   : load.delivery_phone
+  const refs    = isPickup ? load.pickup_refs    : load.delivery_refs
+  const mapsAddr = [address || name, city].filter(Boolean).join(', ')
 
   return (
-    <div style={{ background: T.bg, minHeight: '100vh', paddingBottom: 32 }}>
-      {/* Header */}
-      <div style={{
-        background: T.bg1 + 'f0', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
-        borderBottom: `1px solid ${T.sep}`, padding: '14px 18px',
-        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        position: 'sticky', top: 0, zIndex: 10,
-      }}>
-        <div>
-          <div style={{ fontSize: 17, fontWeight: 700, color: T.text, letterSpacing: -0.3 }}>My Loads</div>
-          <div style={{ fontSize: 12, color: T.text3, marginTop: 1 }}>{user.full_name}</div>
-        </div>
-        <button onClick={onLogout} style={{
-          background: T.bg2, border: `1px solid ${T.sep}`, color: T.text2,
-          padding: '7px 14px', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600,
-        }}>Sign out</button>
+    <div style={{
+      background: T.bg2, borderRadius: 14, padding: '14px 16px',
+      border: `1px solid ${color}25`, borderLeft: `3px solid ${color}`,
+    }}>
+      <div style={{ fontSize: 10, fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: 0.9, marginBottom: 8 }}>
+        {isPickup ? '📍 Pickup' : '📦 Delivery'}
       </div>
 
-      <div style={{ padding: '14px 14px 0' }}>
-        {activeLoads.length === 0 && (
-          <div style={{ background: T.bg1, borderRadius: 16, padding: '48px 20px', textAlign: 'center', color: T.text3, marginTop: 12, border: `1px solid ${T.sep}` }}>
-            <div style={{ fontSize: 32, marginBottom: 10 }}>✓</div>
-            <div style={{ fontSize: 15, fontWeight: 600 }}>No active loads</div>
+      {name && <div style={{ fontSize: 15, fontWeight: 700, color: T.text, marginBottom: 8 }}>{name}</div>}
+
+      {mapsAddr && (
+        <button onClick={() => openMaps(mapsAddr)} style={{
+          display: 'block', width: '100%', textAlign: 'left',
+          background: color + '12', border: `1px solid ${color}25`,
+          borderRadius: 10, padding: '10px 12px', cursor: 'pointer', marginBottom: 10,
+        }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color }}>{city}</div>
+          {address && <div style={{ fontSize: 11, color: T.text3, marginTop: 2 }}>{address}</div>}
+          <div style={{ fontSize: 11, color, marginTop: 5, fontWeight: 700 }}>Open in Maps →</div>
+        </button>
+      )}
+
+      <InfoRow label="Date"      value={date} />
+      <InfoRow label="Time"      value={time} />
+      <InfoRow label="Phone"     value={phone} href={phone ? `tel:${phone}` : null} />
+      <InfoRow label="Reference" value={refs} mono />
+    </div>
+  )
+}
+
+function LoadCard({ load, onStatusUpdate }) {
+  const [updating, setUpdating] = useState(false)
+  const s = STATUS[load.status] || STATUS.pending
+
+  async function doUpdate(newStatus) {
+    if (updating) return
+    setUpdating(true)
+    try { await api.updateLoadStatus(load.id, newStatus); onStatusUpdate() }
+    finally { setUpdating(false) }
+  }
+
+  const NEXT = {
+    pending:    [{ status: 'dispatched', label: 'Start Trip',             color: T.blue,   icon: '🚛' }],
+    assigned:   [{ status: 'dispatched', label: 'Start Trip',             color: T.blue,   icon: '🚛' }],
+    dispatched: [{ status: 'in_transit', label: 'Picked Up — En Route',   color: T.green,  icon: '✅' }],
+    in_transit: [{ status: 'delivered',  label: 'Delivered',              color: T.teal,   icon: '📦' }],
+  }
+  const actions = NEXT[load.status] || []
+  const pickupCity  = [load.pickup_city, load.pickup_state].filter(Boolean).join(', ')
+  const delivCity   = [load.delivery_city, load.delivery_state].filter(Boolean).join(', ')
+
+  return (
+    <div style={{ background: T.bg1, border: `1px solid ${T.sep}`, borderRadius: 18, overflow: 'hidden', marginBottom: 14 }}>
+
+      {/* Header */}
+      <div style={{ background: s.color + '15', borderBottom: `1px solid ${s.color}25`, padding: '14px 16px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+          <div>
+            <div style={{ fontSize: 22, fontWeight: 800, color: T.text, letterSpacing: -0.5 }}>{load.load_number || `#${load.id}`}</div>
+            {load.broker_name && <div style={{ fontSize: 12, color: T.text3, marginTop: 2 }}>{load.broker_name}</div>}
+          </div>
+          <span style={{
+            fontSize: 11, fontWeight: 700, padding: '5px 12px', borderRadius: 20,
+            background: s.color + '22', color: s.color, border: `1px solid ${s.color}35`,
+            textTransform: 'uppercase', letterSpacing: 0.5,
+          }}>{s.label}</span>
+        </div>
+
+        {/* Route */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 9, color: T.text3, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 3 }}>Pickup</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: T.text, lineHeight: 1.2 }}>{pickupCity || '—'}</div>
+            <div style={{ fontSize: 11, color: T.text3, marginTop: 2 }}>{load.pickup_date}{load.pickup_time ? ` · ${load.pickup_time}` : ''}</div>
+          </div>
+          <div style={{ fontSize: 20, color: T.text3 }}>→</div>
+          <div style={{ flex: 1, textAlign: 'right' }}>
+            <div style={{ fontSize: 9, color: T.text3, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 3 }}>Delivery</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: T.text, lineHeight: 1.2 }}>{delivCity || '—'}</div>
+            <div style={{ fontSize: 11, color: T.text3, marginTop: 2 }}>{load.delivery_date}{load.delivery_time ? ` · ${load.delivery_time}` : ''}</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Action buttons */}
+      {actions.length > 0 && (
+        <div style={{ padding: '14px 16px', borderBottom: `1px solid ${T.sep}` }}>
+          {actions.map(a => (
+            <button key={a.status} onClick={() => doUpdate(a.status)} disabled={updating} style={{
+              display: 'block', width: '100%', padding: '16px',
+              borderRadius: 14, background: a.color, border: 'none',
+              color: '#fff', fontSize: 16, fontWeight: 700, letterSpacing: -0.2,
+              cursor: updating ? 'not-allowed' : 'pointer', opacity: updating ? 0.6 : 1,
+            }}>
+              {a.icon} {updating ? 'Updating…' : a.label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {load.status === 'delivered' && (
+        <div style={{ padding: '20px 16px', textAlign: 'center', borderBottom: `1px solid ${T.sep}` }}>
+          <div style={{ fontSize: 36, marginBottom: 6 }}>✅</div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: T.green }}>Delivered — great work</div>
+          <div style={{ fontSize: 12, color: T.text3, marginTop: 4 }}>Your dispatcher will mark as complete</div>
+        </div>
+      )}
+
+      {/* Location details */}
+      <div style={{ padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <LocationBlock type="pickup" load={load} />
+        <LocationBlock type="delivery" load={load} />
+
+        {(load.tractor_number || load.truck_trailer || load.trailer_type || load.weight || load.commodity) && (
+          <div style={{ background: T.bg2, borderRadius: 12, padding: '12px 14px', border: `1px solid ${T.sep}` }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>Equipment</div>
+            <InfoRow label="Tractor"   value={load.tractor_number} />
+            <InfoRow label="Trailer"   value={load.truck_trailer} />
+            <InfoRow label="Type"      value={load.trailer_type} />
+            <InfoRow label="Weight"    value={load.weight ? `${Number(load.weight).toLocaleString()} lbs` : null} />
+            <InfoRow label="Commodity" value={load.commodity} />
           </div>
         )}
 
-        {activeLoads.map(l => {
-          const s = STATUS[l.status] || STATUS.pending
-          const open = expanded === l.id
-          const pickupAddr = [l.pickup_city, l.pickup_state].filter(Boolean).join(', ')
-          const delivAddr = [l.delivery_city, l.delivery_state].filter(Boolean).join(', ')
-
-          return (
-            <div key={l.id} style={{
-              background: `linear-gradient(135deg, ${s.color}20 0%, ${s.color}0d 100%)`,
-              border: `1px solid ${s.color}55`,
-              borderRadius: 16, marginBottom: 12, overflow: 'hidden',
-              backdropFilter: 'blur(10px)',
-            }}>
-              {/* Top bar */}
-              <div
-                onClick={() => setExpanded(open ? null : l.id)}
-                style={{ padding: '14px 16px', cursor: 'pointer' }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: T.text }}>{l.load_number || `#${l.id}`}</div>
-                  <span style={{
-                    fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20,
-                    background: s.color + '30', color: s.color,
-                    textTransform: 'uppercase', letterSpacing: 0.5,
-                  }}>{s.label}</span>
-                </div>
-
-                {/* Route summary */}
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 10, color: T.blue, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 }}>Pickup</div>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{pickupAddr || l.pickup_name}</div>
-                    <div style={{ fontSize: 11, color: T.blue }}>{l.pickup_date}{l.pickup_time ? ` · ${l.pickup_time}` : ''}</div>
-                  </div>
-                  <div style={{ fontSize: 18, color: T.text3 }}>→</div>
-                  <div style={{ flex: 1, textAlign: 'right' }}>
-                    <div style={{ fontSize: 10, color: T.purple, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 2 }}>Delivery</div>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{delivAddr || l.delivery_name}</div>
-                    <div style={{ fontSize: 11, color: T.purple }}>{l.delivery_date}{l.delivery_time ? ` · ${l.delivery_time}` : ''}</div>
-                  </div>
-                </div>
-
-                <div style={{ fontSize: 10, color: T.text3, marginTop: 8, textAlign: 'right' }}>{open ? '▲ less' : '▼ details'}</div>
-              </div>
-
-              {/* Expanded details */}
-              {open && (
-                <div style={{ borderTop: `1px solid ${s.color}30`, padding: '14px 16px' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 14 }}>
-                    <LocBox label="Pickup" color={T.blue}
-                      name={l.pickup_name}
-                      address={[l.pickup_address, l.pickup_city, l.pickup_state].filter(Boolean).join(', ')}
-                      date={l.pickup_date} time={l.pickup_time}
-                      phone={l.pickup_phone} refs={l.pickup_refs} />
-                    <LocBox label="Delivery" color={T.purple}
-                      name={l.delivery_name}
-                      address={[l.delivery_address, l.delivery_city, l.delivery_state].filter(Boolean).join(', ')}
-                      date={l.delivery_date} time={l.delivery_time}
-                      phone={l.delivery_phone} refs={l.delivery_refs} />
-                  </div>
-
-                  {(l.commodity || l.weight || l.tractor_number) && (
-                    <div style={{ padding: '10px 12px', background: T.bg2, borderRadius: 10, fontSize: 12, color: T.text2, display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 14 }}>
-                      {l.commodity && <span>📦 {l.commodity}</span>}
-                      {l.weight && <span>⚖️ {l.weight}</span>}
-                      {l.tractor_number && <span>🚛 T:{l.tractor_number} / Tr:{l.truck_trailer}</span>}
-                    </div>
-                  )}
-
-                  {l.special_instructions && (
-                    <div style={{ padding: '10px 12px', background: T.orange + '15', border: `1px solid ${T.orange}40`, borderRadius: 10, fontSize: 12, color: T.text2, marginBottom: 14 }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: T.orange, marginBottom: 4 }}>SPECIAL INSTRUCTIONS</div>
-                      {l.special_instructions}
-                    </div>
-                  )}
-
-                  {/* Action buttons */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-                    <button
-                      style={{ padding: '14px', background: T.green, color: '#fff', border: 'none', borderRadius: 12, cursor: 'pointer', fontWeight: 700, fontSize: 14 }}
-                      onClick={() => updateStatus(l.id, 'in_transit')}>
-                      🚛 En Route
-                    </button>
-                    <button
-                      style={{ padding: '14px', background: T.teal, color: '#000', border: 'none', borderRadius: 12, cursor: 'pointer', fontWeight: 700, fontSize: 14 }}
-                      onClick={() => updateStatus(l.id, 'delivered')}>
-                      ✓ Delivered
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          )
-        })}
-
-        {completedLoads.length > 0 && (
-          <div style={{ marginTop: 8 }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10 }}>Completed</div>
-            {completedLoads.map(l => (
-              <div key={l.id} style={{ background: T.bg1, borderRadius: 12, padding: '12px 16px', marginBottom: 8, border: `1px solid ${T.sep}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', opacity: 0.6 }}>
-                <span style={{ fontWeight: 600, fontSize: 13, color: T.text }}>{l.load_number || `#${l.id}`}</span>
-                <span style={{ fontSize: 12, color: T.text3 }}>{[l.pickup_city, l.delivery_city].filter(Boolean).join(' → ')}</span>
-              </div>
-            ))}
+        {load.special_instructions && (
+          <div style={{ background: T.orange + '10', borderRadius: 12, padding: '12px 14px', border: `1px solid ${T.orange}25` }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: T.orange, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>⚠ Special Instructions</div>
+            <div style={{ fontSize: 13, color: T.text, lineHeight: 1.6 }}>{load.special_instructions}</div>
           </div>
         )}
       </div>
@@ -154,17 +173,90 @@ export default function DriverView({ user, onLogout }) {
   )
 }
 
-function LocBox({ label, name, address, date, time, color, refs, phone }) {
+export default function DriverView({ user, onLogout }) {
+  const [loads, setLoads] = useState([])
+  const [tab, setTab] = useState('active')
+  const [lastUpdate, setLastUpdate] = useState(new Date())
+
+  const fetch = useCallback(async () => {
+    const data = await api.loads()
+    setLoads(data)
+    setLastUpdate(new Date())
+  }, [])
+
+  useEffect(() => {
+    fetch()
+    const interval = setInterval(fetch, 15000)
+    return () => clearInterval(interval)
+  }, [fetch])
+
+  const activeLoads    = loads.filter(l => !['completed'].includes(l.status))
+  const completedLoads = loads.filter(l => l.status === 'completed').slice(0, 10)
+  const shown = tab === 'active' ? activeLoads : completedLoads
+
   return (
-    <div style={{ padding: '10px 11px', background: color + '18', borderRadius: 10, border: `1px solid ${color}30` }}>
-      <div style={{ fontSize: 9, fontWeight: 700, color, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 5 }}>{label}</div>
-      {name && <div style={{ fontWeight: 600, fontSize: 12, color: T.text }}>{name}</div>}
-      {address && <div style={{ fontSize: 11, color: T.text2, marginTop: 2, lineHeight: 1.4 }}>{address}</div>}
-      {(date || time) && <div style={{ fontSize: 11, fontWeight: 600, color, marginTop: 4 }}>{date}{time ? ` · ${time}` : ''}</div>}
-      {phone && (
-        <a href={`tel:${phone}`} style={{ fontSize: 11, color: T.blue, marginTop: 3, display: 'block', textDecoration: 'none' }}>📞 {phone}</a>
-      )}
-      {refs && <div style={{ fontSize: 10, color: T.text3, marginTop: 2 }}>{refs}</div>}
+    <div style={{ background: T.bg, minHeight: '100vh', fontFamily: font }}>
+
+      {/* Sticky header */}
+      <div style={{
+        position: 'sticky', top: 0, zIndex: 50,
+        background: T.bg1 + 'f2',
+        backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
+        borderBottom: `1px solid ${T.sep}`,
+        padding: '14px 18px',
+        paddingTop: 'max(14px, env(safe-area-inset-top))',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: T.text }}>{user.full_name || user.username}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 2 }}>
+              <span style={{ width: 6, height: 6, borderRadius: '50%', background: T.green, display: 'inline-block' }} />
+              <span style={{ fontSize: 11, color: T.text3 }}>{lastUpdate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+            </div>
+          </div>
+          <button onClick={() => { if (!window.confirm('Sign out?')) return; onLogout() }} style={{
+            background: T.bg2, border: `1px solid ${T.sep}`, color: T.text2,
+            padding: '8px 14px', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600,
+          }}>Sign out</button>
+        </div>
+
+        <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
+          {[
+            { key: 'active',  label: `Active (${activeLoads.length})` },
+            { key: 'history', label: 'History' },
+          ].map(t => (
+            <button key={t.key} onClick={() => setTab(t.key)} style={{
+              padding: '7px 16px', borderRadius: 20, border: 'none', cursor: 'pointer',
+              fontSize: 13, fontWeight: 600,
+              background: tab === t.key ? T.blue : T.bg2,
+              color: tab === t.key ? '#fff' : T.text2,
+            }}>{t.label}</button>
+          ))}
+          <button onClick={fetch} style={{
+            marginLeft: 'auto', padding: '7px 12px', borderRadius: 20,
+            background: T.bg2, border: `1px solid ${T.sep}`, color: T.text3, fontSize: 14, cursor: 'pointer',
+          }}>↻</button>
+        </div>
+      </div>
+
+      <div style={{ padding: '16px 14px', paddingBottom: 'max(40px, env(safe-area-inset-bottom))' }}>
+        {shown.length === 0 ? (
+          <div style={{
+            background: T.bg1, borderRadius: 18, padding: '56px 24px',
+            textAlign: 'center', border: `1px solid ${T.sep}`, marginTop: 8,
+          }}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>{tab === 'active' ? '✓' : '📋'}</div>
+            <div style={{ fontSize: 16, fontWeight: 700, color: T.text, marginBottom: 6 }}>
+              {tab === 'active' ? 'No active loads' : 'No history yet'}
+            </div>
+            <div style={{ fontSize: 13, color: T.text3 }}>
+              {tab === 'active' ? 'Your dispatcher will assign you a load shortly.' : 'Completed loads appear here.'}
+            </div>
+          </div>
+        ) : (
+          shown.map(l => <LoadCard key={l.id} load={l} onStatusUpdate={fetch} />)
+        )}
+      </div>
     </div>
   )
 }

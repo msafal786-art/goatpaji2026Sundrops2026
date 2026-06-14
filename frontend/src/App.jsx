@@ -15,45 +15,47 @@ import Companies from './pages/Companies.jsx'
 import DriverView from './pages/DriverView.jsx'
 import Settings from './pages/Settings.jsx'
 import Search from './pages/Search.jsx'
+import Recommendations from './pages/Recommendations.jsx'
 
 export const AuthContext = createContext(null)
 export function useAuth() { return useContext(AuthContext) }
 
 const NAV_LINKS = {
   dispatcher: [
-    { to: '/dashboard', icon: '⊞', label: 'Dashboard' },
-    { to: '/loads',     icon: '↗',  label: 'Loads' },
-    { to: '/search',    icon: '⌕',  label: 'Search' },
-    { to: '/drivers',   icon: '◉',  label: 'Drivers' },
-    { to: '/trucks',    icon: '◈',  label: 'Trucks' },
-    { to: '/companies', icon: '⬡',  label: 'Companies' },
-    { to: '/settings',  icon: '⚙',  label: 'Settings' },
+    { to: '/dashboard',       icon: '⊞', label: 'Dashboard' },
+    { to: '/loads',           icon: '↗',  label: 'Loads' },
+    { to: '/recommendations', icon: '◈',  label: 'Lanes' },
+    { to: '/search',          icon: '⌕',  label: 'Search' },
+    { to: '/drivers',         icon: '◉',  label: 'Drivers' },
+    { to: '/trucks',          icon: '▣',  label: 'Trucks' },
+    { to: '/companies',       icon: '⬡',  label: 'Companies' },
+    { to: '/settings',        icon: '⚙',  label: 'Settings' },
   ],
   company_owner: [
-    { to: '/dashboard', icon: '⊞', label: 'Dashboard' },
-    { to: '/loads',     icon: '↗',  label: 'Loads' },
-    { to: '/search',    icon: '⌕',  label: 'Search' },
-    { to: '/drivers',   icon: '◉',  label: 'Drivers' },
-    { to: '/trucks',    icon: '◈',  label: 'Trucks' },
-    { to: '/settings',  icon: '⚙',  label: 'Settings' },
+    { to: '/dashboard',       icon: '⊞', label: 'Dashboard' },
+    { to: '/loads',           icon: '↗',  label: 'Loads' },
+    { to: '/recommendations', icon: '◈',  label: 'Lanes' },
+    { to: '/search',          icon: '⌕',  label: 'Search' },
+    { to: '/drivers',         icon: '◉',  label: 'Drivers' },
+    { to: '/trucks',          icon: '▣',  label: 'Trucks' },
+    { to: '/settings',        icon: '⚙',  label: 'Settings' },
   ],
 }
 
-// Bottom nav uses only the top 5 for visual balance
 const BOTTOM_NAV_LINKS = {
   dispatcher: [
-    { to: '/dashboard', icon: '⊞', label: 'Dashboard' },
-    { to: '/loads',     icon: '↗',  label: 'Loads' },
-    { to: '/search',    icon: '⌕',  label: 'Search' },
-    { to: '/drivers',   icon: '◉',  label: 'Drivers' },
-    { to: '/settings',  icon: '⚙',  label: 'Settings' },
+    { to: '/dashboard',       icon: '⊞', label: 'Dashboard' },
+    { to: '/loads',           icon: '↗',  label: 'Loads' },
+    { to: '/recommendations', icon: '◈',  label: 'Lanes' },
+    { to: '/search',          icon: '⌕',  label: 'Search' },
+    { to: '/settings',        icon: '⚙',  label: 'Settings' },
   ],
   company_owner: [
-    { to: '/dashboard', icon: '⊞', label: 'Dashboard' },
-    { to: '/loads',     icon: '↗',  label: 'Loads' },
-    { to: '/search',    icon: '⌕',  label: 'Search' },
-    { to: '/drivers',   icon: '◉',  label: 'Drivers' },
-    { to: '/settings',  icon: '⚙',  label: 'Settings' },
+    { to: '/dashboard',       icon: '⊞', label: 'Dashboard' },
+    { to: '/loads',           icon: '↗',  label: 'Loads' },
+    { to: '/recommendations', icon: '◈',  label: 'Lanes' },
+    { to: '/search',          icon: '⌕',  label: 'Search' },
+    { to: '/settings',        icon: '⚙',  label: 'Settings' },
   ],
 }
 
@@ -237,6 +239,7 @@ export default function App() {
               <Route path="/trucks" element={<Trucks />} />
               {user.role === 'dispatcher' && <Route path="/companies" element={<Companies />} />}
               <Route path="/search" element={<Search />} />
+              <Route path="/recommendations" element={<Recommendations />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="*" element={<Navigate to="/dashboard" />} />
             </Routes>
