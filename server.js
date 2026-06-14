@@ -483,6 +483,37 @@ app.get('/api/stats', auth, (req, res) => {
   res.json({ loads, drivers, trucks });
 });
 
+// ── Search loads ─────────────────────────────────────────────────────────────
+app.get('/api/search', auth, (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (!q) return res.json([]);
+  const like = `%${q}%`;
+  const isOwner = req.user.role === 'company_owner';
+  const companyClause = isOwner ? 'AND l.company_id = ?' : '';
+  const companyParam = isOwner ? [req.user.company_id] : [];
+
+  const rows = db.prepare(`
+    SELECT l.id, l.load_number, l.broker_name, l.pickup_city, l.pickup_state,
+           l.delivery_city, l.delivery_state, l.pickup_date, l.status, l.rate,
+           d.full_name as driver_name, c.name as company_name
+    FROM loads l
+    LEFT JOIN drivers d ON l.driver_id = d.id
+    LEFT JOIN companies c ON l.company_id = c.id
+    WHERE (
+      l.load_number LIKE ?
+      OR l.broker_name LIKE ?
+      OR l.pickup_city LIKE ?
+      OR l.delivery_city LIKE ?
+      OR l.pickup_refs LIKE ?
+      OR l.delivery_refs LIKE ?
+    )
+    ${companyClause}
+    ORDER BY l.id DESC
+    LIMIT 100
+  `).all(like, like, like, like, like, like, ...companyParam);
+  res.json(rows);
+});
+
 // ── Serve frontend ────────────────────────────────────────────────────────────
 app.use(express.static(path.join(__dirname, 'frontend/dist')));
 app.get('/{*path}', (req, res) => {

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, createContext, useContext } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom'
 import { api } from './api.js'
-import { T } from './theme.js'
+import { T, applyTheme } from './theme.js'
+import { ThemeProvider } from './ThemeContext.jsx'
 import { useIsMobile } from './hooks/useIsMobile.js'
 import Login from './pages/Login.jsx'
 import Dashboard from './pages/Dashboard.jsx'
@@ -11,6 +12,8 @@ import Drivers from './pages/Drivers.jsx'
 import Trucks from './pages/Trucks.jsx'
 import Companies from './pages/Companies.jsx'
 import DriverView from './pages/DriverView.jsx'
+import Settings from './pages/Settings.jsx'
+import Search from './pages/Search.jsx'
 
 export const AuthContext = createContext(null)
 export function useAuth() { return useContext(AuthContext) }
@@ -19,15 +22,37 @@ const NAV_LINKS = {
   dispatcher: [
     { to: '/dashboard', icon: '⊞', label: 'Dashboard' },
     { to: '/loads',     icon: '↗',  label: 'Loads' },
+    { to: '/search',    icon: '⌕',  label: 'Search' },
     { to: '/drivers',   icon: '◉',  label: 'Drivers' },
     { to: '/trucks',    icon: '◈',  label: 'Trucks' },
     { to: '/companies', icon: '⬡',  label: 'Companies' },
+    { to: '/settings',  icon: '⚙',  label: 'Settings' },
   ],
   company_owner: [
     { to: '/dashboard', icon: '⊞', label: 'Dashboard' },
     { to: '/loads',     icon: '↗',  label: 'Loads' },
+    { to: '/search',    icon: '⌕',  label: 'Search' },
     { to: '/drivers',   icon: '◉',  label: 'Drivers' },
     { to: '/trucks',    icon: '◈',  label: 'Trucks' },
+    { to: '/settings',  icon: '⚙',  label: 'Settings' },
+  ],
+}
+
+// Bottom nav uses only the top 5 for visual balance
+const BOTTOM_NAV_LINKS = {
+  dispatcher: [
+    { to: '/dashboard', icon: '⊞', label: 'Dashboard' },
+    { to: '/loads',     icon: '↗',  label: 'Loads' },
+    { to: '/search',    icon: '⌕',  label: 'Search' },
+    { to: '/drivers',   icon: '◉',  label: 'Drivers' },
+    { to: '/settings',  icon: '⚙',  label: 'Settings' },
+  ],
+  company_owner: [
+    { to: '/dashboard', icon: '⊞', label: 'Dashboard' },
+    { to: '/loads',     icon: '↗',  label: 'Loads' },
+    { to: '/search',    icon: '⌕',  label: 'Search' },
+    { to: '/drivers',   icon: '◉',  label: 'Drivers' },
+    { to: '/settings',  icon: '⚙',  label: 'Settings' },
   ],
 }
 
@@ -81,7 +106,7 @@ function Sidebar({ user, onLogout }) {
 // ── Mobile bottom nav ──────────────────────────────────────────────────────────
 function BottomNav({ user, onLogout }) {
   const loc = useLocation()
-  const links = NAV_LINKS[user.role] || []
+  const links = BOTTOM_NAV_LINKS[user.role] || []
   // Limit to 5 tabs; Companies is only for dispatcher so it fits
   return (
     <div style={{
@@ -149,6 +174,16 @@ function AppShell({ children, user, onLogout }) {
 export default function App() {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [, forceUpdate] = useState(0)
+
+  // Apply saved theme immediately
+  useEffect(() => {
+    const saved = localStorage.getItem('theme') || 'dark'
+    applyTheme(saved)
+    const fn = () => forceUpdate(n => n + 1)
+    window.addEventListener('themechange', fn)
+    return () => window.removeEventListener('themechange', fn)
+  }, [])
 
   useEffect(() => {
     const token = localStorage.getItem('token')
@@ -177,6 +212,7 @@ export default function App() {
   )
 
   return (
+    <ThemeProvider>
     <AuthContext.Provider value={{ user, setUser }}>
       <BrowserRouter>
         {!user ? (
@@ -193,11 +229,14 @@ export default function App() {
               <Route path="/drivers" element={<Drivers />} />
               <Route path="/trucks" element={<Trucks />} />
               {user.role === 'dispatcher' && <Route path="/companies" element={<Companies />} />}
+              <Route path="/search" element={<Search />} />
+              <Route path="/settings" element={<Settings />} />
               <Route path="*" element={<Navigate to="/dashboard" />} />
             </Routes>
           </AppShell>
         )}
       </BrowserRouter>
     </AuthContext.Provider>
+    </ThemeProvider>
   )
 }

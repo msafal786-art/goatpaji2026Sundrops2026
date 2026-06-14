@@ -1,21 +1,36 @@
-export const T = {
+const DARK = {
   bg:    '#0e0e10',
   bg1:   '#1a1a1d',
   bg2:   '#252528',
   bg3:   '#323235',
   text:  '#f2f2f7',
-  text2: 'rgba(235,235,245,0.72)',
+  text2: 'rgba(60,60,67,0.85)',
   text3: 'rgba(235,235,245,0.40)',
   sep:   'rgba(84,84,88,0.45)',
-  blue:   '#0a84ff',
-  green:  '#30d158',
-  orange: '#ff9f0a',
-  red:    '#ff453a',
-  purple: '#bf5af2',
-  teal:   '#5ac8f5',
-  yellow: '#ffd60a',
-  indigo: '#5e5ce6',
-  font: "-apple-system, BlinkMacSystemFont, 'SF Pro Display', system-ui, sans-serif",
+  isDark: true,
+}
+
+const LIGHT = {
+  bg:    '#f2f2f7',
+  bg1:   '#ffffff',
+  bg2:   '#e5e5ea',
+  bg3:   '#d1d1d6',
+  text:  '#1c1c1e',
+  text2: 'rgba(60,60,67,0.75)',
+  text3: 'rgba(60,60,67,0.40)',
+  sep:   'rgba(60,60,67,0.18)',
+  isDark: false,
+}
+
+// T is set at runtime by ThemeContext — default to dark
+export let T = { ...DARK }
+
+export function applyTheme(mode) {
+  const src = mode === 'light' ? LIGHT : DARK
+  Object.assign(T, src)
+  // Update html background so no flash
+  document.documentElement.style.background = src.bg
+  document.documentElement.style.color = src.text
 }
 
 export const STATUS = {
@@ -24,20 +39,19 @@ export const STATUS = {
   dispatched: { color: '#bf5af2', label: 'Dispatched' },
   in_transit: { color: '#30d158', label: 'In Transit' },
   delivered:  { color: '#5ac8f5', label: 'Delivered' },
-  completed:  { color: 'rgba(235,235,245,0.3)', label: 'Completed' },
+  completed:  { color: 'rgba(120,120,128,0.4)', label: 'Completed' },
   available:  { color: '#30d158', label: 'Available' },
   on_load:    { color: '#0a84ff', label: 'On Load' },
-  off_duty:   { color: 'rgba(235,235,245,0.3)', label: 'Off Duty' },
+  off_duty:   { color: 'rgba(120,120,128,0.4)', label: 'Off Duty' },
   maintenance:{ color: '#ff453a', label: 'Maintenance' },
 }
 
-// 5 active carriers + fallback
 export const CARRIER_COLORS = {
-  'WMK STAR INC':           '#5e5ce6',   // indigo
-  'SANT TRANS INC':         '#ff9f0a',   // orange
-  'THE FRONTLINE FREIGHT INC': '#30d158', // green
-  'CHEEMA BROS TRANS INC':  '#0a84ff',   // blue
-  'BROTHERS LOGISTICS INC': '#bf5af2',   // purple
+  'WMK STAR INC':              '#5e5ce6',
+  'SANT TRANS INC':            '#ff9f0a',
+  'THE FRONTLINE FREIGHT INC': '#30d158',
+  'CHEEMA BROS TRANS INC':     '#0a84ff',
+  'BROTHERS LOGISTICS INC':    '#bf5af2',
 }
 
 export function carrierColor(name) {
