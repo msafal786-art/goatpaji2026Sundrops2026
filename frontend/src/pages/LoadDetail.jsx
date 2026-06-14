@@ -12,17 +12,31 @@ export default function LoadDetail() {
   const mobile = useIsMobile()
   const navigate = useNavigate()
   const [load, setLoad] = useState(null)
+  const [allIds, setAllIds] = useState([])
   const [dispatchMsg, setDispatchMsg] = useState('')
   const [showMsg, setShowMsg] = useState(false)
   const [showEdit, setShowEdit] = useState(false)
   const [copying, setCopying] = useState(false)
 
   useEffect(() => { loadData() }, [id])
+  useEffect(() => {
+    api.loads().then(ls => {
+      const sorted = [...ls].sort((a, b) => {
+        const ad = a.pickup_date || '', bd = b.pickup_date || ''
+        return ad < bd ? -1 : ad > bd ? 1 : 0
+      })
+      setAllIds(sorted.map(l => l.id))
+    })
+  }, [])
 
   async function loadData() {
     const l = await api.load(id)
     setLoad(l)
   }
+
+  const currentIdx = allIds.indexOf(Number(id))
+  const prevId = currentIdx > 0 ? allIds[currentIdx - 1] : null
+  const nextId = currentIdx >= 0 && currentIdx < allIds.length - 1 ? allIds[currentIdx + 1] : null
 
   async function handleGetDispatch() {
     const { message } = await api.dispatchMessage(id)
@@ -53,16 +67,35 @@ export default function LoadDetail() {
 
   return (
     <div>
-      <button onClick={() => navigate('/loads')} style={{
-        background: 'none', border: 'none', color: T.blue, cursor: 'pointer',
-        fontSize: 13, marginBottom: 20, padding: 0, fontWeight: 600,
-      }}>← Back to Loads</button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+        <button onClick={() => navigate('/loads')} style={{
+          background: 'none', border: 'none', color: T.blue, cursor: 'pointer',
+          fontSize: 13, padding: 0, fontWeight: 600,
+        }}>← Back to Loads</button>
+        <div style={{ display: 'flex', gap: 6 }}>
+          <button onClick={() => prevId && navigate(`/loads/${prevId}`)} disabled={!prevId} style={{
+            padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: prevId ? 'pointer' : 'default',
+            background: T.bg2, border: `1px solid ${T.sep}`, color: prevId ? T.text : T.text3,
+          }}>← Prev</button>
+          <button onClick={() => nextId && navigate(`/loads/${nextId}`)} disabled={!nextId} style={{
+            padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: nextId ? 'pointer' : 'default',
+            background: T.bg2, border: `1px solid ${T.sep}`, color: nextId ? T.text : T.text3,
+          }}>Next →</button>
+        </div>
+      </div>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
         <div>
-          <h1 style={{ fontSize: 24, fontWeight: 700, color: T.text, letterSpacing: -0.4 }}>
-            {load.load_number || `#${load.id}`}
-          </h1>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+            {load.broker_order && (
+              <h1 style={{ fontSize: 24, fontWeight: 700, color: T.text, letterSpacing: -0.4, margin: 0 }}>
+                {load.broker_order}
+              </h1>
+            )}
+            <span style={{ fontSize: 14, fontWeight: 600, color: T.text3, letterSpacing: 0 }}>
+              #{load.load_number || load.id}
+            </span>
+          </div>
           <div style={{ marginTop: 6, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{
               padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700,

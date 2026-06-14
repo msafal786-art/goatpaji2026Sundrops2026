@@ -4,7 +4,7 @@ const DARK = {
   bg2:   '#252528',
   bg3:   '#323235',
   text:  '#f2f2f7',
-  text2: 'rgba(60,60,67,0.85)',
+  text2: 'rgba(235,235,245,0.60)',
   text3: 'rgba(235,235,245,0.40)',
   sep:   'rgba(84,84,88,0.45)',
   isDark: true,

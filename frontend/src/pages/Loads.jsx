@@ -97,11 +97,13 @@ function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer }) {
       >
         {/* Load # */}
         <td style={{ padding: '7px 10px 7px 14px', whiteSpace: 'nowrap', borderLeft: `3px solid ${accentColor}` }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: late ? T.red : T.text }}>
-            {late && '! '}{load.load_number || `#${load.id}`}
-          </div>
-          <div style={{ fontSize: 10, color: T.text3, marginTop: 1, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {load.broker_name}
+          {load.broker_order && (
+            <div style={{ fontSize: 12, fontWeight: 700, color: late ? T.red : T.text }}>
+              {late && '! '}{load.broker_order}
+            </div>
+          )}
+          <div style={{ fontSize: 10, color: T.text3, marginTop: 1 }}>
+            #{load.load_number || load.id} · {load.broker_name}
           </div>
         </td>
 
