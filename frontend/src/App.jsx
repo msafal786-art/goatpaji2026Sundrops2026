@@ -1,8 +1,9 @@
-import React, { useState, useEffect, createContext, useContext } from 'react'
+import React, { useState, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom'
 import { api, maybeRefreshToken } from './api.js'
 import { T, applyTheme } from './theme.js'
 import { ThemeProvider } from './ThemeContext.jsx'
+import { AuthContext } from './AuthContext.jsx'
 import { useIsMobile } from './hooks/useIsMobile.js'
 import Login from './pages/Login.jsx'
 import Landing from './pages/Landing.jsx'
@@ -16,9 +17,8 @@ import DriverView from './pages/DriverView.jsx'
 import Settings from './pages/Settings.jsx'
 import Search from './pages/Search.jsx'
 import Recommendations from './pages/Recommendations.jsx'
+import Payroll from './pages/Payroll.jsx'
 
-export const AuthContext = createContext(null)
-export function useAuth() { return useContext(AuthContext) }
 
 const NAV_LINKS = {
   dispatcher: [
@@ -28,6 +28,7 @@ const NAV_LINKS = {
     { to: '/search',          icon: '⌕',  label: 'Search' },
     { to: '/drivers',         icon: '◉',  label: 'Drivers' },
     { to: '/trucks',          icon: '▣',  label: 'Trucks' },
+    { to: '/payroll',         icon: '💵', label: 'Payroll' },
     { to: '/companies',       icon: '⬡',  label: 'Companies' },
     { to: '/settings',        icon: '⚙',  label: 'Settings' },
   ],
@@ -38,6 +39,7 @@ const NAV_LINKS = {
     { to: '/search',          icon: '⌕',  label: 'Search' },
     { to: '/drivers',         icon: '◉',  label: 'Drivers' },
     { to: '/trucks',          icon: '▣',  label: 'Trucks' },
+    { to: '/payroll',         icon: '💵', label: 'Payroll' },
     { to: '/settings',        icon: '⚙',  label: 'Settings' },
   ],
 }
@@ -70,9 +72,9 @@ function Sidebar({ user, onLogout }) {
       borderRight: `1px solid ${T.sep}`,
     }}>
       <div style={{ padding: '20px 16px 16px', borderBottom: `1px solid ${T.sep}` }}>
-        <div style={{ fontSize: 15, fontWeight: 700, color: T.text, letterSpacing: -0.3 }}>
+        <div style={{ fontSize: 13, fontWeight: 800, color: T.text, letterSpacing: 0.5, textTransform: 'uppercase', lineHeight: 1.3 }}>
           {user.role === 'company_owner' && user.company_name
-            ? user.company_name.replace(' INC','').replace(' LLC','').replace('THE FRONTLINE FREIGHT','FRONTLINE').replace(' TRANS','').replace(' LOGISTICS','').replace(' BROS','')
+            ? user.company_name
             : 'Dispatch Portal'}
         </div>
         <div style={{ fontSize: 11, color: T.text3, marginTop: 2 }}>Freight Management</div>
@@ -161,9 +163,9 @@ function AppShell({ children, user, onLogout }) {
         overflowX: 'hidden',
       }}>
         {mobile && (
-          <div style={{ fontSize: 14, fontWeight: 700, color: T.text, marginBottom: 16, letterSpacing: -0.3 }}>
+          <div style={{ fontSize: 13, fontWeight: 800, color: T.text, marginBottom: 16, letterSpacing: 0.5, textTransform: 'uppercase', lineHeight: 1.3 }}>
             {user.role === 'company_owner' && user.company_name
-              ? user.company_name.replace(' INC','').replace(' LLC','').replace('THE FRONTLINE FREIGHT','FRONTLINE').replace(' TRANS','').replace(' LOGISTICS','').replace(' BROS','')
+              ? user.company_name
               : 'Dispatch Portal'}
           </div>
         )}
@@ -240,6 +242,7 @@ export default function App() {
               {user.role === 'dispatcher' && <Route path="/companies" element={<Companies />} />}
               <Route path="/search" element={<Search />} />
               <Route path="/recommendations" element={<Recommendations />} />
+              <Route path="/payroll" element={<Payroll />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="*" element={<Navigate to="/dashboard" />} />
             </Routes>

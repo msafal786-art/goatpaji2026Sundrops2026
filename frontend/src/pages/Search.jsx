@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { T, STATUS } from '../theme.js'
 import { api } from '../api.js'
-import { useAuth } from '../App.jsx'
+import { useAuth } from '../AuthContext.jsx'
 
 export default function Search() {
   const { user } = useAuth()

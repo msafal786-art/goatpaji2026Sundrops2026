@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api.js'
-import { useAuth } from '../App.jsx'
+import { useAuth } from '../AuthContext.jsx'
 import { T, STATUS, carrierColor, ACTIVE_CARRIERS } from '../theme.js'
 import { useIsMobile } from '../hooks/useIsMobile.js'
 import LoadForm from '../components/LoadForm.jsx'
@@ -386,7 +386,7 @@ export default function Loads() {
         <div style={{ display: 'flex', gap: 6 }}>
           <button onClick={fetchLoads} style={{
             padding: mobile ? '7px 10px' : '8px 14px', background: T.bg2, border: `1px solid ${T.sep}`,
-            borderRadius: 8, cursor: 'pointer', fontSize: 12, color: T.text2, fontWeight: 600,
+            borderRadius: 8, cursor: 'pointer', fontSize: 14, color: T.text, fontWeight: 600,
           }}>↻</button>
           <button onClick={() => { setEditLoad(null); setShowForm(true) }} style={{
             padding: mobile ? '7px 12px' : '8px 16px', background: T.blue, border: 'none',

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { T } from '../theme.js'
 import { useTheme } from '../ThemeContext.jsx'
-import { useAuth } from '../App.jsx'
+import { useAuth } from '../AuthContext.jsx'
 
 function useThemeForce() {
   const [, tick] = useState(0)

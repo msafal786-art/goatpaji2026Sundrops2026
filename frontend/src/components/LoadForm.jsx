@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { api } from '../api.js'
-import { useAuth } from '../App.jsx'
+import { useAuth } from '../AuthContext.jsx'
 import { T } from '../theme.js'
 
 const EMPTY = {

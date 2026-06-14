@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api.js'
-import { useAuth } from '../App.jsx'
+import { useAuth } from '../AuthContext.jsx'
 import { T, STATUS, carrierColor } from '../theme.js'
 import { useIsMobile } from '../hooks/useIsMobile.js'
 

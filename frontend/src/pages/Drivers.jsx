@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api.js'
-import { useAuth } from '../App.jsx'
+import { useAuth } from '../AuthContext.jsx'
 import { T, STATUS } from '../theme.js'
 import { useIsMobile } from '../hooks/useIsMobile.js'
 
@@ -54,6 +54,11 @@ export default function Drivers() {
     setDrivers(ds => ds.filter(d => d.id !== id))
   }
 
+  async function handleToggleActive(id) {
+    const res = await api.toggleDriverActive(id)
+    setDrivers(ds => ds.map(d => d.id === id ? { ...d, is_active: res.is_active } : d))
+  }
+
   function set(k, v) { setForm(f => ({ ...f, [k]: v })) }
 
   const mobile = useIsMobile()
@@ -67,16 +72,22 @@ export default function Drivers() {
       <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr' : 'repeat(auto-fill, minmax(300px, 1fr))', gap: 10 }}>
         {drivers.map(d => {
           const sc = STATUS[d.status] || STATUS.available
+          const isDisabled = d.is_active === 0
           return (
-            <div key={d.id} style={{ background: T.bg1, borderRadius: 14, padding: '16px 18px', border: `1px solid ${T.sep}` }}>
+            <div key={d.id} style={{ background: T.bg1, borderRadius: 14, padding: '16px 18px', border: `1px solid ${isDisabled ? T.sep : T.sep}`, opacity: isDisabled ? 0.55 : 1 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                 <div>
-                  <div style={{ fontWeight: 700, fontSize: 15, color: T.text }}>{d.full_name}</div>
+                  <div style={{ fontWeight: 700, fontSize: 15, color: T.text, display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {d.full_name}
+                    {isDisabled && <span style={{ fontSize: 10, fontWeight: 700, color: '#ff9f0a', background: '#ff9f0a22', padding: '2px 8px', borderRadius: 20 }}>DISABLED</span>}
+                  </div>
                   <div style={{ fontSize: 12, color: T.text3, marginTop: 2 }}>{d.company_name}</div>
                 </div>
-                <span style={{ fontSize: 10, fontWeight: 700, color: sc.color, background: sc.color + '22', padding: '3px 9px', borderRadius: 20, textTransform: 'capitalize' }}>
-                  {sc.label}
-                </span>
+                {!isDisabled && (
+                  <span style={{ fontSize: 10, fontWeight: 700, color: sc.color, background: sc.color + '22', padding: '3px 9px', borderRadius: 20, textTransform: 'capitalize' }}>
+                    {sc.label}
+                  </span>
+                )}
               </div>
               <div style={{ marginTop: 12, fontSize: 12, color: T.text2, display: 'flex', flexDirection: 'column', gap: 4 }}>
                 {d.phone && <span>{d.phone}</span>}
@@ -85,7 +96,13 @@ export default function Drivers() {
                 {d.medical_card_expiry && <span>Medical exp: {d.medical_card_expiry}</span>}
               </div>
               <div style={{ marginTop: 14, display: 'flex', gap: 8 }}>
-                <button style={smBtn} onClick={() => openEdit(d)}>Edit</button>
+                {!isDisabled && <button style={smBtn} onClick={() => openEdit(d)}>Edit</button>}
+                <button
+                  style={{ ...smBtn, color: isDisabled ? '#30d158' : '#ff453a', borderColor: isDisabled ? '#30d15840' : '#ff453a40' }}
+                  onClick={() => handleToggleActive(d.id)}
+                >
+                  {isDisabled ? 'Enable' : 'Disable'}
+                </button>
                 {user.role === 'dispatcher' && (
                   <button style={{ ...smBtn, color: T.red, borderColor: T.red + '40' }} onClick={() => handleDelete(d.id)}>Remove</button>
                 )}

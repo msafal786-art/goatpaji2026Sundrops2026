@@ -192,6 +192,7 @@ app.get('/api/drivers', auth, (req, res) => {
   res.json(db.prepare(query).all(...params));
 });
 
+
 app.post('/api/drivers', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
   const { full_name, phone, email, license_number, license_expiry, medical_card_expiry, notes, company_id, username, password } = req.body;
   const cid = req.user.role === 'company_owner' ? req.user.company_id : company_id;
@@ -212,8 +213,9 @@ app.post('/api/drivers', auth, requireRole('dispatcher', 'company_owner'), (req,
 });
 
 app.put('/api/drivers/:id', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
-  const { full_name, phone, email, license_number, license_expiry, medical_card_expiry, notes, status } = req.body;
-  db.prepare('UPDATE drivers SET full_name=?,phone=?,email=?,license_number=?,license_expiry=?,medical_card_expiry=?,notes=?,status=? WHERE id=?').run(full_name, phone, email, license_number, license_expiry, medical_card_expiry, notes, status, req.params.id);
+  const { full_name, phone, email, license_number, license_expiry, medical_card_expiry, notes, status, pay_percentage } = req.body;
+  db.prepare('UPDATE drivers SET full_name=?,phone=?,email=?,license_number=?,license_expiry=?,medical_card_expiry=?,notes=?,status=?,pay_percentage=? WHERE id=?')
+    .run(full_name, phone, email, license_number, license_expiry, medical_card_expiry, notes, status, pay_percentage ?? 70, req.params.id);
   res.json(db.prepare('SELECT d.*, c.name as company_name FROM drivers d LEFT JOIN companies c ON d.company_id = c.id WHERE d.id = ?').get(req.params.id));
 });
 
@@ -337,7 +339,7 @@ app.post('/api/loads', auth, requireRole('dispatcher', 'company_owner'), (req, r
   );
 
   if (driver_id) {
-    db.prepare("UPDATE drivers SET status = 'on_load' WHERE id = ?").run(driver_id);
+    db.prepare("UPDATE drivers SET status='on_load' WHERE id=?").run(driver_id);
   }
   if (truck_id) {
     db.prepare("UPDATE trucks SET status = 'on_load' WHERE id = ?").run(truck_id);
@@ -391,7 +393,7 @@ app.put('/api/loads/:id', auth, requireRole('dispatcher', 'company_owner'), (req
     req.params.id
   );
 
-  if (driver_id) db.prepare("UPDATE drivers SET status = 'on_load' WHERE id = ?").run(driver_id);
+  if (driver_id) db.prepare("UPDATE drivers SET status='on_load' WHERE id=?").run(driver_id);
   if (truck_id) db.prepare("UPDATE trucks SET status = 'on_load' WHERE id = ?").run(truck_id);
 
   res.json(db.prepare('SELECT l.*, d.full_name as driver_name, d.phone as driver_phone, t.tractor_number, t.trailer_number as truck_trailer, c.name as company_name FROM loads l LEFT JOIN drivers d ON l.driver_id = d.id LEFT JOIN trucks t ON l.truck_id = t.id LEFT JOIN companies c ON l.company_id = c.id WHERE l.id = ?').get(req.params.id));
@@ -584,6 +586,102 @@ app.get('/api/search', auth, (req, res) => {
     LIMIT 100
   `).all(like, like, like, like, like, like, ...companyParam);
   res.json(rows);
+});
+
+// ── Payroll (daily miles, weekly view) ───────────────────────────────────────
+
+// GET /api/payroll/week?start=YYYY-MM-DD  (start = Monday of the week)
+app.get('/api/payroll/week', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
+  const { start } = req.query;
+  if (!start) return res.status(400).json({ error: 'start date required' });
+
+  // Build date range Mon–Sun
+  const weekDates = [];
+  const mon = new Date(start + 'T00:00:00');
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(mon);
+    d.setDate(mon.getDate() + i);
+    weekDates.push(d.toISOString().slice(0, 10));
+  }
+
+  const isOwner = req.user.role === 'company_owner';
+  const drivers = isOwner
+    ? db.prepare(`SELECT d.id, d.full_name, d.rate_per_mile, d.company_id, c.name as company_name
+        FROM drivers d LEFT JOIN companies c ON d.company_id = c.id
+        WHERE d.company_id = ? AND d.is_active = 1
+        ORDER BY d.full_name`).all(req.user.company_id)
+    : db.prepare(`SELECT d.id, d.full_name, d.rate_per_mile, d.company_id, c.name as company_name
+        FROM drivers d LEFT JOIN companies c ON d.company_id = c.id
+        WHERE d.is_active = 1
+        ORDER BY c.name, d.full_name`).all();
+
+  const placeholders = weekDates.map(() => '?').join(',');
+  const entries = db.prepare(
+    `SELECT * FROM payroll_entries WHERE driver_id IN (${drivers.map(() => '?').join(',')}) AND entry_date IN (${placeholders})`
+  ).all(...drivers.map(d => d.id), ...weekDates);
+
+  const entryMap = {};
+  for (const e of entries) {
+    if (!entryMap[e.driver_id]) entryMap[e.driver_id] = {};
+    entryMap[e.driver_id][e.entry_date] = e;
+  }
+
+  const result = drivers.map(d => ({
+    ...d,
+    days: weekDates.map(date => entryMap[d.id]?.[date] || null),
+    total_miles: weekDates.reduce((sum, date) => sum + (entryMap[d.id]?.[date]?.miles || 0), 0),
+  }));
+
+  res.json({ week_start: start, dates: weekDates, drivers: result });
+});
+
+// PUT /api/payroll/entry — upsert a single day's miles for a driver
+app.put('/api/payroll/entry', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
+  const { driver_id, entry_date, miles, notes } = req.body;
+  if (!driver_id || !entry_date) return res.status(400).json({ error: 'driver_id and entry_date required' });
+
+  const driver = db.prepare('SELECT * FROM drivers WHERE id = ?').get(driver_id);
+  if (!driver) return res.status(404).json({ error: 'Driver not found' });
+
+  // company_owner can only edit their own drivers
+  if (req.user.role === 'company_owner' && driver.company_id !== req.user.company_id)
+    return res.status(403).json({ error: 'Forbidden' });
+
+  const m = Number(miles) || 0;
+  db.prepare(`
+    INSERT INTO payroll_entries (driver_id, company_id, entry_date, miles, notes, updated_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(driver_id, entry_date) DO UPDATE SET
+      miles=excluded.miles, notes=excluded.notes, updated_at=datetime('now')
+  `).run(driver_id, driver.company_id, entry_date, m, notes || null);
+
+  res.json({ ok: true });
+});
+
+// DELETE /api/payroll/entry?driver_id=X&date=YYYY-MM-DD
+app.delete('/api/payroll/entry', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
+  const { driver_id, date } = req.query;
+  db.prepare('DELETE FROM payroll_entries WHERE driver_id=? AND entry_date=?').run(driver_id, date);
+  res.json({ ok: true });
+});
+
+// PUT /api/drivers/:id/toggle-active — disable or enable a driver
+app.put('/api/drivers/:id/toggle-active', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
+  const driver = db.prepare('SELECT * FROM drivers WHERE id = ?').get(req.params.id);
+  if (!driver) return res.status(404).json({ error: 'Driver not found' });
+  if (req.user.role === 'company_owner' && driver.company_id !== req.user.company_id)
+    return res.status(403).json({ error: 'Forbidden' });
+  const newActive = driver.is_active === 0 ? 1 : 0;
+  db.prepare('UPDATE drivers SET is_active=? WHERE id=?').run(newActive, req.params.id);
+  res.json({ ok: true, is_active: newActive });
+});
+
+// PUT /api/drivers/:id/rate — update driver's default rate per mile
+app.put('/api/drivers/:id/rate', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
+  const rate = Number(req.body.rate_per_mile);
+  if (isNaN(rate) || rate < 0) return res.status(400).json({ error: 'Invalid rate' });
+  db.prepare('UPDATE drivers SET rate_per_mile=? WHERE id=?').run(rate, req.params.id);
+  res.json({ ok: true, rate_per_mile: rate });
 });
 
 // ── Lane recommendations ──────────────────────────────────────────────────────

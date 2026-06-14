@@ -58,6 +58,7 @@ export const api = {
   createDriver: (d) => req('POST', '/drivers', d),
   updateDriver: (id, d) => req('PUT', `/drivers/${id}`, d),
   deleteDriver: (id) => req('DELETE', `/drivers/${id}`),
+  toggleDriverActive: (id) => req('PUT', `/drivers/${id}/toggle-active`),
 
   trucks: () => req('GET', '/trucks'),
   createTruck: (d) => req('POST', '/trucks', d),
@@ -86,5 +87,9 @@ export const api = {
 
   search: (q) => req('GET', `/search?q=${encodeURIComponent(q)}`),
   recommendations: () => req('GET', '/recommendations'),
+  payrollWeek: (start) => req('GET', `/payroll/week?start=${start}`),
+  savePayrollEntry: (body) => req('PUT', '/payroll/entry', body),
+  deletePayrollEntry: (driver_id, date) => req('DELETE', `/payroll/entry?driver_id=${driver_id}&date=${date}`),
+  updateDriverRate: (id, rate) => req('PUT', `/drivers/${id}/rate`, { rate_per_mile: rate }),
   get: (path) => req('GET', path.replace(/^\/api/, '')),
 }

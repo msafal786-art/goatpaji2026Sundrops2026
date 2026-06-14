@@ -114,6 +114,31 @@ db.exec(`
   );
 `);
 
+// ── Incremental migrations ───────────────────────────────────────────────────
+const cols = db.prepare("PRAGMA table_info(drivers)").all().map(r => r.name);
+if (!cols.includes('pay_percentage'))   db.prepare('ALTER TABLE drivers ADD COLUMN pay_percentage REAL DEFAULT 70').run();
+if (!cols.includes('rate_per_mile'))    db.prepare('ALTER TABLE drivers ADD COLUMN rate_per_mile REAL DEFAULT 0.55').run();
+if (!cols.includes('is_active'))        db.prepare('ALTER TABLE drivers ADD COLUMN is_active INTEGER DEFAULT 1').run();
+
+const loadCols = db.prepare("PRAGMA table_info(loads)").all().map(r => r.name);
+if (!loadCols.includes('relay_driver_id')) db.prepare('ALTER TABLE loads ADD COLUMN relay_driver_id INTEGER REFERENCES drivers(id)').run();
+if (!loadCols.includes('relay_split'))     db.prepare('ALTER TABLE loads ADD COLUMN relay_split INTEGER DEFAULT 50').run();
+
+// Payroll — daily mileage entries, one row per driver per day
+db.exec(`
+  CREATE TABLE IF NOT EXISTS payroll_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    driver_id INTEGER NOT NULL REFERENCES drivers(id),
+    company_id INTEGER REFERENCES companies(id),
+    entry_date TEXT NOT NULL,
+    miles REAL DEFAULT 0,
+    notes TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(driver_id, entry_date)
+  );
+`);
+
 // Seed a default dispatcher account
 const bcrypt = require('bcryptjs');
 const existingDispatcher = db.prepare('SELECT id FROM users WHERE username = ?').get('dispatcher');
