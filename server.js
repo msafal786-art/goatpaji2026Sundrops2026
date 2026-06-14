@@ -8,6 +8,15 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const Anthropic = require('@anthropic-ai/sdk');
 
+// If running on Railway with a volume, seed the DB from the bundled file on first deploy
+const VOL_DB = process.env.DB_PATH;
+const BUNDLED_DB = path.join(__dirname, 'dispatch.db');
+if (VOL_DB && VOL_DB !== BUNDLED_DB && !fs.existsSync(VOL_DB) && fs.existsSync(BUNDLED_DB)) {
+  fs.mkdirSync(path.dirname(VOL_DB), { recursive: true });
+  fs.copyFileSync(BUNDLED_DB, VOL_DB);
+  console.log('Seeded volume DB from bundled dispatch.db');
+}
+
 const db = require('./db');
 
 const app = express();
