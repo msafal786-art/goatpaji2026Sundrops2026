@@ -116,9 +116,18 @@ db.exec(`
 
 // ── Incremental migrations ───────────────────────────────────────────────────
 const cols = db.prepare("PRAGMA table_info(drivers)").all().map(r => r.name);
-if (!cols.includes('pay_percentage'))   db.prepare('ALTER TABLE drivers ADD COLUMN pay_percentage REAL DEFAULT 70').run();
-if (!cols.includes('rate_per_mile'))    db.prepare('ALTER TABLE drivers ADD COLUMN rate_per_mile REAL DEFAULT 0.55').run();
-if (!cols.includes('is_active'))        db.prepare('ALTER TABLE drivers ADD COLUMN is_active INTEGER DEFAULT 1').run();
+if (!cols.includes('pay_percentage'))          db.prepare('ALTER TABLE drivers ADD COLUMN pay_percentage REAL DEFAULT 70').run();
+if (!cols.includes('rate_per_mile'))           db.prepare('ALTER TABLE drivers ADD COLUMN rate_per_mile REAL DEFAULT 0.55').run();
+if (!cols.includes('is_active'))               db.prepare('ALTER TABLE drivers ADD COLUMN is_active INTEGER DEFAULT 1').run();
+if (!cols.includes('hire_date'))               db.prepare('ALTER TABLE drivers ADD COLUMN hire_date TEXT').run();
+if (!cols.includes('date_of_birth'))           db.prepare('ALTER TABLE drivers ADD COLUMN date_of_birth TEXT').run();
+if (!cols.includes('address'))                 db.prepare('ALTER TABLE drivers ADD COLUMN address TEXT').run();
+if (!cols.includes('cdl_class'))               db.prepare('ALTER TABLE drivers ADD COLUMN cdl_class TEXT').run();
+if (!cols.includes('license_state'))           db.prepare('ALTER TABLE drivers ADD COLUMN license_state TEXT').run();
+if (!cols.includes('drug_test_date'))          db.prepare('ALTER TABLE drivers ADD COLUMN drug_test_date TEXT').run();
+if (!cols.includes('background_check_date'))   db.prepare('ALTER TABLE drivers ADD COLUMN background_check_date TEXT').run();
+if (!cols.includes('emergency_contact_name'))  db.prepare('ALTER TABLE drivers ADD COLUMN emergency_contact_name TEXT').run();
+if (!cols.includes('emergency_contact_phone')) db.prepare('ALTER TABLE drivers ADD COLUMN emergency_contact_phone TEXT').run();
 
 const loadCols = db.prepare("PRAGMA table_info(loads)").all().map(r => r.name);
 if (!loadCols.includes('relay_driver_id')) db.prepare('ALTER TABLE loads ADD COLUMN relay_driver_id INTEGER REFERENCES drivers(id)').run();

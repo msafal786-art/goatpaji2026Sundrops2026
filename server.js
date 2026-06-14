@@ -96,9 +96,9 @@ function requireRole(...roles) {
 
 // ── Auth routes ──────────────────────────────────────────────────────────────
 app.post('/api/login', loginLimiter, (req, res) => {
-  const { username, password } = req.body;
+  const { username, password, admin_code } = req.body;
 
-  // Input validation — reject obviously bad input before hitting DB
+  // Input validation
   if (!username || !password ||
       typeof username !== 'string' || typeof password !== 'string' ||
       username.length > 120 || password.length > 256) {
@@ -112,12 +112,21 @@ app.post('/api/login', loginLimiter, (req, res) => {
   if (!user || !match) {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
+
+  // Admin accounts (dispatcher with no company_id) require the admin code if ADMIN_SECRET is set
+  const isAdmin = user.role === 'dispatcher' && !user.company_id;
+  const secret = process.env.ADMIN_SECRET;
+  if (isAdmin && secret) {
+    if (!admin_code || admin_code !== secret) {
+      return res.status(401).json({ error: 'Admin code required', need_admin_code: true });
+    }
+  }
+
   const token = jwt.sign(
     { id: user.id, role: user.role, company_id: user.company_id, full_name: user.full_name },
     process.env.JWT_SECRET,
     { expiresIn: '24h' }
   );
-  // Log successful login (no sensitive data)
   console.log(`[login] user=${user.id} role=${user.role} ip=${req.ip} at=${new Date().toISOString()}`);
   res.json({ token, role: user.role, full_name: user.full_name, company_id: user.company_id });
 });
@@ -194,7 +203,12 @@ app.get('/api/drivers', auth, (req, res) => {
 
 
 app.post('/api/drivers', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
-  const { full_name, phone, email, license_number, license_expiry, medical_card_expiry, notes, company_id, username, password } = req.body;
+  const {
+    full_name, phone, email, license_number, license_expiry, medical_card_expiry, notes, company_id,
+    username, password,
+    hire_date, date_of_birth, address, cdl_class, license_state,
+    drug_test_date, background_check_date, emergency_contact_name, emergency_contact_phone
+  } = req.body;
   const cid = req.user.role === 'company_owner' ? req.user.company_id : company_id;
 
   let user_id = null;
@@ -208,14 +222,34 @@ app.post('/api/drivers', auth, requireRole('dispatcher', 'company_owner'), (req,
     }
   }
 
-  const r = db.prepare('INSERT INTO drivers (user_id,company_id,full_name,phone,email,license_number,license_expiry,medical_card_expiry,notes) VALUES (?,?,?,?,?,?,?,?,?)').run(user_id, cid, full_name, phone, email, license_number, license_expiry, medical_card_expiry, notes);
+  const r = db.prepare(`INSERT INTO drivers
+    (user_id,company_id,full_name,phone,email,license_number,license_expiry,medical_card_expiry,notes,
+     hire_date,date_of_birth,address,cdl_class,license_state,drug_test_date,background_check_date,
+     emergency_contact_name,emergency_contact_phone)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+    user_id, cid, full_name, phone, email, license_number, license_expiry, medical_card_expiry, notes,
+    hire_date||null, date_of_birth||null, address||null, cdl_class||null, license_state||null,
+    drug_test_date||null, background_check_date||null, emergency_contact_name||null, emergency_contact_phone||null
+  );
   res.json(db.prepare('SELECT d.*, c.name as company_name FROM drivers d LEFT JOIN companies c ON d.company_id = c.id WHERE d.id = ?').get(r.lastInsertRowid));
 });
 
 app.put('/api/drivers/:id', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
-  const { full_name, phone, email, license_number, license_expiry, medical_card_expiry, notes, status, pay_percentage } = req.body;
-  db.prepare('UPDATE drivers SET full_name=?,phone=?,email=?,license_number=?,license_expiry=?,medical_card_expiry=?,notes=?,status=?,pay_percentage=? WHERE id=?')
-    .run(full_name, phone, email, license_number, license_expiry, medical_card_expiry, notes, status, pay_percentage ?? 70, req.params.id);
+  const {
+    full_name, phone, email, license_number, license_expiry, medical_card_expiry, notes, status, pay_percentage,
+    hire_date, date_of_birth, address, cdl_class, license_state,
+    drug_test_date, background_check_date, emergency_contact_name, emergency_contact_phone
+  } = req.body;
+  db.prepare(`UPDATE drivers SET
+    full_name=?,phone=?,email=?,license_number=?,license_expiry=?,medical_card_expiry=?,notes=?,status=?,pay_percentage=?,
+    hire_date=?,date_of_birth=?,address=?,cdl_class=?,license_state=?,drug_test_date=?,background_check_date=?,
+    emergency_contact_name=?,emergency_contact_phone=?
+    WHERE id=?`).run(
+    full_name, phone, email, license_number, license_expiry, medical_card_expiry, notes, status, pay_percentage ?? 70,
+    hire_date||null, date_of_birth||null, address||null, cdl_class||null, license_state||null,
+    drug_test_date||null, background_check_date||null, emergency_contact_name||null, emergency_contact_phone||null,
+    req.params.id
+  );
   res.json(db.prepare('SELECT d.*, c.name as company_name FROM drivers d LEFT JOIN companies c ON d.company_id = c.id WHERE d.id = ?').get(req.params.id));
 });
 
@@ -695,6 +729,23 @@ app.put('/api/drivers/:id/toggle-active', auth, requireRole('dispatcher', 'compa
   const newActive = driver.is_active === 0 ? 1 : 0;
   db.prepare('UPDATE drivers SET is_active=? WHERE id=?').run(newActive, req.params.id);
   res.json({ ok: true, is_active: newActive });
+});
+
+// PUT /api/drivers/:id/login — reset password for an existing driver login
+app.put('/api/drivers/:id/login', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
+  const { password } = req.body;
+  if (!password) return res.status(400).json({ error: 'password required' });
+
+  const driver = db.prepare('SELECT * FROM drivers WHERE id = ?').get(req.params.id);
+  if (!driver) return res.status(404).json({ error: 'Driver not found' });
+  if (!driver.user_id) return res.status(400).json({ error: 'Driver has no login yet' });
+
+  if (req.user.role === 'company_owner' && driver.company_id !== req.user.company_id)
+    return res.status(403).json({ error: 'Forbidden' });
+
+  const hash = bcrypt.hashSync(password, 10);
+  db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hash, driver.user_id);
+  res.json({ ok: true });
 });
 
 // POST /api/drivers/:id/login — create a portal login for an existing driver

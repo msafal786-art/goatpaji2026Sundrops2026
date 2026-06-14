@@ -44,7 +44,7 @@ async function req(method, path, body, isForm = false) {
 }
 
 export const api = {
-  login: (u, p) => req('POST', '/login', { username: u, password: p }),
+  login: (u, p, adminCode) => req('POST', '/login', { username: u, password: p, admin_code: adminCode || undefined }),
   me: () => req('GET', '/me'),
 
   companies: () => req('GET', '/companies'),
@@ -60,6 +60,7 @@ export const api = {
   deleteDriver: (id) => req('DELETE', `/drivers/${id}`),
   toggleDriverActive: (id) => req('PUT', `/drivers/${id}/toggle-active`),
   createDriverLogin: (id, username, password) => req('POST', `/drivers/${id}/login`, { username, password }),
+  resetDriverPassword: (id, password) => req('PUT', `/drivers/${id}/login`, { password }),
 
   trucks: () => req('GET', '/trucks'),
   createTruck: (d) => req('POST', '/trucks', d),
