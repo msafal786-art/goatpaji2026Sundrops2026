@@ -55,10 +55,11 @@ function pickupAlertNeeded(load) {
 function LoadTile({ load, onStatusUpdate, onEdit }) {
   const navigate = useNavigate()
   const mobile = useIsMobile()
+  const [hovered, setHovered] = useState(false)
   const late = isLate(load)
   const alert = pickupAlertNeeded(load)
   const s = STATUS[load.status] || STATUS.pending
-  const statusColor = urgencyColor(load)
+  const accentColor = urgencyColor(load)
   const compColor = carrierColor(load.company_name)
   const shortCompany = load.company_name
     ? load.company_name.replace(' INC','').replace(' LLC','').replace('THE FRONTLINE FREIGHT','FRONTLINE').replace(' BROS','')
@@ -80,207 +81,196 @@ function LoadTile({ load, onStatusUpdate, onEdit }) {
   const pickupCity = [load.pickup_city, load.pickup_state].filter(Boolean).join(', ')
   const delivCity = [load.delivery_city, load.delivery_state].filter(Boolean).join(', ')
 
+  const tile = {
+    position: 'relative',
+    background: hovered ? T.bg2 : T.bg1,
+    border: `1px solid ${T.sep}`,
+    borderLeft: `3px solid ${accentColor}`,
+    borderRadius: 10,
+    marginBottom: 5,
+    overflow: 'hidden',
+    transition: 'background 0.12s',
+    cursor: 'pointer',
+  }
+
   if (mobile) {
     return (
-      <div style={{
-        background: `linear-gradient(135deg, ${statusColor}20 0%, ${statusColor}0d 100%)`,
-        border: `1px solid ${statusColor}55`,
-        borderRadius: 11, marginBottom: 6, overflow: 'hidden',
-        backdropFilter: 'blur(10px)',
-      }}>
-        <div onClick={() => navigate(`/loads/${load.id}`)} style={{ padding: '11px 13px', cursor: 'pointer' }}>
-          {/* Row 1: load# + status badge */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 7 }}>
+      <div
+        style={tile}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+      >
+        <div onClick={() => navigate(`/loads/${load.id}`)} style={{ padding: '11px 13px 11px 14px' }}>
+          {/* Row 1 */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
             <div>
-              <span style={{ fontSize: 13, fontWeight: 700, color: T.text }}>
-                {late && <span style={{ color: T.red, marginRight: 3 }}>!</span>}
+              <span style={{ fontSize: 13, fontWeight: 600, color: T.text, letterSpacing: -0.2 }}>
+                {late && <span style={{ color: T.red, marginRight: 4, fontWeight: 800 }}>!</span>}
                 {load.load_number || `#${load.id}`}
               </span>
               {load.broker_name && (
-                <span style={{ fontSize: 10, color: T.text3, marginLeft: 7 }}>{load.broker_name}</span>
+                <div style={{ fontSize: 11, color: T.text3, marginTop: 1 }}>{load.broker_name}</div>
               )}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }} onClick={e => e.stopPropagation()}>
-              <span style={{
-                fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20,
-                background: statusColor + '30', color: statusColor,
-                textTransform: 'uppercase', letterSpacing: 0.4,
-              }}>
-                <span style={{ width: 5, height: 5, borderRadius: '50%', background: statusColor, display: 'inline-block', marginRight: 4, verticalAlign: 'middle' }} />
-                {late ? 'Late' : s.label}
-                {load.dispatch_sent ? ' ✓' : ''}
-              </span>
-              {load.status === 'delivered' ? (
-                <button onClick={handleInvoice} style={{
-                  fontSize: 11, padding: '3px 8px', background: T.green + '22',
-                  border: `1px solid ${T.green}60`, borderRadius: 6, cursor: 'pointer', color: T.green, fontWeight: 700,
-                }}>Invoice ✓</button>
-              ) : (
-                <button onClick={e => { e.stopPropagation(); onEdit(load) }} style={{
-                  fontSize: 11, padding: '3px 8px', background: 'rgba(255,255,255,0.07)',
-                  border: `1px solid ${T.sep}`, borderRadius: 6, cursor: 'pointer', color: T.text2, fontWeight: 600,
-                }}>Edit</button>
-              )}
+              <StatusPill color={accentColor} label={late ? 'Late' : s.label} sent={load.dispatch_sent} />
+              {load.status === 'delivered'
+                ? <ActionBtn color={T.green} onClick={handleInvoice}>Invoice ✓</ActionBtn>
+                : <ActionBtn color={T.text2} onClick={e => { e.stopPropagation(); onEdit(load) }}>Edit</ActionBtn>
+              }
             </div>
           </div>
           {/* Row 2: driver + company */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 7 }}>
-            <span style={{ fontSize: 12, fontWeight: 600, color: load.driver_name ? T.text : T.orange }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 500, color: load.driver_name ? T.text : T.orange }}>
               {load.driver_name || '— Assign Driver —'}
             </span>
             {shortCompany && (
-              <span style={{ fontSize: 10, background: compColor + '22', color: compColor, padding: '2px 7px', borderRadius: 8, fontWeight: 700 }}>
+              <span style={{ fontSize: 10, background: compColor + '1a', color: compColor, padding: '2px 8px', borderRadius: 20, fontWeight: 600, border: `1px solid ${compColor}33` }}>
                 {shortCompany}
               </span>
             )}
           </div>
-          {/* Row 3: truck info */}
+          {/* Row 3: truck */}
           {(load.tractor_number || load.truck_trailer) && (
-            <div style={{ fontSize: 10, color: T.text3, marginBottom: 7 }}>
+            <div style={{ fontSize: 10, color: T.text3, marginBottom: 7, letterSpacing: 0.1 }}>
               {load.tractor_number && `Truck ${load.tractor_number}`}{load.tractor_number && load.truck_trailer && ' · '}{load.truck_trailer && `Trailer ${load.truck_trailer}`}
             </div>
           )}
           {/* Row 4: route */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 10, color: T.blue, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 1 }}>Pickup</div>
-              <div style={{ fontSize: 11, color: T.text, fontWeight: 600 }}>{pickupCity || load.pickup_name}</div>
-              <div style={{ fontSize: 10, color: T.blue }}>{load.pickup_date}{load.pickup_time && ` · ${load.pickup_time}`}</div>
+          <div style={{ display: 'flex', alignItems: 'stretch', gap: 8, marginTop: 4 }}>
+            <div style={{ flex: 1, borderRight: `1px solid ${T.sep}`, paddingRight: 8 }}>
+              <div style={{ fontSize: 9, fontWeight: 600, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 3 }}>Pickup</div>
+              <div style={{ fontSize: 12, color: T.text, fontWeight: 500, lineHeight: 1.3 }}>{pickupCity || load.pickup_name || '—'}</div>
+              {load.pickup_date && <div style={{ fontSize: 10, color: T.text3, marginTop: 2 }}>{load.pickup_date}{load.pickup_time && ` · ${load.pickup_time}`}</div>}
             </div>
-            <div style={{ color: T.text3, fontSize: 14, flexShrink: 0 }}>→</div>
-            <div style={{ flex: 1, textAlign: 'right' }}>
-              <div style={{ fontSize: 10, color: T.purple, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.4, marginBottom: 1 }}>Delivery</div>
-              <div style={{ fontSize: 11, color: T.text, fontWeight: 600 }}>{delivCity || load.delivery_name}</div>
-              <div style={{ fontSize: 10, color: T.purple }}>{load.delivery_date}{load.delivery_time && ` · ${load.delivery_time}`}</div>
+            <div style={{ flex: 1, paddingLeft: 8 }}>
+              <div style={{ fontSize: 9, fontWeight: 600, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 3 }}>Delivery</div>
+              <div style={{ fontSize: 12, color: T.text, fontWeight: 500, lineHeight: 1.3 }}>{delivCity || load.delivery_name || '—'}</div>
+              {load.delivery_date && <div style={{ fontSize: 10, color: T.text3, marginTop: 2 }}>{load.delivery_date}{load.delivery_time && ` · ${load.delivery_time}`}</div>}
             </div>
           </div>
         </div>
-        {alert && (
-          <div style={{ background: T.orange + '18', borderTop: `1px solid ${T.orange}40`, padding: '8px 13px' }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: T.orange, marginBottom: 6 }}>Pickup window passed</div>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              <button style={alertBtn(T.green)} onClick={e => handleStatusClick(e, 'in_transit')}>Picked Up</button>
-              <button style={alertBtn(T.blue)} onClick={e => handleStatusClick(e, 'dispatched')}>Loaded</button>
-              <button style={alertBtn(T.orange)} onClick={e => { e.stopPropagation(); navigate(`/loads/${load.id}`) }}>Detention</button>
-            </div>
-          </div>
-        )}
+        {alert && <AlertBar mobile onStatusClick={handleStatusClick} onView={() => navigate(`/loads/${load.id}`)} />}
       </div>
     )
   }
 
   return (
-    <div style={{
-      background: `linear-gradient(135deg, ${statusColor}20 0%, ${statusColor}0d 100%)`,
-      border: `1px solid ${statusColor}55`,
-      borderRadius: 11,
-      marginBottom: 5,
-      overflow: 'hidden',
-      backdropFilter: 'blur(10px)',
-    }}>
+    <div
+      style={tile}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       <div
         onClick={() => navigate(`/loads/${load.id}`)}
-        style={{ padding: '10px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}
+        style={{ padding: '10px 14px 10px 15px', display: 'flex', alignItems: 'center', gap: 16 }}
       >
         {/* Load # + broker */}
-        <div style={{ minWidth: 110, flexShrink: 0 }}>
-          <div style={{ fontSize: 12, fontWeight: 700, color: T.text, letterSpacing: 0.1 }}>
-            {late && <span style={{ color: T.red, marginRight: 3 }}>!</span>}
+        <div style={{ minWidth: 115, flexShrink: 0 }}>
+          <div style={{ fontSize: 12, fontWeight: 600, color: T.text, letterSpacing: -0.1 }}>
+            {late && <span style={{ color: T.red, marginRight: 4, fontWeight: 800 }}>!</span>}
             {load.load_number || `#${load.id}`}
           </div>
-          <div style={{ fontSize: 10, color: T.text3, marginTop: 2, maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {load.broker_name}
+          <div style={{ fontSize: 10, color: T.text3, marginTop: 3, maxWidth: 115, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {load.broker_name || <span style={{ color: 'transparent' }}>—</span>}
           </div>
         </div>
 
-        {/* Driver + truck */}
-        <div style={{ minWidth: 110, flexShrink: 0 }}>
-          <div style={{ fontSize: 10, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.5 }}>Driver</div>
-          <div style={{ fontSize: 12, fontWeight: 600, color: load.driver_name ? T.text : T.orange, marginTop: 2 }}>
+        {/* Driver */}
+        <div style={{ minWidth: 120, flexShrink: 0 }}>
+          <div style={{ fontSize: 9, fontWeight: 600, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 3 }}>Driver</div>
+          <div style={{ fontSize: 12, fontWeight: 500, color: load.driver_name ? T.text : T.orange }}>
             {load.driver_name || '— Assign —'}
           </div>
           {(load.tractor_number || load.truck_trailer) && (
-            <div style={{ fontSize: 10, color: T.text3, marginTop: 1 }}>
-              {load.tractor_number && `T:${load.tractor_number}`}{load.tractor_number && load.truck_trailer && ' / '}{load.truck_trailer && `Tr:${load.truck_trailer}`}
+            <div style={{ fontSize: 9, color: T.text3, marginTop: 2 }}>
+              {load.tractor_number && `T ${load.tractor_number}`}{load.tractor_number && load.truck_trailer && ' · '}{load.truck_trailer && `Tr ${load.truck_trailer}`}
             </div>
           )}
         </div>
 
+        {/* Divider */}
+        <div style={{ width: 1, height: 38, background: T.sep, flexShrink: 0 }} />
+
         {/* Pickup */}
-        <div style={{ minWidth: 140, flexShrink: 0 }}>
-          <div style={{ fontSize: 10, color: T.blue, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600 }}>Pickup</div>
-          <div style={{ fontSize: 12, color: T.text, fontWeight: 600, marginTop: 2 }}>{load.pickup_name}</div>
-          <div style={{ fontSize: 10, color: T.text2 }}>{pickupCity}</div>
-          <div style={{ fontSize: 10, color: T.blue }}>{load.pickup_date}{load.pickup_time && ` · ${load.pickup_time}`}</div>
+        <div style={{ minWidth: 135, flexShrink: 0 }}>
+          <div style={{ fontSize: 9, fontWeight: 600, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 3 }}>Pickup</div>
+          <div style={{ fontSize: 12, color: T.text, fontWeight: 500 }}>{pickupCity || load.pickup_name || '—'}</div>
+          {load.pickup_date && <div style={{ fontSize: 10, color: T.text3, marginTop: 2 }}>{load.pickup_date}{load.pickup_time && ` · ${load.pickup_time}`}</div>}
         </div>
 
-        <div style={{ color: T.text3, fontSize: 14, flexShrink: 0 }}>→</div>
+        <div style={{ color: T.text3, fontSize: 12, flexShrink: 0 }}>→</div>
 
         {/* Delivery */}
-        <div style={{ minWidth: 140, flexShrink: 0 }}>
-          <div style={{ fontSize: 10, color: T.purple, textTransform: 'uppercase', letterSpacing: 0.5, fontWeight: 600 }}>Delivery</div>
-          <div style={{ fontSize: 12, color: T.text, fontWeight: 600, marginTop: 2 }}>{load.delivery_name}</div>
-          <div style={{ fontSize: 10, color: T.text2 }}>{delivCity}</div>
-          <div style={{ fontSize: 10, color: T.purple }}>{load.delivery_date}{load.delivery_time && ` · ${load.delivery_time}`}</div>
+        <div style={{ minWidth: 135, flexShrink: 0 }}>
+          <div style={{ fontSize: 9, fontWeight: 600, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 3 }}>Delivery</div>
+          <div style={{ fontSize: 12, color: T.text, fontWeight: 500 }}>{delivCity || load.delivery_name || '—'}</div>
+          {load.delivery_date && <div style={{ fontSize: 10, color: T.text3, marginTop: 2 }}>{load.delivery_date}{load.delivery_time && ` · ${load.delivery_time}`}</div>}
         </div>
 
-        {/* Commodity / Company */}
-        <div style={{ minWidth: 80, flexShrink: 0 }}>
-          {load.commodity && <div style={{ fontSize: 10, color: T.text2 }}>{load.commodity}</div>}
-          {load.miles && <div style={{ fontSize: 10, color: T.text3 }}>{load.miles} mi</div>}
-          {load.company_name && (
+        {/* Company chip */}
+        {shortCompany && (
+          <div style={{ flexShrink: 0 }}>
             <span style={{
-              fontSize: 10, background: compColor + '22', color: compColor,
-              padding: '2px 7px', borderRadius: 8, fontWeight: 700,
-              display: 'inline-block', marginTop: 2, whiteSpace: 'nowrap',
-            }}>
-              {shortCompany}
-            </span>
-          )}
-        </div>
+              fontSize: 10, fontWeight: 600, padding: '3px 9px', borderRadius: 20,
+              background: compColor + '1a', color: compColor, border: `1px solid ${compColor}33`,
+              whiteSpace: 'nowrap',
+            }}>{shortCompany}</span>
+          </div>
+        )}
 
-        {/* Status + Edit/Invoice */}
+        {/* Status + actions */}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-          <span style={{
-            fontSize: 10, fontWeight: 700, padding: '3px 9px', borderRadius: 20,
-            background: statusColor + '30', color: statusColor,
-            textTransform: 'uppercase', letterSpacing: 0.5, whiteSpace: 'nowrap',
-            display: 'flex', alignItems: 'center', gap: 4,
-          }}>
-            <span style={{ width: 5, height: 5, borderRadius: '50%', background: statusColor, display: 'inline-block' }} />
-            {late ? 'Late' : s.label}
-            {load.dispatch_sent ? ' ✓' : ''}
-          </span>
-          {load.status === 'delivered' ? (
-            <button onClick={handleInvoice} style={{
-              fontSize: 11, padding: '4px 10px', background: T.green + '22',
-              border: `1px solid ${T.green}60`, borderRadius: 6, cursor: 'pointer', color: T.green, fontWeight: 700,
-            }}>Invoice ✓</button>
-          ) : (
-            <button onClick={e => { e.stopPropagation(); onEdit(load) }} style={{
-              fontSize: 11, padding: '4px 10px', background: 'rgba(255,255,255,0.07)',
-              border: `1px solid ${T.sep}`, borderRadius: 6, cursor: 'pointer', color: T.text2, fontWeight: 600,
-            }}>Edit</button>
-          )}
+          <StatusPill color={accentColor} label={late ? 'Late' : s.label} sent={load.dispatch_sent} />
+          {load.status === 'delivered'
+            ? <ActionBtn color={T.green} onClick={handleInvoice}>Invoice ✓</ActionBtn>
+            : <ActionBtn color={T.text2} onClick={e => { e.stopPropagation(); onEdit(load) }}>Edit</ActionBtn>
+          }
         </div>
       </div>
 
-      {/* Alert bar */}
-      {alert && (
-        <div style={{
-          background: T.orange + '18', borderTop: `1px solid ${T.orange}40`,
-          padding: '8px 14px', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
-        }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: T.orange }}>
-            Pickup window passed — update needed
-          </span>
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button style={alertBtn(T.green)} onClick={e => handleStatusClick(e, 'in_transit')}>Picked Up — En Route</button>
-            <button style={alertBtn(T.blue)} onClick={e => handleStatusClick(e, 'dispatched')}>Loaded — Waiting</button>
-            <button style={alertBtn(T.orange)} onClick={e => { e.stopPropagation(); navigate(`/loads/${load.id}`) }}>Detention — View Load</button>
-          </div>
-        </div>
-      )}
+      {alert && <AlertBar onStatusClick={handleStatusClick} onView={() => navigate(`/loads/${load.id}`)} />}
+    </div>
+  )
+}
+
+function StatusPill({ color, label, sent }) {
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 5,
+      fontSize: 10, fontWeight: 600, padding: '3px 8px', borderRadius: 20,
+      background: color + '18', color, border: `1px solid ${color}30`,
+      textTransform: 'uppercase', letterSpacing: 0.5, whiteSpace: 'nowrap',
+    }}>
+      <span style={{ width: 5, height: 5, borderRadius: '50%', background: color, flexShrink: 0 }} />
+      {label}{sent ? ' ✓' : ''}
+    </span>
+  )
+}
+
+function ActionBtn({ color, onClick, children }) {
+  return (
+    <button onClick={onClick} style={{
+      fontSize: 11, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', fontWeight: 600,
+      background: 'transparent', border: `1px solid ${T.sep}`, color,
+    }}>{children}</button>
+  )
+}
+
+function AlertBar({ mobile, onStatusClick, onView }) {
+  return (
+    <div style={{
+      background: T.bg2, borderTop: `1px solid ${T.sep}`,
+      padding: mobile ? '8px 13px' : '7px 15px',
+      display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
+    }}>
+      <span style={{ fontSize: 11, fontWeight: 600, color: T.orange }}>Pickup window passed</span>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <button style={alertBtn(T.green)} onClick={e => onStatusClick(e, 'in_transit')}>Picked Up</button>
+        <button style={alertBtn(T.blue)} onClick={e => onStatusClick(e, 'dispatched')}>Loaded</button>
+        <button style={alertBtn(T.orange)} onClick={e => { e.stopPropagation(); onView() }}>Detention</button>
+      </div>
     </div>
   )
 }

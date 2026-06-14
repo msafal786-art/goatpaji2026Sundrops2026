@@ -1,6 +1,8 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const path = require('path');
 const multer = require('multer');
 const fs = require('fs');
@@ -20,9 +22,52 @@ if (VOL_DB && VOL_DB !== BUNDLED_DB && !fs.existsSync(VOL_DB) && fs.existsSync(B
 const db = require('./db');
 
 const app = express();
-app.use(cors());
-app.use(express.json());
+
+// ── Security headers ─────────────────────────────────────────────────────────
+app.use(helmet({
+  contentSecurityPolicy: false, // frontend uses inline styles; re-enable if migrating to CSS files
+  crossOriginEmbedderPolicy: false,
+}));
+
+// ── CORS — allow only our domain + localhost dev ─────────────────────────────
+const ALLOWED_ORIGINS = [
+  'https://goatpaji.com',
+  'https://www.goatpaji.com',
+  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://localhost:5175',
+  'http://localhost:3001',
+];
+app.use(cors({
+  origin: (origin, cb) => {
+    if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    cb(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+}));
+
+// ── Body size limit ──────────────────────────────────────────────────────────
+app.use(express.json({ limit: '2mb' }));
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
+// ── Login rate limiter: 10 attempts per 15 min per IP ────────────────────────
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { error: 'Too many login attempts. Try again in 15 minutes.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+// ── General API rate limiter: 300 req per 1 min ──────────────────────────────
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 300,
+  message: { error: 'Too many requests.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+app.use('/api/', apiLimiter);
 
 const upload = multer({ dest: 'uploads/' });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -50,18 +95,43 @@ function requireRole(...roles) {
 }
 
 // ── Auth routes ──────────────────────────────────────────────────────────────
-app.post('/api/login', (req, res) => {
+app.post('/api/login', loginLimiter, (req, res) => {
   const { username, password } = req.body;
-  const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username);
-  if (!user || !bcrypt.compareSync(password, user.password)) {
+
+  // Input validation — reject obviously bad input before hitting DB
+  if (!username || !password ||
+      typeof username !== 'string' || typeof password !== 'string' ||
+      username.length > 120 || password.length > 256) {
+    return res.status(400).json({ error: 'Invalid request' });
+  }
+
+  const user = db.prepare('SELECT * FROM users WHERE username = ?').get(username.trim());
+  // Always run bcrypt compare (even on miss) to prevent timing attacks
+  const hash = user?.password || '$2a$10$invalidhashinvalidhashinvalidhashxx';
+  const match = bcrypt.compareSync(password, hash);
+  if (!user || !match) {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
   const token = jwt.sign(
     { id: user.id, role: user.role, company_id: user.company_id, full_name: user.full_name },
     process.env.JWT_SECRET,
-    { expiresIn: '7d' }
+    { expiresIn: '24h' }
   );
+  // Log successful login (no sensitive data)
+  console.log(`[login] user=${user.id} role=${user.role} ip=${req.ip} at=${new Date().toISOString()}`);
   res.json({ token, role: user.role, full_name: user.full_name, company_id: user.company_id });
+});
+
+// ── Token refresh — extends session if still valid ───────────────────────────
+app.post('/api/refresh', auth, (req, res) => {
+  const user = db.prepare('SELECT id, role, company_id, full_name FROM users WHERE id = ?').get(req.user.id);
+  if (!user) return res.status(401).json({ error: 'User not found' });
+  const token = jwt.sign(
+    { id: user.id, role: user.role, company_id: user.company_id, full_name: user.full_name },
+    process.env.JWT_SECRET,
+    { expiresIn: '24h' }
+  );
+  res.json({ token });
 });
 
 app.get('/api/me', auth, (req, res) => {

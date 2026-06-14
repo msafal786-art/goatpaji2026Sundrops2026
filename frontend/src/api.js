@@ -4,6 +4,26 @@ function getToken() {
   return localStorage.getItem('token')
 }
 
+// Silently refresh token if it expires in < 8 hours
+export async function maybeRefreshToken() {
+  const token = getToken()
+  if (!token) return
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]))
+    const hoursLeft = (payload.exp * 1000 - Date.now()) / 36e5
+    if (hoursLeft > 0 && hoursLeft < 8) {
+      const res = await fetch(BASE + '/refresh', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (res.ok) {
+        const data = await res.json()
+        localStorage.setItem('token', data.token)
+      }
+    }
+  } catch { /* non-critical */ }
+}
+
 async function req(method, path, body, isForm = false) {
   const headers = {}
   const token = getToken()

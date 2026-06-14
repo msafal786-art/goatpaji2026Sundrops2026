@@ -1,6 +1,6 @@
 import React, { useState, useEffect, createContext, useContext } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom'
-import { api } from './api.js'
+import { api, maybeRefreshToken } from './api.js'
 import { T, applyTheme } from './theme.js'
 import { ThemeProvider } from './ThemeContext.jsx'
 import { useIsMobile } from './hooks/useIsMobile.js'
@@ -189,7 +189,9 @@ export default function App() {
   useEffect(() => {
     const token = localStorage.getItem('token')
     if (token) {
-      api.me().then(setUser).catch(() => localStorage.removeItem('token')).finally(() => setLoading(false))
+      maybeRefreshToken().finally(() =>
+        api.me().then(setUser).catch(() => localStorage.removeItem('token')).finally(() => setLoading(false))
+      )
     } else {
       setLoading(false)
     }
