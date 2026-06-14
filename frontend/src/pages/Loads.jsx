@@ -52,7 +52,7 @@ function pickupAlertNeeded(load) {
   return pickupDT < now && ['pending','assigned','dispatched'].includes(load.status)
 }
 
-function LoadTile({ load, onStatusUpdate, onEdit }) {
+function LoadTile({ load, onStatusUpdate, onEdit, onStatusDrawer }) {
   const navigate = useNavigate()
   const mobile = useIsMobile()
   const [hovered, setHovered] = useState(false)
@@ -114,6 +114,7 @@ function LoadTile({ load, onStatusUpdate, onEdit }) {
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }} onClick={e => e.stopPropagation()}>
               <StatusPill color={accentColor} label={late ? 'Late' : s.label} sent={load.dispatch_sent} />
+              <ActionBtn color={T.blue} onClick={e => { e.stopPropagation(); onStatusDrawer(load) }}>Status</ActionBtn>
               {load.status === 'delivered'
                 ? <ActionBtn color={T.green} onClick={handleInvoice}>Invoice ✓</ActionBtn>
                 : <ActionBtn color={T.text2} onClick={e => { e.stopPropagation(); onEdit(load) }}>Edit</ActionBtn>
@@ -223,6 +224,7 @@ function LoadTile({ load, onStatusUpdate, onEdit }) {
         {/* Status + actions */}
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }} onClick={e => e.stopPropagation()}>
           <StatusPill color={accentColor} label={late ? 'Late' : s.label} sent={load.dispatch_sent} />
+          <ActionBtn color={T.blue} onClick={e => { e.stopPropagation(); onStatusDrawer(load) }}>Status</ActionBtn>
           {load.status === 'delivered'
             ? <ActionBtn color={T.green} onClick={handleInvoice}>Invoice ✓</ActionBtn>
             : <ActionBtn color={T.text2} onClick={e => { e.stopPropagation(); onEdit(load) }}>Edit</ActionBtn>
@@ -275,6 +277,116 @@ function AlertBar({ mobile, onStatusClick, onView }) {
   )
 }
 
+const STATUS_FLOW = [
+  { key: 'pending',    label: 'Pending',     desc: 'Not yet assigned' },
+  { key: 'assigned',   label: 'Assigned',    desc: 'Driver assigned' },
+  { key: 'dispatched', label: 'Dispatched',  desc: 'En route to pickup' },
+  { key: 'in_transit', label: 'In Transit',  desc: 'Picked up, moving' },
+  { key: 'delivered',  label: 'Delivered',   desc: 'At destination' },
+  { key: 'completed',  label: 'Completed',   desc: 'Invoiced & done' },
+]
+
+function StatusDrawer({ load, onClose, onSaved }) {
+  const [saving, setSaving] = useState(null)
+  if (!load) return null
+
+  const pickupCity = [load.pickup_city, load.pickup_state].filter(Boolean).join(', ')
+  const delivCity  = [load.delivery_city, load.delivery_state].filter(Boolean).join(', ')
+
+  async function handleStatus(key) {
+    if (key === load.status) { onClose(); return }
+    setSaving(key)
+    await api.updateLoadStatus(load.id, key)
+    setSaving(null)
+    onSaved()
+    onClose()
+  }
+
+  return (
+    <>
+      {/* Backdrop */}
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1100 }} />
+      {/* Drawer */}
+      <div style={{
+        position: 'fixed', top: 0, right: 0, bottom: 0, width: 340, maxWidth: '95vw',
+        background: T.bg1, borderLeft: `1px solid ${T.sep}`, zIndex: 1101,
+        display: 'flex', flexDirection: 'column', boxShadow: '-8px 0 32px rgba(0,0,0,0.25)',
+      }}>
+        {/* Header */}
+        <div style={{ padding: '18px 20px 14px', borderBottom: `1px solid ${T.sep}`, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div>
+            <div style={{ fontSize: 17, fontWeight: 700, color: T.text }}>
+              {load.load_number || `#${load.id}`}
+            </div>
+            <div style={{ fontSize: 12, color: T.text3, marginTop: 3 }}>{load.broker_name || '—'}</div>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 22, color: T.text3, cursor: 'pointer', lineHeight: 1 }}>×</button>
+        </div>
+
+        {/* Load summary */}
+        <div style={{ padding: '14px 20px', borderBottom: `1px solid ${T.sep}`, display: 'flex', gap: 12 }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 9, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>Pickup</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{pickupCity || '—'}</div>
+            <div style={{ fontSize: 11, color: T.text3, marginTop: 2 }}>{load.pickup_date}</div>
+          </div>
+          <div style={{ color: T.text3, alignSelf: 'center', fontSize: 16 }}>→</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 9, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>Delivery</div>
+            <div style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{delivCity || '—'}</div>
+            <div style={{ fontSize: 11, color: T.text3, marginTop: 2 }}>{load.delivery_date}</div>
+          </div>
+        </div>
+
+        {load.driver_name && (
+          <div style={{ padding: '10px 20px', borderBottom: `1px solid ${T.sep}`, fontSize: 13, color: T.text }}>
+            <span style={{ color: T.text3, fontSize: 11, marginRight: 6 }}>Driver</span>
+            <span style={{ fontWeight: 600 }}>{load.driver_name}</span>
+          </div>
+        )}
+
+        {/* Status buttons */}
+        <div style={{ padding: '18px 20px', flex: 1, overflowY: 'auto' }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 12 }}>Update Status</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {STATUS_FLOW.map(({ key, label, desc }) => {
+              const isCurrent = load.status === key
+              const sc = STATUS[key] || STATUS.pending
+              const isSaving = saving === key
+              return (
+                <button
+                  key={key}
+                  onClick={() => handleStatus(key)}
+                  disabled={!!saving}
+                  style={{
+                    padding: '12px 16px', borderRadius: 10, cursor: isSaving ? 'wait' : 'pointer',
+                    border: `2px solid ${isCurrent ? sc.color : T.sep}`,
+                    background: isCurrent ? sc.color + '18' : T.bg2,
+                    display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left',
+                    opacity: saving && !isSaving ? 0.5 : 1, transition: 'all 0.12s',
+                  }}
+                >
+                  <div style={{
+                    width: 10, height: 10, borderRadius: '50%', flexShrink: 0,
+                    background: isCurrent ? sc.color : T.sep,
+                    boxShadow: isCurrent ? `0 0 0 3px ${sc.color}30` : 'none',
+                  }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: isCurrent ? sc.color : T.text }}>
+                      {label} {isCurrent && '✓'} {isSaving && '…'}
+                    </div>
+                    <div style={{ fontSize: 11, color: T.text3, marginTop: 1 }}>{desc}</div>
+                  </div>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
 function alertBtn(color) {
   return {
     fontSize: 11, padding: '4px 10px', borderRadius: 6, cursor: 'pointer',
@@ -321,6 +433,7 @@ export default function Loads() {
   const [sort, setSort] = useState('delivery_asc')
   const [showForm, setShowForm] = useState(false)
   const [editLoad, setEditLoad] = useState(null)
+  const [drawerLoad, setDrawerLoad] = useState(null)
   const [lastRefresh, setLastRefresh] = useState(new Date())
 
   const fetchLoads = useCallback(async () => {
@@ -478,6 +591,7 @@ export default function Loads() {
               load={l}
               onStatusUpdate={fetchLoads}
               onEdit={(load) => { setEditLoad(load); setShowForm(true) }}
+              onStatusDrawer={setDrawerLoad}
             />
           ))}
         </div>
@@ -490,6 +604,12 @@ export default function Loads() {
           onSave={() => { fetchLoads(); setShowForm(false); setEditLoad(null) }}
         />
       )}
+
+      <StatusDrawer
+        load={drawerLoad}
+        onClose={() => setDrawerLoad(null)}
+        onSaved={fetchLoads}
+      />
     </div>
   )
 }
