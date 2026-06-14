@@ -190,9 +190,10 @@ export default function DriverView({ user, onLogout }) {
     return () => clearInterval(interval)
   }, [fetch])
 
-  const activeLoads    = loads.filter(l => !['completed'].includes(l.status))
-  const completedLoads = loads.filter(l => l.status === 'completed').slice(0, 10)
-  const shown = tab === 'active' ? activeLoads : completedLoads
+  // Server already filters to dispatched/in_transit/delivered — split into active vs history
+  const activeLoads    = loads.filter(l => ['dispatched','in_transit'].includes(l.status))
+  const historyLoads   = loads.filter(l => l.status === 'delivered')
+  const shown = tab === 'active' ? activeLoads : historyLoads
 
   return (
     <div style={{ background: T.bg, minHeight: '100vh', fontFamily: font }}>
@@ -222,8 +223,8 @@ export default function DriverView({ user, onLogout }) {
 
         <div style={{ display: 'flex', gap: 6, marginTop: 12 }}>
           {[
-            { key: 'active',  label: `Active (${activeLoads.length})` },
-            { key: 'history', label: 'History' },
+            { key: 'active',  label: `On Route (${activeLoads.length})` },
+            { key: 'history', label: `Delivered (${historyLoads.length})` },
           ].map(t => (
             <button key={t.key} onClick={() => setTab(t.key)} style={{
               padding: '7px 16px', borderRadius: 20, border: 'none', cursor: 'pointer',
@@ -247,10 +248,10 @@ export default function DriverView({ user, onLogout }) {
           }}>
             <div style={{ fontSize: 40, marginBottom: 12 }}>{tab === 'active' ? '✓' : '📋'}</div>
             <div style={{ fontSize: 16, fontWeight: 700, color: T.text, marginBottom: 6 }}>
-              {tab === 'active' ? 'No active loads' : 'No history yet'}
+              {tab === 'active' ? 'No active loads' : 'No delivered loads'}
             </div>
             <div style={{ fontSize: 13, color: T.text3 }}>
-              {tab === 'active' ? 'Your dispatcher will assign you a load shortly.' : 'Completed loads appear here.'}
+              {tab === 'active' ? 'Loads appear here once your dispatcher sends the dispatch.' : 'Loads you delivered appear here.'}
             </div>
           </div>
         ) : (

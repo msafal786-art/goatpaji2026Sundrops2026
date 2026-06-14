@@ -276,7 +276,8 @@ app.get('/api/loads', auth, (req, res) => {
   if (req.user.role === 'driver') {
     const driver = db.prepare('SELECT id FROM drivers WHERE user_id = ?').get(req.user.id);
     if (!driver) return res.json([]);
-    return res.json(loadsQuery('WHERE l.driver_id = ?', [driver.id]));
+    // Drivers only see loads once dispatched and while active — not pending/assigned/completed
+    return res.json(loadsQuery("WHERE l.driver_id = ? AND l.status IN ('dispatched','in_transit','delivered')", [driver.id]));
   }
   if (req.user.role === 'company_owner') {
     return res.json(loadsQuery('WHERE l.company_id = ?', [req.user.company_id]));
@@ -306,7 +307,11 @@ app.get('/api/loads/:id', auth, (req, res) => {
 });
 
 app.post('/api/loads', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
-  const cid = req.user.role === 'company_owner' ? req.user.company_id : req.body.company_id;
+  // company_owner → their company; scoped dispatcher (has company_id) → their company; admin dispatcher → body value
+  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id;
+  const cid = req.user.role === 'company_owner' ? req.user.company_id
+            : isAdmin ? req.body.company_id
+            : req.user.company_id;
   const {
     load_number, broker_name, broker_order, broker_contact, broker_email,
     commodity, weight, miles, trailer_type, bol, rate,
@@ -352,6 +357,10 @@ app.put('/api/loads/:id', auth, requireRole('dispatcher', 'company_owner'), (req
   const existing = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Not found' });
 
+  // Scoped dispatcher or company_owner can only edit loads in their own company
+  if (req.user.company_id && existing.company_id !== req.user.company_id)
+    return res.status(403).json({ error: 'Forbidden' });
+
   const {
     load_number, broker_name, broker_order, broker_contact, broker_email,
     commodity, weight, miles, trailer_type, bol, rate,
@@ -372,6 +381,10 @@ app.put('/api/loads/:id', auth, requireRole('dispatcher', 'company_owner'), (req
 
   const newStatus = status || (driver_id ? 'assigned' : 'pending');
 
+  // Only admin dispatcher can change which company a load belongs to
+  const isAdminEdit = req.user.role === 'dispatcher' && !req.user.company_id;
+  const effectiveCompanyId = isAdminEdit ? (company_id || existing.company_id) : existing.company_id;
+
   db.prepare(`UPDATE loads SET
     company_id=?, load_number=?, broker_name=?, broker_order=?, broker_contact=?, broker_email=?,
     commodity=?, weight=?, miles=?, trailer_type=?, bol=?, rate=?,
@@ -382,7 +395,7 @@ app.put('/api/loads/:id', auth, requireRole('dispatcher', 'company_owner'), (req
     special_instructions=?, driver_id=?, truck_id=?, status=?
     WHERE id=?
   `).run(
-    company_id || existing.company_id,
+    effectiveCompanyId,
     load_number, broker_name, broker_order, broker_contact, broker_email,
     commodity, weight, miles, trailer_type, bol, rate,
     pickup_name, pickup_address, pickup_city, pickup_state, pickup_zip,
@@ -446,6 +459,14 @@ app.post('/api/loads/:id/status', auth, (req, res) => {
 
   const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
   if (!load) return res.status(404).json({ error: 'Not found' });
+
+  // Drivers can only move their own load forward (dispatched → in_transit → delivered)
+  if (req.user.role === 'driver') {
+    const driver = db.prepare('SELECT id FROM drivers WHERE user_id = ?').get(req.user.id);
+    if (!driver || load.driver_id !== driver.id) return res.status(403).json({ error: 'Forbidden' });
+    const driverAllowed = ['dispatched','in_transit','delivered'];
+    if (!driverAllowed.includes(status)) return res.status(403).json({ error: 'Drivers cannot set this status' });
+  }
 
   db.prepare('UPDATE loads SET status=? WHERE id=?').run(status, req.params.id);
 
@@ -674,6 +695,29 @@ app.put('/api/drivers/:id/toggle-active', auth, requireRole('dispatcher', 'compa
   const newActive = driver.is_active === 0 ? 1 : 0;
   db.prepare('UPDATE drivers SET is_active=? WHERE id=?').run(newActive, req.params.id);
   res.json({ ok: true, is_active: newActive });
+});
+
+// POST /api/drivers/:id/login — create a portal login for an existing driver
+app.post('/api/drivers/:id/login', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ error: 'username and password required' });
+
+  const driver = db.prepare('SELECT * FROM drivers WHERE id = ?').get(req.params.id);
+  if (!driver) return res.status(404).json({ error: 'Driver not found' });
+  if (driver.user_id) return res.status(400).json({ error: 'Driver already has a login' });
+
+  if (req.user.role === 'company_owner' && driver.company_id !== req.user.company_id)
+    return res.status(403).json({ error: 'Forbidden' });
+
+  const hash = bcrypt.hashSync(password, 10);
+  try {
+    const ur = db.prepare('INSERT INTO users (username,password,role,company_id,full_name,phone,email) VALUES (?,?,?,?,?,?,?)')
+      .run(username, hash, 'driver', driver.company_id, driver.full_name, driver.phone, driver.email);
+    db.prepare('UPDATE drivers SET user_id = ? WHERE id = ?').run(ur.lastInsertRowid, driver.id);
+    res.json({ ok: true, user_id: ur.lastInsertRowid });
+  } catch {
+    res.status(400).json({ error: 'Username already taken' });
+  }
 });
 
 // PUT /api/drivers/:id/rate — update driver's default rate per mile

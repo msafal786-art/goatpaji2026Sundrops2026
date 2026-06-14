@@ -71,7 +71,7 @@ function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer }) {
 
   async function handleInvoice(e) {
     e.stopPropagation()
-    if (!confirm(`Mark load ${load.load_number || '#'+load.id} as invoiced and complete?`)) return
+    if (!confirm(`Mark load ${load.broker_order || load.load_number || '#'+load.id} as invoiced and complete?`)) return
     await api.updateLoadStatus(load.id, 'completed')
     onStatusUpdate()
   }
@@ -80,11 +80,11 @@ function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer }) {
   const delivCity  = [load.delivery_city, load.delivery_state].filter(Boolean).join(', ')
 
   const rowBg = late
-    ? (T.isDark ? 'rgba(255,69,58,0.08)' : 'rgba(255,59,48,0.06)')
+    ? (T.isDark ? 'rgba(255,69,58,0.09)' : 'rgba(255,59,48,0.07)')
     : load.status === 'in_transit'
-      ? (T.isDark ? 'rgba(48,209,88,0.06)' : 'rgba(48,209,88,0.05)')
+      ? (T.isDark ? 'rgba(48,209,88,0.07)' : 'rgba(48,209,88,0.06)')
       : load.status === 'dispatched'
-        ? (T.isDark ? 'rgba(191,90,242,0.06)' : 'rgba(191,90,242,0.04)')
+        ? (T.isDark ? 'rgba(191,90,242,0.07)' : 'rgba(191,90,242,0.05)')
         : 'transparent'
 
   return (
@@ -95,126 +95,108 @@ function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer }) {
         onMouseEnter={e => e.currentTarget.style.background = T.bg2}
         onMouseLeave={e => e.currentTarget.style.background = rowBg}
       >
-        {/* Load # */}
-        <td style={{ padding: '7px 10px 7px 14px', whiteSpace: 'nowrap', borderLeft: `3px solid ${accentColor}` }}>
-          {load.broker_order && (
-            <div style={{ fontSize: 12, fontWeight: 700, color: late ? T.red : T.text }}>
-              {late && '! '}{load.broker_order}
-            </div>
-          )}
-          <div style={{ fontSize: 10, color: T.text3, marginTop: 1 }}>
-            #{load.load_number || load.id} · {load.broker_name}
+        {/* Load # — broker order big, our # small */}
+        <td style={{ padding: '8px 10px 8px 14px', whiteSpace: 'nowrap', borderLeft: `3px solid ${accentColor}` }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: late ? T.red : T.text, letterSpacing: -0.2 }}>
+            {late && <span style={{ color: T.red, marginRight: 3 }}>!</span>}
+            {load.broker_order || load.load_number || `#${load.id}`}
+          </div>
+          <div style={{ fontSize: 10, color: T.text3, marginTop: 2, maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {load.load_number && load.broker_order ? `#${load.load_number} · ` : ''}{load.broker_name || ''}
           </div>
         </td>
 
         {/* Driver / Carrier */}
-        <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
+        <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: load.driver_name ? T.text : T.orange }}>
-            {load.driver_name || '— Assign —'}
+            {load.driver_name || '— Unassigned —'}
           </div>
           {shortCompany && (
-            <div style={{ fontSize: 10, fontWeight: 700, color: compColor, marginTop: 1 }}>{shortCompany}</div>
+            <div style={{ fontSize: 10, fontWeight: 700, color: compColor, marginTop: 2 }}>{shortCompany}</div>
           )}
         </td>
 
         {/* Ship Date */}
-        <td style={{ padding: '7px 10px', whiteSpace: 'nowrap', fontSize: 11, color: T.text2 }}>
-          {load.pickup_date || '—'}
-          {load.pickup_time && <div style={{ fontSize: 10, color: T.text3 }}>{load.pickup_time}</div>}
+        <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+          <div style={{ fontSize: 12, color: T.text }}>{load.pickup_date || '—'}</div>
+          {load.pickup_time && <div style={{ fontSize: 10, color: T.text3, marginTop: 1 }}>{load.pickup_time}</div>}
         </td>
 
         {/* Del Date */}
-        <td style={{ padding: '7px 10px', whiteSpace: 'nowrap', fontSize: 11, color: T.text2 }}>
-          {load.delivery_date || '—'}
-          {load.delivery_time && <div style={{ fontSize: 10, color: T.text3 }}>{load.delivery_time}</div>}
+        <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+          <div style={{ fontSize: 12, color: T.text }}>{load.delivery_date || '—'}</div>
+          {load.delivery_time && <div style={{ fontSize: 10, color: T.text3, marginTop: 1 }}>{load.delivery_time}</div>}
         </td>
 
         {/* Origin */}
-        <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
-          <div style={{ fontSize: 12, color: T.text }}>{pickupCity || load.pickup_name || '—'}</div>
+        <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+          <div style={{ fontSize: 12, fontWeight: 500, color: T.text }}>{pickupCity || load.pickup_name || '—'}</div>
         </td>
 
         {/* Destination */}
-        <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
-          <div style={{ fontSize: 12, color: T.text }}>{delivCity || load.delivery_name || '—'}</div>
+        <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+          <div style={{ fontSize: 12, fontWeight: 500, color: T.text }}>{delivCity || load.delivery_name || '—'}</div>
         </td>
 
-        {/* Status */}
-        <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>
+        {/* Status badge */}
+        <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
           <span style={{
-            fontSize: 10, fontWeight: 700, padding: '2px 7px', borderRadius: 4,
-            background: accentColor + '20', color: accentColor,
+            display: 'inline-block', fontSize: 10, fontWeight: 700,
+            padding: '3px 8px', borderRadius: 5,
+            background: accentColor + '22', color: accentColor,
+            border: `1px solid ${accentColor}50`,
           }}>
             {late ? 'LATE' : s.label.toUpperCase()}{load.dispatch_sent ? ' ✓' : ''}
           </span>
-          {alert && (
-            <div style={{ display: 'flex', gap: 4, marginTop: 4 }} onClick={e => e.stopPropagation()}>
-              <button style={alertBtn(T.green)}  onClick={e => handleStatusClick(e, 'in_transit')}>Picked Up</button>
-              <button style={alertBtn(T.blue)}   onClick={e => handleStatusClick(e, 'dispatched')}>Loaded</button>
-            </div>
-          )}
         </td>
 
         {/* Actions */}
-        <td style={{ padding: '7px 14px 7px 6px', whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
+        <td style={{ padding: '8px 14px 8px 6px', whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
           <div style={{ display: 'flex', gap: 5 }}>
-            <button style={tblBtn(T.blue)}  onClick={() => onStatusDrawer(load)}>Status</button>
+            <button
+              style={{
+                fontSize: 11, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', fontWeight: 700,
+                background: T.blue, border: 'none', color: '#fff',
+              }}
+              onClick={() => onStatusDrawer(load)}
+            >Status</button>
             {load.status === 'delivered'
-              ? <button style={tblBtn(T.green)} onClick={handleInvoice}>Invoice</button>
-              : <button style={tblBtn(T.text2)} onClick={() => onEdit(load)}>Edit</button>
+              ? <button style={solidBtn(T.green)} onClick={handleInvoice}>Invoice</button>
+              : <button style={ghostBtn()} onClick={() => onEdit(load)}>Edit</button>
             }
           </div>
         </td>
       </tr>
+
+      {/* Alert bar — must be a <tr> to be valid inside <tbody> */}
+      {alert && (
+        <tr style={{ background: T.isDark ? 'rgba(255,159,10,0.06)' : 'rgba(255,159,10,0.05)' }}>
+          <td colSpan={8} onClick={e => e.stopPropagation()} style={{ padding: '6px 14px 8px 17px', borderBottom: `1px solid ${T.sep}` }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 11, fontWeight: 600, color: T.orange }}>Pickup window passed</span>
+              <button style={alertBtn(T.green)}  onClick={e => handleStatusClick(e, 'in_transit')}>Picked Up</button>
+              <button style={alertBtn(T.blue)}   onClick={e => handleStatusClick(e, 'dispatched')}>Loaded</button>
+              <button style={alertBtn(T.orange)} onClick={e => { e.stopPropagation(); navigate(`/loads/${load.id}`) }}>Detention</button>
+            </div>
+          </td>
+        </tr>
+      )}
     </>
   )
 }
 
-function StatusPill({ color, label, sent }) {
-  return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 5,
-      fontSize: 10, fontWeight: 600, padding: '3px 8px', borderRadius: 20,
-      background: color + '18', color, border: `1px solid ${color}30`,
-      textTransform: 'uppercase', letterSpacing: 0.5, whiteSpace: 'nowrap',
-    }}>
-      <span style={{ width: 5, height: 5, borderRadius: '50%', background: color, flexShrink: 0 }} />
-      {label}{sent ? ' ✓' : ''}
-    </span>
-  )
-}
-
-function tblBtn(color) {
+function solidBtn(color) {
   return {
-    fontSize: 11, padding: '3px 9px', borderRadius: 5, cursor: 'pointer', fontWeight: 600,
-    background: color + '18', border: `1px solid ${color}40`, color,
+    fontSize: 11, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', fontWeight: 700,
+    background: color, border: 'none', color: '#fff',
   }
 }
 
-function ActionBtn({ color, onClick, children }) {
-  return (
-    <button onClick={onClick} style={{
-      fontSize: 11, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', fontWeight: 600,
-      background: 'transparent', border: `1px solid ${T.sep}`, color,
-    }}>{children}</button>
-  )
-}
-
-function AlertBar({ mobile, onStatusClick, onView }) {
-  return (
-    <div style={{
-      background: T.bg2, borderTop: `1px solid ${T.sep}`,
-      padding: mobile ? '8px 13px' : '7px 15px',
-      display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
-    }}>
-      <span style={{ fontSize: 11, fontWeight: 600, color: T.orange }}>Pickup window passed</span>
-      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        <button style={alertBtn(T.green)} onClick={e => onStatusClick(e, 'in_transit')}>Picked Up</button>
-        <button style={alertBtn(T.blue)} onClick={e => onStatusClick(e, 'dispatched')}>Loaded</button>
-        <button style={alertBtn(T.orange)} onClick={e => { e.stopPropagation(); onView() }}>Detention</button>
-      </div>
-    </div>
-  )
+function ghostBtn() {
+  return {
+    fontSize: 11, padding: '4px 10px', borderRadius: 6, cursor: 'pointer', fontWeight: 600,
+    background: 'transparent', border: `1px solid ${T.sep}`, color: T.text2,
+  }
 }
 
 const STATUS_FLOW = [
@@ -329,8 +311,8 @@ function StatusDrawer({ load, onClose, onSaved }) {
 
 function alertBtn(color) {
   return {
-    fontSize: 11, padding: '4px 10px', borderRadius: 6, cursor: 'pointer',
-    background: color + '22', border: `1px solid ${color}40`, color,
+    fontSize: 11, padding: '4px 11px', borderRadius: 6, cursor: 'pointer',
+    background: color + '20', border: `1px solid ${color}50`, color,
     fontWeight: 700,
   }
 }

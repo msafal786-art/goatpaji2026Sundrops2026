@@ -59,6 +59,7 @@ export const api = {
   updateDriver: (id, d) => req('PUT', `/drivers/${id}`, d),
   deleteDriver: (id) => req('DELETE', `/drivers/${id}`),
   toggleDriverActive: (id) => req('PUT', `/drivers/${id}/toggle-active`),
+  createDriverLogin: (id, username, password) => req('POST', `/drivers/${id}/login`, { username, password }),
 
   trucks: () => req('GET', '/trucks'),
   createTruck: (d) => req('POST', '/trucks', d),

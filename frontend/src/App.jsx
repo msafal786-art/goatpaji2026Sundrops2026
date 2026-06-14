@@ -75,9 +75,13 @@ function Sidebar({ user, onLogout }) {
         <div style={{ fontSize: 13, fontWeight: 800, color: T.text, letterSpacing: 0.5, textTransform: 'uppercase', lineHeight: 1.3 }}>
           {user.role === 'company_owner' && user.company_name
             ? user.company_name
-            : 'Dispatch Portal'}
+            : user.role === 'dispatcher' && user.company_name
+              ? user.company_name
+              : 'Dispatch Portal'}
         </div>
-        <div style={{ fontSize: 11, color: T.text3, marginTop: 2 }}>Freight Management</div>
+        <div style={{ fontSize: 11, color: T.text3, marginTop: 2 }}>
+          {user.role === 'dispatcher' && !user.company_id ? 'Admin · All Companies' : 'Freight Management'}
+        </div>
       </div>
       <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto' }}>
         {links.map(l => {
@@ -164,7 +168,7 @@ function AppShell({ children, user, onLogout }) {
       }}>
         {mobile && (
           <div style={{ fontSize: 13, fontWeight: 800, color: T.text, marginBottom: 16, letterSpacing: 0.5, textTransform: 'uppercase', lineHeight: 1.3 }}>
-            {user.role === 'company_owner' && user.company_name
+            {(user.role === 'company_owner' || user.role === 'dispatcher') && user.company_name
               ? user.company_name
               : 'Dispatch Portal'}
           </div>
