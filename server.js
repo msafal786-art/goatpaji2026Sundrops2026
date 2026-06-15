@@ -81,11 +81,15 @@ fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 // /uploads is NOT served statically — all file access goes through authenticated API endpoints
 
 const ALLOWED_UPLOAD_TYPES = ['application/pdf','image/jpeg','image/jpg','image/png','image/heic','image/heif'];
+// Mobile browsers (iOS/Android) often report PDFs as application/octet-stream or leave type empty.
+// Fall back to extension check so valid files aren't blocked by an ambiguous MIME type.
+const ALLOWED_EXTENSIONS = new Set(['.pdf','.jpg','.jpeg','.png','.heic','.heif']);
 const upload = multer({
   dest: UPLOADS_DIR,
   limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB cap
   fileFilter: (req, file, cb) => {
-    if (ALLOWED_UPLOAD_TYPES.includes(file.mimetype)) return cb(null, true);
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ALLOWED_UPLOAD_TYPES.includes(file.mimetype) || ALLOWED_EXTENSIONS.has(ext)) return cb(null, true);
     req._fileTypeError = 'Only PDF, JPG, PNG, or HEIC files are allowed';
     cb(null, false);
   },
@@ -619,7 +623,9 @@ app.post('/api/loads/:id/status', auth, (req, res) => {
 app.post('/api/parse-rate-con', auth, requireRole('dispatcher', 'company_owner'), upload.single('file'), async (req, res) => {
   if (req._fileTypeError) return res.status(400).json({ error: req._fileTypeError });
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-  if (req.file.mimetype !== 'application/pdf') {
+  const isPdf = req.file.mimetype === 'application/pdf' ||
+                path.extname(req.file.originalname).toLowerCase() === '.pdf';
+  if (!isPdf) {
     try { fs.unlinkSync(req.file.path); } catch {}
     return res.status(400).json({ error: 'Only PDF files are supported for rate con parsing' });
   }
