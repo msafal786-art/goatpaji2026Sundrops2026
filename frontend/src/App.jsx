@@ -20,14 +20,18 @@ import Recommendations from './pages/Recommendations.jsx'
 import Payroll from './pages/Payroll.jsx'
 import Users from './pages/Users.jsx'
 import ChangePassword from './pages/ChangePassword.jsx'
+import Compliance from './pages/Compliance.jsx'
+import Calendar from './pages/Calendar.jsx'
 
 
 const NAV_LINKS = {
   dispatcher: [
     { to: '/dashboard',       icon: '⊞', label: 'Dashboard' },
     { to: '/loads',           icon: '↗',  label: 'Loads' },
+    { to: '/calendar',        icon: '▦',  label: 'Calendar' },
     { to: '/recommendations', icon: '◈',  label: 'Lanes' },
     { to: '/search',          icon: '⌕',  label: 'Search' },
+    { to: '/compliance',      icon: '⚑',  label: 'Compliance' },
     { to: '/drivers',         icon: '◉',  label: 'Drivers' },
     { to: '/trucks',          icon: '▣',  label: 'Trucks' },
     { to: '/payroll',         icon: '💵', label: 'Payroll' },
@@ -38,8 +42,10 @@ const NAV_LINKS = {
   company_owner: [
     { to: '/dashboard',       icon: '⊞', label: 'Dashboard' },
     { to: '/loads',           icon: '↗',  label: 'Loads' },
+    { to: '/calendar',        icon: '▦',  label: 'Calendar' },
     { to: '/recommendations', icon: '◈',  label: 'Lanes' },
     { to: '/search',          icon: '⌕',  label: 'Search' },
+    { to: '/compliance',      icon: '⚑',  label: 'Compliance' },
     { to: '/drivers',         icon: '◉',  label: 'Drivers' },
     { to: '/trucks',          icon: '▣',  label: 'Trucks' },
     { to: '/payroll',         icon: '💵', label: 'Payroll' },
@@ -299,6 +305,8 @@ export default function App() {
               <Route path="/trucks" element={<Trucks />} />
               {user.role === 'dispatcher' && <Route path="/companies" element={<Companies />} />}
               {user.role === 'dispatcher' && <Route path="/users" element={<Users />} />}
+              <Route path="/compliance" element={<Compliance />} />
+              <Route path="/calendar" element={<Calendar />} />
               <Route path="/search" element={<Search />} />
               <Route path="/recommendations" element={<Recommendations />} />
               <Route path="/payroll" element={<Payroll />} />

@@ -8,7 +8,7 @@ const EMPTY = {
   full_name: '', phone: '', email: '', address: '', date_of_birth: '',
   hire_date: '', status: 'available', company_id: '',
   cdl_class: '', license_state: '', license_number: '', license_expiry: '',
-  medical_card_expiry: '', drug_test_date: '', background_check_date: '',
+  medical_card_expiry: '', drug_test_date: '', drug_test_expiry: '', background_check_date: '',
   emergency_contact_name: '', emergency_contact_phone: '',
   notes: '', username: '', password: '',
 }
@@ -305,6 +305,9 @@ export default function Drivers() {
                 </Row>
                 <Row>
                   <FField label="Drug Test Date"><input style={inputS()} type="date" value={form.drug_test_date} onChange={e => set('drug_test_date', e.target.value)} /></FField>
+                  <FField label="Drug Test Expiry"><input style={inputS()} type="date" value={form.drug_test_expiry} onChange={e => set('drug_test_expiry', e.target.value)} /></FField>
+                </Row>
+                <Row>
                   <FField label="Background Check Date"><input style={inputS()} type="date" value={form.background_check_date} onChange={e => set('background_check_date', e.target.value)} /></FField>
                 </Row>
               </Section>

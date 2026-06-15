@@ -132,6 +132,31 @@ export const api = {
   stats: () => req('GET', '/stats'),
 
   activeUsers: () => req('GET', '/active-users'),
+  compliance: () => req('GET', '/compliance'),
+
+  // Truck documents
+  truckDocs: (truckId) => req('GET', `/trucks/${truckId}/docs`),
+  uploadTruckDoc: (truckId, file, doc_type) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('doc_type', doc_type)
+    return req('POST', `/trucks/${truckId}/docs`, fd, true)
+  },
+  downloadTruckDoc: async (docId, filename) => {
+    const token = localStorage.getItem('token')
+    const res = await fetch(`/api/truck-docs/${docId}/download`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    if (!res.ok) throw new Error('Download failed')
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url; a.download = filename || 'document'
+    document.body.appendChild(a); a.click()
+    document.body.removeChild(a); URL.revokeObjectURL(url)
+  },
+  deleteTruckDoc: (docId) => req('DELETE', `/truck-docs/${docId}`),
+  setDetention: (loadId, data) => req('PUT', `/loads/${loadId}/detention`, data),
   search: (q) => req('GET', `/search?q=${encodeURIComponent(q)}`),
   recommendations: () => req('GET', '/recommendations'),
   payrollWeek: (start) => req('GET', `/payroll/week?start=${start}`),

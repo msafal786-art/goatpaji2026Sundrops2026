@@ -198,6 +198,65 @@ export default function Payroll() {
   const isOwner = user?.role === 'company_owner'
   const groups = isOwner ? { [user?.company_name || 'My Drivers']: drivers } : groupByCompany(drivers)
 
+  function printStatements() {
+    const rows = drivers
+      .filter(d => getWeeklyTotal(d) > 0)
+      .map(d => {
+        const totalMiles = getWeeklyTotal(d)
+        const rate = getRate(d)
+        const pay = totalMiles * rate
+        const dayRows = dates.map((date, i) => {
+          const m = getMiles(d, date)
+          return `<tr>
+            <td>${DAY_LABELS[i]} ${fmtDate(date)}</td>
+            <td>${m != null && m > 0 ? m.toLocaleString() : '—'}</td>
+            <td>${m != null && m > 0 ? fmt$(m * rate) : '—'}</td>
+          </tr>`
+        }).join('')
+        return `
+          <div class="statement">
+            <div class="header">
+              <h2>${d.full_name}</h2>
+              <div class="company">${d.company_name || ''}</div>
+              <div class="week">Week of ${dates[0]} – ${dates[6]}</div>
+            </div>
+            <table>
+              <thead><tr><th>Day</th><th>Miles</th><th>Earnings</th></tr></thead>
+              <tbody>${dayRows}</tbody>
+              <tfoot>
+                <tr class="total">
+                  <td>Total</td>
+                  <td>${totalMiles.toLocaleString()} mi @ $${rate}/mi</td>
+                  <td>${fmt$(pay)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>`
+      }).join('')
+
+    const html = `<!DOCTYPE html><html><head><title>Pay Statements</title>
+    <style>
+      body { font-family: Arial, sans-serif; font-size: 13px; color: #000; margin: 0; padding: 0; }
+      .statement { padding: 24px 28px; page-break-after: always; border-bottom: 2px solid #ddd; }
+      .statement:last-child { page-break-after: auto; }
+      .header { margin-bottom: 16px; }
+      h2 { margin: 0 0 4px; font-size: 18px; }
+      .company { color: #555; font-size: 12px; }
+      .week { color: #777; font-size: 12px; margin-top: 2px; }
+      table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+      th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #eee; }
+      th { background: #f5f5f5; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+      .total td { font-weight: 700; border-top: 2px solid #333; background: #fafafa; }
+      @media print { body { font-size: 12px; } }
+    </style></head><body>${rows || '<p style="padding:24px">No drivers with miles this week.</p>'}</body></html>`
+
+    const win = window.open('', '_blank', 'width=680,height=800')
+    win.document.write(html)
+    win.document.close()
+    win.focus()
+    setTimeout(() => win.print(), 400)
+  }
+
   // Summary totals
   const grandMiles = drivers.reduce((s, d) => s + getWeeklyTotal(d), 0)
   const grandPay = drivers.reduce((s, d) => s + getWeeklyTotal(d) * getRate(d), 0)
@@ -214,8 +273,8 @@ export default function Payroll() {
           <h1 style={{ fontSize: 24, fontWeight: 700, color: T.text, margin: 0 }}>Payroll</h1>
           <p style={{ fontSize: 13, color: T.text3, margin: '4px 0 0' }}>Daily miles · weekly summary · click any cell to edit</p>
         </div>
-        {/* Week navigator */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        {/* Week navigator + print */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <button onClick={prevWeek} style={{ padding: '6px 12px', borderRadius: 8, border: `1px solid ${T.sep}`, background: T.bg2, color: T.text, cursor: 'pointer', fontSize: 14 }}>‹</button>
           <div style={{ textAlign: 'center', minWidth: 180 }}>
             <div style={{ fontWeight: 600, fontSize: 14, color: T.text }}>
@@ -224,6 +283,12 @@ export default function Payroll() {
             <div style={{ fontSize: 11, color: T.text3 }}>{isCurrentWeek ? 'Current week' : weekStart.slice(0, 4)}</div>
           </div>
           <button onClick={nextWeek} disabled={isCurrentWeek} style={{ padding: '6px 12px', borderRadius: 8, border: `1px solid ${T.sep}`, background: T.bg2, color: isCurrentWeek ? T.text3 : T.text, cursor: isCurrentWeek ? 'default' : 'pointer', fontSize: 14 }}>›</button>
+          {!loading && drivers.length > 0 && (
+            <button onClick={printStatements} style={{
+              padding: '6px 14px', borderRadius: 8, border: `1px solid ${T.sep}`,
+              background: T.bg2, color: T.text2, cursor: 'pointer', fontSize: 12, fontWeight: 600,
+            }}>Print Statements</button>
+          )}
         </div>
       </div>
 

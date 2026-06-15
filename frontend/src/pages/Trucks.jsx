@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { api } from '../api.js'
 import { useAuth } from '../AuthContext.jsx'
 import { T } from '../theme.js'
@@ -11,6 +11,7 @@ const EMPTY = {
 
 const MAINT_EMPTY = { service_type: 'Oil Change', service_date: '', mileage: '', notes: '', next_due_date: '', next_due_mileage: '' }
 const SERVICE_TYPES = ['Oil Change', 'Annual Inspection', 'Tire Rotation', 'Brake Service', 'Transmission', 'Coolant Flush', 'Air Filter', 'Other']
+const TRUCK_DOC_TYPES = ['Cab Card', 'Insurance Certificate', 'Registration', 'Title', 'Inspection Report', 'Other']
 
 function daysUntil(dateStr) {
   if (!dateStr) return null
@@ -50,11 +51,18 @@ export default function Trucks() {
   const [error, setError] = useState('')
 
   // Maintenance state
-  const [maintTruck, setMaintTruck] = useState(null)   // truck whose maint panel is open
+  const [maintTruck, setMaintTruck] = useState(null)
   const [maintRecords, setMaintRecords] = useState([])
   const [showMaintForm, setShowMaintForm] = useState(false)
   const [maintForm, setMaintForm] = useState({ ...MAINT_EMPTY })
   const [maintSaving, setMaintSaving] = useState(false)
+
+  // Truck documents state
+  const [docsTruck, setDocsTruck] = useState(null)
+  const [truckDocs, setTruckDocs] = useState([])
+  const [docUploadType, setDocUploadType] = useState('Cab Card')
+  const [docUploading, setDocUploading] = useState(false)
+  const docFileRef = useRef()
 
   useEffect(() => {
     load()
@@ -112,6 +120,30 @@ export default function Trucks() {
     if (!confirm('Remove this record?')) return
     await api.deleteMaintenance(id)
     setMaintRecords(r => r.filter(m => m.id !== id))
+  }
+
+  async function openDocs(truck) {
+    setDocsTruck(truck)
+    setTruckDocs(await api.truckDocs(truck.id))
+  }
+
+  async function handleDocUpload(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    setDocUploading(true)
+    try {
+      await api.uploadTruckDoc(docsTruck.id, file, docUploadType)
+      setTruckDocs(await api.truckDocs(docsTruck.id))
+    } finally {
+      setDocUploading(false)
+      docFileRef.current.value = ''
+    }
+  }
+
+  async function handleDeleteDoc(docId) {
+    if (!confirm('Remove this document?')) return
+    await api.deleteTruckDoc(docId)
+    setTruckDocs(d => d.filter(x => x.id !== docId))
   }
 
   function set(k, v) { setForm(f => ({ ...f, [k]: v })) }
@@ -172,6 +204,7 @@ export default function Trucks() {
               <div style={{ marginTop: 14, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <button style={smBtn()} onClick={() => openEdit(t)}>Edit</button>
                 <button style={{ ...smBtn(), color: T.blue, borderColor: T.blue + '40' }} onClick={() => openMaintenance(t)}>Maintenance</button>
+                <button style={{ ...smBtn(), color: T.teal || T.green, borderColor: (T.teal || T.green) + '40' }} onClick={() => openDocs(t)}>Documents</button>
                 {user.role === 'dispatcher' && (
                   <button style={{ ...smBtn(), color: T.red, borderColor: T.red + '40' }} onClick={() => handleDelete(t.id)}>Remove</button>
                 )}
@@ -230,6 +263,85 @@ export default function Trucks() {
                 <button type="submit" style={primaryBtn()} disabled={saving}>{saving ? 'Saving…' : editing ? 'Update' : 'Add Truck'}</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Truck Documents panel */}
+      {docsTruck && (
+        <div style={mBg()} onClick={() => setDocsTruck(null)}>
+          <div style={{ ...mBox(), maxWidth: 600 }} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 18 }}>
+              <div>
+                <h2 style={{ fontSize: 17, fontWeight: 700, color: T.text, margin: 0 }}>Documents — Tractor #{docsTruck.tractor_number}</h2>
+                <div style={{ fontSize: 12, color: T.text3, marginTop: 3 }}>
+                  {docsTruck.company_name || ''}{docsTruck.vin ? ` · VIN: ${docsTruck.vin}` : ''}{docsTruck.plate ? ` · Plate: ${docsTruck.plate}` : ''}
+                </div>
+              </div>
+              <button onClick={() => setDocsTruck(null)} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: T.text3 }}>×</button>
+            </div>
+
+            {/* Upload row */}
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 18, flexWrap: 'wrap' }}>
+              <select value={docUploadType} onChange={e => setDocUploadType(e.target.value)} style={{
+                flex: 1, minWidth: 140, padding: '8px 10px', borderRadius: 8, fontSize: 13,
+                background: T.bg2, border: `1px solid ${T.sep}`, color: T.text, cursor: 'pointer',
+              }}>
+                {TRUCK_DOC_TYPES.map(t => <option key={t}>{t}</option>)}
+              </select>
+              <button onClick={() => docFileRef.current.click()} disabled={docUploading} style={primaryBtn()}>
+                {docUploading ? 'Uploading…' : '+ Upload'}
+              </button>
+              <input ref={docFileRef} type="file" style={{ display: 'none' }} onChange={handleDocUpload}
+                accept=".pdf,.jpg,.jpeg,.png,.heic,.webp" />
+            </div>
+            <div style={{ fontSize: 11, color: T.text3, marginBottom: 16 }}>
+              Accepts PDF, JPG, PNG, HEIC — photos from your phone work too.
+            </div>
+
+            {/* Doc list */}
+            {truckDocs.length === 0 ? (
+              <div style={{ fontSize: 13, color: T.text3, padding: '20px 0', textAlign: 'center' }}>
+                No documents yet. Upload cab card, insurance cert, registration, etc.
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {truckDocs.map(doc => {
+                  const typeColor = doc.doc_type === 'Cab Card' ? T.blue
+                    : doc.doc_type === 'Insurance Certificate' ? T.green
+                    : doc.doc_type === 'Registration' ? T.orange
+                    : doc.doc_type === 'Title' ? (T.purple || T.blue)
+                    : T.text3
+                  return (
+                    <div key={doc.id} style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      padding: '10px 14px', background: T.bg2, borderRadius: 10, gap: 10,
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
+                        <span style={{
+                          padding: '2px 8px', borderRadius: 6, fontSize: 10, fontWeight: 700, flexShrink: 0,
+                          background: typeColor + '22', color: typeColor, textTransform: 'uppercase',
+                        }}>{doc.doc_type}</span>
+                        <span style={{ fontSize: 13, color: T.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {doc.original_name}
+                        </span>
+                        <span style={{ fontSize: 11, color: T.text3, flexShrink: 0 }}>{doc.uploaded_at?.slice(0, 10)}</span>
+                      </div>
+                      <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                        <button onClick={() => api.downloadTruckDoc(doc.id, doc.original_name)} style={{
+                          padding: '5px 12px', background: T.bg3 || T.bg2, color: T.text,
+                          border: `1px solid ${T.sep}`, borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                        }}>Download</button>
+                        <button onClick={() => handleDeleteDoc(doc.id)} style={{
+                          padding: '5px 12px', background: T.red + '18', color: T.red,
+                          border: 'none', borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                        }}>Remove</button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}

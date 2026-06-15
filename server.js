@@ -276,7 +276,7 @@ app.post('/api/drivers', auth, requireRole('dispatcher', 'company_owner'), (req,
     full_name, phone, email, license_number, license_expiry, medical_card_expiry, notes, company_id,
     username, password,
     hire_date, date_of_birth, address, cdl_class, license_state,
-    drug_test_date, background_check_date, emergency_contact_name, emergency_contact_phone
+    drug_test_date, drug_test_expiry, background_check_date, emergency_contact_name, emergency_contact_phone
   } = req.body;
   const cid = req.user.role === 'company_owner' ? req.user.company_id : company_id;
 
@@ -293,12 +293,12 @@ app.post('/api/drivers', auth, requireRole('dispatcher', 'company_owner'), (req,
 
   const r = db.prepare(`INSERT INTO drivers
     (user_id,company_id,full_name,phone,email,license_number,license_expiry,medical_card_expiry,notes,
-     hire_date,date_of_birth,address,cdl_class,license_state,drug_test_date,background_check_date,
+     hire_date,date_of_birth,address,cdl_class,license_state,drug_test_date,drug_test_expiry,background_check_date,
      emergency_contact_name,emergency_contact_phone)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
     user_id, cid, full_name, phone, email, license_number, license_expiry, medical_card_expiry, notes,
     hire_date||null, date_of_birth||null, address||null, cdl_class||null, license_state||null,
-    drug_test_date||null, background_check_date||null, emergency_contact_name||null, emergency_contact_phone||null
+    drug_test_date||null, drug_test_expiry||null, background_check_date||null, emergency_contact_name||null, emergency_contact_phone||null
   );
   res.json(db.prepare('SELECT d.*, c.name as company_name FROM drivers d LEFT JOIN companies c ON d.company_id = c.id WHERE d.id = ?').get(r.lastInsertRowid));
 });
@@ -307,16 +307,16 @@ app.put('/api/drivers/:id', auth, requireRole('dispatcher', 'company_owner'), (r
   const {
     full_name, phone, email, license_number, license_expiry, medical_card_expiry, notes, status, pay_percentage,
     hire_date, date_of_birth, address, cdl_class, license_state,
-    drug_test_date, background_check_date, emergency_contact_name, emergency_contact_phone
+    drug_test_date, drug_test_expiry, background_check_date, emergency_contact_name, emergency_contact_phone
   } = req.body;
   db.prepare(`UPDATE drivers SET
     full_name=?,phone=?,email=?,license_number=?,license_expiry=?,medical_card_expiry=?,notes=?,status=?,pay_percentage=?,
-    hire_date=?,date_of_birth=?,address=?,cdl_class=?,license_state=?,drug_test_date=?,background_check_date=?,
+    hire_date=?,date_of_birth=?,address=?,cdl_class=?,license_state=?,drug_test_date=?,drug_test_expiry=?,background_check_date=?,
     emergency_contact_name=?,emergency_contact_phone=?
     WHERE id=?`).run(
     full_name, phone, email, license_number, license_expiry, medical_card_expiry, notes, status, pay_percentage ?? 70,
     hire_date||null, date_of_birth||null, address||null, cdl_class||null, license_state||null,
-    drug_test_date||null, background_check_date||null, emergency_contact_name||null, emergency_contact_phone||null,
+    drug_test_date||null, drug_test_expiry||null, background_check_date||null, emergency_contact_name||null, emergency_contact_phone||null,
     req.params.id
   );
   res.json(db.prepare('SELECT d.*, c.name as company_name FROM drivers d LEFT JOIN companies c ON d.company_id = c.id WHERE d.id = ?').get(req.params.id));
@@ -1075,7 +1075,7 @@ app.post('/api/loads/:id/docs', auth, upload.single('file'), (req, res) => {
 app.get('/api/docs/:id/download', auth, (req, res) => {
   const doc = db.prepare('SELECT * FROM load_docs WHERE id = ?').get(req.params.id);
   if (!doc) return res.status(404).json({ error: 'Not found' });
-  const filePath = path.join(__dirname, 'uploads', doc.filename);
+  const filePath = path.join(UPLOADS_DIR, doc.filename);
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found on disk' });
   res.download(filePath, doc.original_name);
 });
@@ -1086,6 +1086,82 @@ app.delete('/api/docs/:id', auth, requireRole('dispatcher', 'company_owner'), (r
   try { fs.unlinkSync(path.join(__dirname, 'uploads', doc.filename)); } catch {}
   db.prepare('DELETE FROM load_docs WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
+});
+
+// ── Truck documents ──────────────────────────────────────────────────────────
+app.get('/api/trucks/:id/docs', auth, (req, res) => {
+  res.json(db.prepare('SELECT * FROM truck_docs WHERE truck_id = ? ORDER BY uploaded_at DESC').all(req.params.id));
+});
+
+app.post('/api/trucks/:id/docs', auth, requireRole('dispatcher', 'company_owner'), upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file' });
+  const truck = db.prepare('SELECT * FROM trucks WHERE id = ?').get(req.params.id);
+  if (!truck) return res.status(404).json({ error: 'Truck not found' });
+  if (req.user.role === 'company_owner' && truck.company_id !== req.user.company_id)
+    return res.status(403).json({ error: 'Forbidden' });
+  const { doc_type } = req.body;
+  const r = db.prepare('INSERT INTO truck_docs (truck_id, doc_type, original_name, filename, uploaded_by) VALUES (?,?,?,?,?)')
+    .run(req.params.id, doc_type || 'Other', req.file.originalname, req.file.filename, req.user.id);
+  res.json(db.prepare('SELECT * FROM truck_docs WHERE id = ?').get(r.lastInsertRowid));
+});
+
+app.get('/api/truck-docs/:id/download', auth, (req, res) => {
+  const doc = db.prepare('SELECT * FROM truck_docs WHERE id = ?').get(req.params.id);
+  if (!doc) return res.status(404).json({ error: 'Not found' });
+  const filePath = path.join(UPLOADS_DIR, doc.filename);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found on disk' });
+  res.download(filePath, doc.original_name);
+});
+
+app.delete('/api/truck-docs/:id', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
+  const doc = db.prepare('SELECT * FROM truck_docs WHERE id = ?').get(req.params.id);
+  if (!doc) return res.status(404).json({ error: 'Not found' });
+  try { fs.unlinkSync(path.join(UPLOADS_DIR, doc.filename)); } catch {}
+  db.prepare('DELETE FROM truck_docs WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ── Detention tracking ───────────────────────────────────────────────────────
+app.put('/api/loads/:id/detention', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
+  const { detention_start, detention_end, detention_rate } = req.body;
+  const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
+  if (!load) return res.status(404).json({ error: 'Not found' });
+  if (req.user.company_id && load.company_id !== req.user.company_id) return res.status(403).json({ error: 'Forbidden' });
+  db.prepare('UPDATE loads SET detention_start=?, detention_end=?, detention_rate=? WHERE id=?')
+    .run(detention_start || null, detention_end || null, detention_rate ?? 65, req.params.id);
+  res.json({ ok: true });
+});
+
+// ── Compliance data ──────────────────────────────────────────────────────────
+app.get('/api/compliance', auth, (req, res) => {
+  const isOwner = req.user.role === 'company_owner';
+  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id;
+  const cid = isOwner ? req.user.company_id : (!isAdmin && req.user.company_id) ? req.user.company_id : null;
+
+  const driverWhere = cid ? 'WHERE d.company_id = ?' : '';
+  const truckWhere  = cid ? 'WHERE t.company_id = ?' : '';
+  const params = cid ? [cid] : [];
+
+  const drivers = db.prepare(`
+    SELECT d.id, d.full_name, d.cdl_class, d.license_state,
+           d.license_number, d.license_expiry, d.medical_card_expiry,
+           d.drug_test_date, d.drug_test_expiry, d.is_active,
+           c.name as company_name
+    FROM drivers d LEFT JOIN companies c ON d.company_id = c.id
+    ${driverWhere}
+    ORDER BY d.full_name
+  `).all(...params);
+
+  const trucks = db.prepare(`
+    SELECT t.id, t.tractor_number, t.trailer_number, t.plate,
+           t.registration_expiry, t.insurance_expiry,
+           c.name as company_name
+    FROM trucks t LEFT JOIN companies c ON t.company_id = c.id
+    ${truckWhere}
+    ORDER BY t.tractor_number
+  `).all(...params);
+
+  res.json({ drivers, trucks });
 });
 
 // ── Maintenance records ──────────────────────────────────────────────────────

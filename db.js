@@ -128,6 +128,7 @@ if (!cols.includes('drug_test_date'))          db.prepare('ALTER TABLE drivers A
 if (!cols.includes('background_check_date'))   db.prepare('ALTER TABLE drivers ADD COLUMN background_check_date TEXT').run();
 if (!cols.includes('emergency_contact_name'))  db.prepare('ALTER TABLE drivers ADD COLUMN emergency_contact_name TEXT').run();
 if (!cols.includes('emergency_contact_phone')) db.prepare('ALTER TABLE drivers ADD COLUMN emergency_contact_phone TEXT').run();
+if (!cols.includes('drug_test_expiry'))        db.prepare('ALTER TABLE drivers ADD COLUMN drug_test_expiry TEXT').run();
 
 const loadCols = db.prepare("PRAGMA table_info(loads)").all().map(r => r.name);
 if (!loadCols.includes('relay_driver_id'))   db.prepare('ALTER TABLE loads ADD COLUMN relay_driver_id INTEGER REFERENCES drivers(id)').run();
@@ -135,6 +136,9 @@ if (!loadCols.includes('relay_split'))       db.prepare('ALTER TABLE loads ADD C
 if (!loadCols.includes('trailer_number'))    db.prepare('ALTER TABLE loads ADD COLUMN trailer_number TEXT').run();
 if (!loadCols.includes('checkin_time'))      db.prepare('ALTER TABLE loads ADD COLUMN checkin_time TEXT').run();
 if (!loadCols.includes('checkout_time'))     db.prepare('ALTER TABLE loads ADD COLUMN checkout_time TEXT').run();
+if (!loadCols.includes('detention_start'))   db.prepare('ALTER TABLE loads ADD COLUMN detention_start TEXT').run();
+if (!loadCols.includes('detention_end'))     db.prepare('ALTER TABLE loads ADD COLUMN detention_end TEXT').run();
+if (!loadCols.includes('detention_rate'))    db.prepare('ALTER TABLE loads ADD COLUMN detention_rate REAL DEFAULT 65').run();
 
 // Load documents (POD, BOL, Rate Con, Other)
 db.exec(`
@@ -163,6 +167,19 @@ db.exec(`
     company_id INTEGER REFERENCES companies(id),
     created_by INTEGER REFERENCES users(id),
     created_at TEXT DEFAULT (datetime('now'))
+  );
+`);
+
+// Truck documents (cab card, insurance cert, registration, etc.)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS truck_docs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    truck_id INTEGER NOT NULL REFERENCES trucks(id) ON DELETE CASCADE,
+    doc_type TEXT NOT NULL DEFAULT 'Other',
+    original_name TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    uploaded_by INTEGER REFERENCES users(id),
+    uploaded_at TEXT DEFAULT (datetime('now'))
   );
 `);
 

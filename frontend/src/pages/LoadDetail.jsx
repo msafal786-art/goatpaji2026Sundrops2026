@@ -26,6 +26,10 @@ export default function LoadDetail() {
   const [uploading, setUploading] = useState(false)
   const [uploadType, setUploadType] = useState('BOL')
 
+  const [detentionEdit, setDetentionEdit] = useState(false)
+  const [detForm, setDetForm] = useState({ detention_start: '', detention_end: '', detention_rate: 65 })
+  const [savingDet, setSavingDet] = useState(false)
+
   useEffect(() => { loadData(); fetchDocs() }, [id])
   useEffect(() => {
     api.loads().then(ls => {
@@ -40,6 +44,11 @@ export default function LoadDetail() {
   async function loadData() {
     const l = await api.load(id)
     setLoad(l)
+    setDetForm({
+      detention_start: l.detention_start ? l.detention_start.slice(0, 16) : '',
+      detention_end:   l.detention_end   ? l.detention_end.slice(0, 16)   : '',
+      detention_rate:  l.detention_rate  ?? 65,
+    })
   }
 
   async function fetchDocs() {
@@ -89,6 +98,26 @@ export default function LoadDetail() {
     if (!confirm('Remove this document?')) return
     await api.deleteDoc(docId)
     await fetchDocs()
+  }
+
+  async function handleSaveDetention() {
+    setSavingDet(true)
+    try {
+      await api.setDetention(id, {
+        detention_start: detForm.detention_start || null,
+        detention_end:   detForm.detention_end   || null,
+        detention_rate:  Number(detForm.detention_rate) || 65,
+      })
+      await loadData()
+      setDetentionEdit(false)
+    } finally { setSavingDet(false) }
+  }
+
+  function calcDetention(start, end, rate) {
+    if (!start || !end) return null
+    const hrs = (new Date(end) - new Date(start)) / 3600000
+    if (hrs <= 0) return null
+    return { hrs: Math.round(hrs * 10) / 10, charge: Math.round(hrs * rate) }
   }
 
   if (!load) return <div style={{ padding: 40, color: T.text2 }}>Loading…</div>
@@ -292,6 +321,89 @@ export default function LoadDetail() {
           </div>
         )}
       </div>
+
+      {/* Detention Tracker */}
+      {canEdit && (() => {
+        const det = calcDetention(load.detention_start, load.detention_end, load.detention_rate ?? 65)
+        return (
+          <div style={{ background: T.bg1, borderRadius: 14, padding: '16px 20px', marginTop: 14, border: `1px solid ${T.sep}` }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+              <div>
+                <h3 style={{ fontSize: 11, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 1, margin: 0 }}>Detention</h3>
+                {det && <div style={{ fontSize: 12, color: T.orange, fontWeight: 700, marginTop: 4 }}>{det.hrs}h · ${det.charge.toLocaleString()} @ ${load.detention_rate ?? 65}/hr</div>}
+              </div>
+              <button onClick={() => setDetentionEdit(v => !v)} style={{
+                padding: '5px 14px', background: T.orange + '20', color: T.orange,
+                border: `1px solid ${T.orange}40`, borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 600,
+              }}>{detentionEdit ? 'Cancel' : load.detention_start ? 'Edit' : '+ Log Detention'}</button>
+            </div>
+
+            {!detentionEdit && load.detention_start && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))', gap: 10 }}>
+                <div>
+                  <div style={{ fontSize: 10, color: T.text3, marginBottom: 2 }}>Detention Start</div>
+                  <div style={{ fontSize: 13, color: T.text }}>{fmtTime(load.detention_start)}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 10, color: T.text3, marginBottom: 2 }}>Detention End</div>
+                  <div style={{ fontSize: 13, color: T.text }}>{load.detention_end ? fmtTime(load.detention_end) : <span style={{ color: T.orange }}>In progress…</span>}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: 10, color: T.text3, marginBottom: 2 }}>Rate</div>
+                  <div style={{ fontSize: 13, color: T.text }}>${load.detention_rate ?? 65}/hr</div>
+                </div>
+                {det && (
+                  <div>
+                    <div style={{ fontSize: 10, color: T.text3, marginBottom: 2 }}>Detention Charge</div>
+                    <div style={{ fontSize: 15, fontWeight: 800, color: T.orange }}>${det.charge.toLocaleString()}</div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {!detentionEdit && !load.detention_start && (
+              <div style={{ fontSize: 13, color: T.text3 }}>No detention logged. Click to log if driver was delayed at pickup or delivery.</div>
+            )}
+
+            {detentionEdit && (
+              <div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 12, marginBottom: 14 }}>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 600, color: T.text3, display: 'block', marginBottom: 5 }}>Detention Start</label>
+                    <input type="datetime-local" value={detForm.detention_start}
+                      onChange={e => setDetForm(f => ({ ...f, detention_start: e.target.value }))}
+                      style={{ width: '100%', padding: '8px 10px', background: T.bg2, border: `1px solid ${T.sep}`, borderRadius: 8, fontSize: 13, color: T.text, boxSizing: 'border-box' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 600, color: T.text3, display: 'block', marginBottom: 5 }}>Detention End</label>
+                    <input type="datetime-local" value={detForm.detention_end}
+                      onChange={e => setDetForm(f => ({ ...f, detention_end: e.target.value }))}
+                      style={{ width: '100%', padding: '8px 10px', background: T.bg2, border: `1px solid ${T.sep}`, borderRadius: 8, fontSize: 13, color: T.text, boxSizing: 'border-box' }} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, fontWeight: 600, color: T.text3, display: 'block', marginBottom: 5 }}>Rate ($/hr)</label>
+                    <input type="number" min="0" value={detForm.detention_rate}
+                      onChange={e => setDetForm(f => ({ ...f, detention_rate: e.target.value }))}
+                      style={{ width: '100%', padding: '8px 10px', background: T.bg2, border: `1px solid ${T.sep}`, borderRadius: 8, fontSize: 13, color: T.text, boxSizing: 'border-box' }} />
+                  </div>
+                </div>
+                {(() => {
+                  const preview = calcDetention(detForm.detention_start, detForm.detention_end, Number(detForm.detention_rate) || 65)
+                  return preview ? (
+                    <div style={{ background: T.orange + '12', border: `1px solid ${T.orange}30`, borderRadius: 10, padding: '10px 14px', marginBottom: 12, fontSize: 13, color: T.orange, fontWeight: 700 }}>
+                      {preview.hrs} hours detained → Charge: ${preview.charge.toLocaleString()} (add to invoice)
+                    </div>
+                  ) : null
+                })()}
+                <button onClick={handleSaveDetention} disabled={savingDet} style={{
+                  padding: '8px 20px', background: T.orange, color: '#fff', border: 'none',
+                  borderRadius: 9, cursor: 'pointer', fontWeight: 700, fontSize: 13,
+                }}>{savingDet ? 'Saving…' : 'Save Detention'}</button>
+              </div>
+            )}
+          </div>
+        )
+      })()}
 
       {/* Dispatch message modal */}
       {showMsg && (
