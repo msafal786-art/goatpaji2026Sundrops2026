@@ -18,6 +18,7 @@ import Settings from './pages/Settings.jsx'
 import Search from './pages/Search.jsx'
 import Recommendations from './pages/Recommendations.jsx'
 import Payroll from './pages/Payroll.jsx'
+import Users from './pages/Users.jsx'
 
 
 const NAV_LINKS = {
@@ -30,6 +31,7 @@ const NAV_LINKS = {
     { to: '/trucks',          icon: '▣',  label: 'Trucks' },
     { to: '/payroll',         icon: '💵', label: 'Payroll' },
     { to: '/companies',       icon: '⬡',  label: 'Companies' },
+    { to: '/users',           icon: '👥', label: 'Users' },
     { to: '/settings',        icon: '⚙',  label: 'Settings' },
   ],
   company_owner: [
@@ -295,6 +297,7 @@ export default function App() {
               <Route path="/drivers" element={<Drivers />} />
               <Route path="/trucks" element={<Trucks />} />
               {user.role === 'dispatcher' && <Route path="/companies" element={<Companies />} />}
+              {user.role === 'dispatcher' && <Route path="/users" element={<Users />} />}
               <Route path="/search" element={<Search />} />
               <Route path="/recommendations" element={<Recommendations />} />
               <Route path="/payroll" element={<Payroll />} />

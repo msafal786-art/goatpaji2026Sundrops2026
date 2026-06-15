@@ -53,6 +53,9 @@ export const api = {
 
   users: () => req('GET', '/users'),
   createUser: (d) => req('POST', '/users', d),
+  updateUser: (id, d) => req('PUT', `/users/${id}`, d),
+  deleteUser: (id) => req('DELETE', `/users/${id}`),
+  dashboardStats: () => req('GET', '/dashboard-stats'),
 
   drivers: () => req('GET', '/drivers'),
   createDriver: (d) => req('POST', '/drivers', d),

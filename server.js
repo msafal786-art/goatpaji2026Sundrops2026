@@ -155,7 +155,7 @@ app.post('/api/refresh', auth, (req, res) => {
 app.get('/api/me', auth, (req, res) => {
   const user = db.prepare(`
     SELECT u.id, u.username, u.role, u.company_id, u.full_name, u.email, u.phone,
-           c.name as company_name
+           u.can_see_revenue, c.name as company_name
     FROM users u LEFT JOIN companies c ON u.company_id = c.id
     WHERE u.id = ?
   `).get(req.user.id);
@@ -183,19 +183,53 @@ app.put('/api/companies/:id', auth, requireRole('dispatcher'), (req, res) => {
 });
 
 // ── Users (for company owners and drivers) ───────────────────────────────────
+app.get('/api/users', auth, requireRole('dispatcher'), (req, res) => {
+  const users = db.prepare(`
+    SELECT u.id, u.username, u.role, u.company_id, u.full_name, u.email, u.phone,
+           u.can_see_revenue, u.last_seen_at, c.name as company_name
+    FROM users u LEFT JOIN companies c ON u.company_id = c.id
+    WHERE u.role != 'driver'
+    ORDER BY c.name, u.full_name
+  `).all();
+  res.json(users);
+});
+
 app.post('/api/users', auth, requireRole('dispatcher'), (req, res) => {
-  const { username, password, role, company_id, full_name, email, phone } = req.body;
+  const { username, password, role, company_id, full_name, email, phone, can_see_revenue } = req.body;
+  if (!username || !password || !role) return res.status(400).json({ error: 'username, password, role required' });
   const hash = bcrypt.hashSync(password, 10);
   try {
-    const r = db.prepare('INSERT INTO users (username,password,role,company_id,full_name,email,phone) VALUES (?,?,?,?,?,?,?)').run(username, hash, role, company_id || null, full_name, email, phone);
-    res.json({ id: r.lastInsertRowid, username, role, full_name });
-  } catch (e) {
+    const r = db.prepare('INSERT INTO users (username,password,role,company_id,full_name,email,phone,can_see_revenue) VALUES (?,?,?,?,?,?,?,?)')
+      .run(username, hash, role, company_id || null, full_name || null, email || null, phone || null, can_see_revenue ? 1 : 0);
+    res.json(db.prepare('SELECT u.*, c.name as company_name FROM users u LEFT JOIN companies c ON u.company_id = c.id WHERE u.id = ?').get(r.lastInsertRowid));
+  } catch {
     res.status(400).json({ error: 'Username already exists' });
   }
 });
 
-app.get('/api/users', auth, requireRole('dispatcher'), (req, res) => {
-  res.json(db.prepare('SELECT id,username,role,company_id,full_name,email,phone,created_at FROM users ORDER BY full_name').all());
+app.put('/api/users/:id', auth, requireRole('dispatcher'), (req, res) => {
+  const { full_name, email, phone, can_see_revenue, password, company_id, role } = req.body;
+  const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Not found' });
+  // Protect: cannot change admin's own role/company
+  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id;
+  if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
+  if (password) {
+    db.prepare('UPDATE users SET password = ? WHERE id = ?').run(bcrypt.hashSync(password, 10), req.params.id);
+  }
+  db.prepare('UPDATE users SET full_name=?, email=?, phone=?, can_see_revenue=?, company_id=?, role=? WHERE id = ?')
+    .run(full_name || existing.full_name, email || existing.email, phone || existing.phone,
+         can_see_revenue ? 1 : 0, company_id !== undefined ? (company_id || null) : existing.company_id,
+         role || existing.role, req.params.id);
+  res.json(db.prepare('SELECT u.*, c.name as company_name FROM users u LEFT JOIN companies c ON u.company_id = c.id WHERE u.id = ?').get(req.params.id));
+});
+
+app.delete('/api/users/:id', auth, requireRole('dispatcher'), (req, res) => {
+  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id;
+  if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
+  if (Number(req.params.id) === req.user.id) return res.status(400).json({ error: 'Cannot delete yourself' });
+  db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
 });
 
 // ── Drivers ──────────────────────────────────────────────────────────────────
@@ -604,6 +638,87 @@ For dates format as YYYY-MM-DD. For times use HH:MM AM/PM format.`
 });
 
 // ── Stats for dashboard ───────────────────────────────────────────────────────
+// ── Rich dashboard stats ──────────────────────────────────────────────────────
+app.get('/api/dashboard-stats', auth, (req, res) => {
+  const isOwner = req.user.role === 'company_owner';
+  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id;
+  const canRevenue = isOwner || isAdmin || req.user.can_see_revenue;
+  const cid = isOwner ? req.user.company_id
+             : (!isAdmin && req.user.company_id) ? req.user.company_id : null;
+  const cWhere = cid ? 'AND l.company_id = ?' : '';
+  const cParams = cid ? [cid] : [];
+
+  const thisMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
+  const lastMonthDate = new Date(); lastMonthDate.setMonth(lastMonthDate.getMonth() - 1);
+  const lastMonth = lastMonthDate.toISOString().slice(0, 7);
+
+  function monthRow(mo) {
+    return db.prepare(`
+      SELECT COUNT(*) as loads,
+             SUM(CAST(rate AS REAL)) as revenue,
+             SUM(CAST(miles AS REAL)) as miles
+      FROM loads l
+      WHERE status IN ('delivered','completed')
+        AND strftime('%Y-%m', delivery_date) = ?
+        ${cWhere}
+    `).get(mo, ...cParams);
+  }
+
+  const tm = monthRow(thisMonth);
+  const lm = monthRow(lastMonth);
+
+  // Last 8 weeks revenue — group by ISO week
+  const weekRows = db.prepare(`
+    SELECT strftime('%Y-W%W', delivery_date) as week,
+           COUNT(*) as loads,
+           SUM(CAST(rate AS REAL)) as revenue,
+           SUM(CAST(miles AS REAL)) as miles
+    FROM loads l
+    WHERE status IN ('delivered','completed')
+      AND delivery_date >= date('now', '-56 days')
+      ${cWhere}
+    GROUP BY week ORDER BY week
+  `).all(...cParams);
+
+  // Loads picking up in next 7 days
+  const upcoming = db.prepare(`
+    SELECT l.id, l.load_number, l.broker_order, l.pickup_date, l.pickup_city, l.pickup_state,
+           l.delivery_city, l.delivery_state, l.status, d.full_name as driver_name
+    FROM loads l
+    LEFT JOIN drivers d ON l.driver_id = d.id
+    WHERE l.pickup_date BETWEEN date('now') AND date('now', '+7 days')
+      AND l.status NOT IN ('delivered','completed')
+      ${cWhere}
+    ORDER BY l.pickup_date, l.pickup_time
+    LIMIT 20
+  `).all(...cParams);
+
+  // To-do: needs assignment (no driver, pickup in next 14d)
+  const needsDriver = db.prepare(`
+    SELECT COUNT(*) as n FROM loads l
+    WHERE l.driver_id IS NULL
+      AND l.status IN ('pending','assigned')
+      AND l.pickup_date <= date('now', '+14 days')
+      ${cWhere}
+  `).get(...cParams).n;
+
+  // To-do: ready to invoice
+  const toInvoice = db.prepare(`
+    SELECT COUNT(*) as n, SUM(CAST(rate AS REAL)) as total
+    FROM loads l WHERE l.status = 'delivered' ${cWhere}
+  `).get(...cParams);
+
+  res.json({
+    canRevenue,
+    thisMonth: { ...tm, month: thisMonth },
+    lastMonth: { ...lm, month: lastMonth },
+    weeklyTrend: weekRows,
+    upcoming,
+    needsDriver,
+    toInvoice: { count: toInvoice.n, total: toInvoice.total || 0 },
+  });
+});
+
 app.get('/api/stats', auth, (req, res) => {
   const isOwner = req.user.role === 'company_owner';
   const cid = isOwner ? req.user.company_id : null;
