@@ -286,8 +286,6 @@ export default function App() {
             <Route path="/login" element={<Login onLogin={handleLogin} />} />
             <Route path="*" element={<Navigate to="/login" />} />
           </Routes>
-        ) : user.must_change_password ? (
-          <ChangePassword user={user} onDone={() => api.me().then(setUser)} />
         ) : user.role === 'driver' ? (
           <Routes><Route path="*" element={<DriverView user={user} onLogout={handleLogout} />} /></Routes>
         ) : (
