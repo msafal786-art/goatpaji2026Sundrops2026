@@ -1,4 +1,11 @@
 require('dotenv').config();
+
+// Fail fast if critical env vars are missing — prevents silent JWT signing with empty secret
+if (!process.env.JWT_SECRET) {
+  console.error('[fatal] JWT_SECRET is not set — refusing to start');
+  process.exit(1);
+}
+
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -71,8 +78,18 @@ app.use('/api/', apiLimiter);
 
 const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(__dirname, 'uploads');
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-app.use('/uploads', express.static(UPLOADS_DIR));
-const upload = multer({ dest: UPLOADS_DIR });
+// /uploads is NOT served statically — all file access goes through authenticated API endpoints
+
+const ALLOWED_UPLOAD_TYPES = ['application/pdf','image/jpeg','image/jpg','image/png','image/heic','image/heif'];
+const upload = multer({
+  dest: UPLOADS_DIR,
+  limits: { fileSize: 20 * 1024 * 1024 }, // 20 MB cap
+  fileFilter: (req, file, cb) => {
+    if (ALLOWED_UPLOAD_TYPES.includes(file.mimetype)) return cb(null, true);
+    req._fileTypeError = 'Only PDF, JPG, PNG, or HEIC files are allowed';
+    cb(null, false);
+  },
+});
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // ── Health check (Railway uses this) ────────────────────────────────────────
@@ -382,7 +399,9 @@ app.get('/api/loads', auth, (req, res) => {
     const driver = db.prepare('SELECT id FROM drivers WHERE user_id = ?').get(req.user.id);
     if (!driver) return res.json([]);
     // Drivers only see loads once dispatched and while active — not pending/assigned/completed
-    return res.json(loadsQuery("WHERE l.driver_id = ? AND l.status IN ('dispatched','in_transit','delivered')", [driver.id]));
+    // Strip financial fields — drivers must never see rate/pay amounts
+    return res.json(loadsQuery("WHERE l.driver_id = ? AND l.status IN ('dispatched','in_transit','delivered')", [driver.id])
+      .map(({ rate, relay_split, ...rest }) => rest));
   }
   if (req.user.role === 'company_owner') {
     return res.json(loadsQuery('WHERE l.company_id = ?', [req.user.company_id]));
@@ -410,6 +429,17 @@ app.get('/api/loads/:id', auth, (req, res) => {
     WHERE l.id = ?
   `).get(req.params.id);
   if (!load) return res.status(404).json({ error: 'Not found' });
+
+  // IDOR: drivers can only see their own load; scoped users only their company's loads
+  if (req.user.role === 'driver') {
+    const driver = db.prepare('SELECT id FROM drivers WHERE user_id = ?').get(req.user.id);
+    if (!driver || load.driver_id !== driver.id) return res.status(403).json({ error: 'Forbidden' });
+    const { rate, relay_split, ...safe } = load;
+    return res.json(safe);
+  }
+  if (req.user.company_id && load.company_id !== req.user.company_id)
+    return res.status(403).json({ error: 'Forbidden' });
+
   res.json(load);
 });
 
@@ -587,7 +617,12 @@ app.post('/api/loads/:id/status', auth, (req, res) => {
 
 // ── PDF Rate Con Parser ───────────────────────────────────────────────────────
 app.post('/api/parse-rate-con', auth, requireRole('dispatcher', 'company_owner'), upload.single('file'), async (req, res) => {
+  if (req._fileTypeError) return res.status(400).json({ error: req._fileTypeError });
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  if (req.file.mimetype !== 'application/pdf') {
+    try { fs.unlinkSync(req.file.path); } catch {}
+    return res.status(400).json({ error: 'Only PDF files are supported for rate con parsing' });
+  }
 
   try {
     const fileBuffer = fs.readFileSync(req.file.path);
@@ -663,7 +698,7 @@ For dates format as YYYY-MM-DD. For times use HH:MM AM/PM format.`
   } catch (err) {
     console.error('Parse error:', err.message);
     try { fs.unlinkSync(req.file.path); } catch {}
-    res.status(500).json({ error: 'Failed to parse PDF: ' + err.message });
+    res.status(500).json({ error: 'Failed to parse PDF' });
   }
 });
 
@@ -767,7 +802,7 @@ app.get('/api/stats', auth, (req, res) => {
 });
 
 // ── Search loads ─────────────────────────────────────────────────────────────
-app.get('/api/search', auth, (req, res) => {
+app.get('/api/search', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
   const q = (req.query.q || '').trim();
   if (!q) return res.json([]);
   const like = `%${q}%`;
@@ -1105,11 +1140,28 @@ app.put('/api/loads/:id/checkout', auth, (req, res) => {
 
 // ── Load documents ───────────────────────────────────────────────────────────
 app.get('/api/loads/:id/docs', auth, (req, res) => {
+  const load = db.prepare('SELECT company_id, driver_id FROM loads WHERE id = ?').get(req.params.id);
+  if (!load) return res.status(404).json({ error: 'Not found' });
+  if (req.user.role === 'driver') {
+    const driver = db.prepare('SELECT id FROM drivers WHERE user_id = ?').get(req.user.id);
+    if (!driver || load.driver_id !== driver.id) return res.status(403).json({ error: 'Forbidden' });
+  } else if (req.user.company_id && load.company_id !== req.user.company_id) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
   res.json(db.prepare('SELECT * FROM load_docs WHERE load_id = ? ORDER BY uploaded_at DESC').all(req.params.id));
 });
 
 app.post('/api/loads/:id/docs', auth, upload.single('file'), (req, res) => {
+  if (req._fileTypeError) return res.status(400).json({ error: req._fileTypeError });
   if (!req.file) return res.status(400).json({ error: 'No file' });
+  const load = db.prepare('SELECT company_id, driver_id FROM loads WHERE id = ?').get(req.params.id);
+  if (!load) return res.status(404).json({ error: 'Load not found' });
+  if (req.user.role === 'driver') {
+    const driver = db.prepare('SELECT id FROM drivers WHERE user_id = ?').get(req.user.id);
+    if (!driver || load.driver_id !== driver.id) return res.status(403).json({ error: 'Forbidden' });
+  } else if (req.user.company_id && load.company_id !== req.user.company_id) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
   const { doc_type } = req.body;
   const r = db.prepare('INSERT INTO load_docs (load_id, doc_type, original_name, filename, uploaded_by) VALUES (?,?,?,?,?)')
     .run(req.params.id, doc_type || 'Other', req.file.originalname, req.file.filename, req.user.id);
@@ -1117,27 +1169,46 @@ app.post('/api/loads/:id/docs', auth, upload.single('file'), (req, res) => {
 });
 
 app.get('/api/docs/:id/download', auth, (req, res) => {
-  const doc = db.prepare('SELECT * FROM load_docs WHERE id = ?').get(req.params.id);
+  const doc = db.prepare(`
+    SELECT ld.*, l.company_id as load_company_id, l.driver_id as load_driver_id
+    FROM load_docs ld JOIN loads l ON ld.load_id = l.id WHERE ld.id = ?
+  `).get(req.params.id);
   if (!doc) return res.status(404).json({ error: 'Not found' });
+  if (req.user.role === 'driver') {
+    const driver = db.prepare('SELECT id FROM drivers WHERE user_id = ?').get(req.user.id);
+    if (!driver || doc.load_driver_id !== driver.id) return res.status(403).json({ error: 'Forbidden' });
+  } else if (req.user.company_id && doc.load_company_id !== req.user.company_id) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
   const filePath = path.join(UPLOADS_DIR, doc.filename);
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found on disk' });
   res.download(filePath, doc.original_name);
 });
 
 app.delete('/api/docs/:id', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
-  const doc = db.prepare('SELECT * FROM load_docs WHERE id = ?').get(req.params.id);
+  const doc = db.prepare(`
+    SELECT ld.*, l.company_id as load_company_id
+    FROM load_docs ld JOIN loads l ON ld.load_id = l.id WHERE ld.id = ?
+  `).get(req.params.id);
   if (!doc) return res.status(404).json({ error: 'Not found' });
-  try { fs.unlinkSync(path.join(__dirname, 'uploads', doc.filename)); } catch {}
+  if (req.user.company_id && doc.load_company_id !== req.user.company_id)
+    return res.status(403).json({ error: 'Forbidden' });
+  try { fs.unlinkSync(path.join(UPLOADS_DIR, doc.filename)); } catch {}   // fixed: was __dirname/uploads
   db.prepare('DELETE FROM load_docs WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
 
 // ── Truck documents ──────────────────────────────────────────────────────────
 app.get('/api/trucks/:id/docs', auth, (req, res) => {
+  const truck = db.prepare('SELECT company_id FROM trucks WHERE id = ?').get(req.params.id);
+  if (!truck) return res.status(404).json({ error: 'Truck not found' });
+  if (req.user.company_id && truck.company_id !== req.user.company_id)
+    return res.status(403).json({ error: 'Forbidden' });
   res.json(db.prepare('SELECT * FROM truck_docs WHERE truck_id = ? ORDER BY uploaded_at DESC').all(req.params.id));
 });
 
 app.post('/api/trucks/:id/docs', auth, requireRole('dispatcher', 'company_owner'), upload.single('file'), (req, res) => {
+  if (req._fileTypeError) return res.status(400).json({ error: req._fileTypeError });
   if (!req.file) return res.status(400).json({ error: 'No file' });
   const truck = db.prepare('SELECT * FROM trucks WHERE id = ?').get(req.params.id);
   if (!truck) return res.status(404).json({ error: 'Truck not found' });
@@ -1150,16 +1221,26 @@ app.post('/api/trucks/:id/docs', auth, requireRole('dispatcher', 'company_owner'
 });
 
 app.get('/api/truck-docs/:id/download', auth, (req, res) => {
-  const doc = db.prepare('SELECT * FROM truck_docs WHERE id = ?').get(req.params.id);
+  const doc = db.prepare(`
+    SELECT td.*, t.company_id as truck_company_id
+    FROM truck_docs td JOIN trucks t ON td.truck_id = t.id WHERE td.id = ?
+  `).get(req.params.id);
   if (!doc) return res.status(404).json({ error: 'Not found' });
+  if (req.user.company_id && doc.truck_company_id !== req.user.company_id)
+    return res.status(403).json({ error: 'Forbidden' });
   const filePath = path.join(UPLOADS_DIR, doc.filename);
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found on disk' });
   res.download(filePath, doc.original_name);
 });
 
 app.delete('/api/truck-docs/:id', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
-  const doc = db.prepare('SELECT * FROM truck_docs WHERE id = ?').get(req.params.id);
+  const doc = db.prepare(`
+    SELECT td.*, t.company_id as truck_company_id
+    FROM truck_docs td JOIN trucks t ON td.truck_id = t.id WHERE td.id = ?
+  `).get(req.params.id);
   if (!doc) return res.status(404).json({ error: 'Not found' });
+  if (req.user.company_id && doc.truck_company_id !== req.user.company_id)
+    return res.status(403).json({ error: 'Forbidden' });
   try { fs.unlinkSync(path.join(UPLOADS_DIR, doc.filename)); } catch {}
   db.prepare('DELETE FROM truck_docs WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
@@ -1168,11 +1249,14 @@ app.delete('/api/truck-docs/:id', auth, requireRole('dispatcher', 'company_owner
 // ── Detention tracking ───────────────────────────────────────────────────────
 app.put('/api/loads/:id/detention', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
   const { detention_start, detention_end, detention_rate } = req.body;
+  const rate = Number(detention_rate ?? 65);
+  if (isNaN(rate) || rate < 0 || rate > 9999)
+    return res.status(400).json({ error: 'detention_rate must be between 0 and 9999' });
   const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
   if (!load) return res.status(404).json({ error: 'Not found' });
   if (req.user.company_id && load.company_id !== req.user.company_id) return res.status(403).json({ error: 'Forbidden' });
   db.prepare('UPDATE loads SET detention_start=?, detention_end=?, detention_rate=? WHERE id=?')
-    .run(detention_start || null, detention_end || null, detention_rate ?? 65, req.params.id);
+    .run(detention_start || null, detention_end || null, rate, req.params.id);
   res.json({ ok: true });
 });
 
@@ -1245,6 +1329,16 @@ app.delete('/api/maintenance/:id', auth, requireRole('dispatcher', 'company_owne
 app.use(express.static(path.join(__dirname, 'frontend/dist')));
 app.get('/{*path}', (req, res) => {
   res.sendFile(path.join(__dirname, 'frontend/dist/index.html'));
+});
+
+// ── Global error handler (catches multer errors before Express default 500) ───
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    const msg = err.code === 'LIMIT_FILE_SIZE' ? 'File too large. Maximum size is 20 MB.' : err.message;
+    return res.status(400).json({ error: msg });
+  }
+  console.error('[server error]', err.message);
+  res.status(500).json({ error: 'Internal server error' });
 });
 
 const PORT = process.env.PORT || 3001;
