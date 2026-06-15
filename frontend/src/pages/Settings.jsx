@@ -92,23 +92,25 @@ export default function Settings() {
         {!user.phone && <Row label="Phone" last><Val style={{ color: T.text3 }}>Not set</Val></Row>}
       </Section>
 
-      {/* Session & Security */}
-      <Section title="Session & Security">
-        {sessionInfo && (
-          <>
-            <Row label="Signed in at"><Val>{sessionInfo.issuedAt}</Val></Row>
-            <Row label="Session expires">
-              <Val style={{ color: hoursLeft < 12 ? T.orange : T.text2 }}>
-                {sessionInfo.expiresAt}{hoursLeft !== null && ` (${hoursLeft}h left)`}
-              </Val>
-            </Row>
-          </>
-        )}
-        <Row label="Auth method"><Val>JWT · bcrypt passwords</Val></Row>
-        <Row label="Connection"><Val style={{ color: T.green }}>Encrypted (HTTPS)</Val></Row>
-        <Row label="Data storage"><Val>Railway Volume · SQLite WAL</Val></Row>
-        <Row label="Rate limiting" last><Val style={{ color: T.green }}>Active — 10 attempts / 15 min</Val></Row>
-      </Section>
+      {/* Session & Security — admin only */}
+      {user.role === 'dispatcher' && !user.company_id && (
+        <Section title="Session & Security">
+          {sessionInfo && (
+            <>
+              <Row label="Signed in at"><Val>{sessionInfo.issuedAt}</Val></Row>
+              <Row label="Session expires">
+                <Val style={{ color: hoursLeft < 12 ? T.orange : T.text2 }}>
+                  {sessionInfo.expiresAt}{hoursLeft !== null && ` (${hoursLeft}h left)`}
+                </Val>
+              </Row>
+            </>
+          )}
+          <Row label="Auth method"><Val>JWT · bcrypt passwords</Val></Row>
+          <Row label="Connection"><Val style={{ color: T.green }}>Encrypted (HTTPS)</Val></Row>
+          <Row label="Data storage"><Val>Railway Volume · SQLite WAL</Val></Row>
+          <Row label="Rate limiting" last><Val style={{ color: T.green }}>Active — 10 attempts / 15 min</Val></Row>
+        </Section>
+      )}
 
       {/* Mobile App */}
       <Section title="Mobile App">
