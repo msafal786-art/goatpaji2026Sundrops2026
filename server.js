@@ -704,7 +704,10 @@ For dates format as YYYY-MM-DD. For times use HH:MM AM/PM format.`
   } catch (err) {
     console.error('Parse error:', err.message);
     try { fs.unlinkSync(req.file.path); } catch {}
-    res.status(500).json({ error: 'Failed to parse PDF' });
+    const msg = err.message?.includes('credit balance')
+      ? 'PDF parsing is temporarily unavailable (API credits exhausted). Enter load details manually.'
+      : 'Failed to parse PDF';
+    res.status(500).json({ error: msg });
   }
 });
 
