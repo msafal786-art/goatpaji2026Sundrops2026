@@ -126,6 +126,7 @@ export const api = {
 
   stats: () => req('GET', '/stats'),
 
+  activeUsers: () => req('GET', '/active-users'),
   search: (q) => req('GET', `/search?q=${encodeURIComponent(q)}`),
   recommendations: () => req('GET', '/recommendations'),
   payrollWeek: (start) => req('GET', `/payroll/week?start=${start}`),

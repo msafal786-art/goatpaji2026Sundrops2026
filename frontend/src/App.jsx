@@ -61,10 +61,31 @@ const BOTTOM_NAV_LINKS = {
   ],
 }
 
+function timeAgo(isoStr) {
+  if (!isoStr) return ''
+  const secs = Math.floor((Date.now() - new Date(isoStr).getTime()) / 1000)
+  if (secs < 90) return 'now'
+  if (secs < 3600) return `${Math.floor(secs / 60)}m ago`
+  return `${Math.floor(secs / 3600)}h ago`
+}
+
 // ── Desktop sidebar ────────────────────────────────────────────────────────────
 function Sidebar({ user, onLogout }) {
   const loc = useLocation()
   const links = NAV_LINKS[user.role] || []
+  const isAdmin = user.role === 'dispatcher' && !user.company_id
+  const [onlineUsers, setOnlineUsers] = useState([])
+
+  useEffect(() => {
+    if (!isAdmin) return
+    function fetchOnline() {
+      api.activeUsers().then(setOnlineUsers).catch(() => {})
+    }
+    fetchOnline()
+    const iv = setInterval(fetchOnline, 30000)
+    return () => clearInterval(iv)
+  }, [isAdmin])
+
   return (
     <div style={{
       width: 220, background: T.bg1, display: 'flex', flexDirection: 'column',
@@ -100,6 +121,37 @@ function Sidebar({ user, onLogout }) {
           )
         })}
       </nav>
+
+      {/* Who's Online — admin only */}
+      {isAdmin && onlineUsers.length > 0 && (
+        <div style={{ padding: '10px 14px', borderTop: `1px solid ${T.sep}` }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 }}>
+            Online ({onlineUsers.length})
+          </div>
+          {onlineUsers.map(u => {
+            const ago = timeAgo(u.last_seen_at)
+            const isNow = ago === 'now'
+            return (
+              <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 7 }}>
+                <span style={{
+                  width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
+                  background: isNow ? T.green : T.text3,
+                }} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: T.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {u.full_name || u.username}
+                  </div>
+                  <div style={{ fontSize: 10, color: T.text3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {u.company_name || (u.role === 'dispatcher' ? 'Admin' : u.role.replace('_', ' '))}
+                  </div>
+                </div>
+                <span style={{ fontSize: 10, color: isNow ? T.green : T.text3, flexShrink: 0 }}>{ago}</span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
       <div style={{ padding: '12px 16px', borderTop: `1px solid ${T.sep}` }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: T.text2, marginBottom: 2 }}>{user.full_name || user.username}</div>
         <div style={{ fontSize: 11, color: T.text3, marginBottom: 10 }}>{user.role.replace('_', ' ')}</div>

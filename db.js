@@ -181,6 +181,9 @@ db.exec(`
   );
 `);
 
+const userCols = db.prepare("PRAGMA table_info(users)").all().map(r => r.name);
+if (!userCols.includes('last_seen_at')) db.prepare('ALTER TABLE users ADD COLUMN last_seen_at TEXT').run();
+
 // Seed a default dispatcher account
 const bcrypt = require('bcryptjs');
 const existingDispatcher = db.prepare('SELECT id FROM users WHERE username = ?').get('dispatcher');

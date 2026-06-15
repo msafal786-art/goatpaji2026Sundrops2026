@@ -40,6 +40,8 @@ export default function Drivers() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
+  const [loginMsg, setLoginMsg] = useState(null)   // { name, username, password? }
+  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     load()
@@ -69,6 +71,8 @@ export default function Drivers() {
           } else {
             await api.resetDriverPassword(editing.id, form.password)
           }
+          // Show copyable login message right after setting password
+          setLoginMsg({ name: editing.full_name || form.full_name, username: form.username || editing.username, password: form.password })
         }
         const updated = await api.updateDriver(editing.id, form)
         setDrivers(ds => ds.map(d => d.id === editing.id ? { ...updated, user_id: form.password && !editing.user_id ? 1 : d.user_id } : d))
@@ -169,6 +173,11 @@ export default function Drivers() {
               {/* Actions */}
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {!isDisabled && <button style={smBtn()} onClick={() => openEdit(d)}>Edit</button>}
+                {d.user_id && d.username && (
+                  <button style={smBtn(T.blue)} onClick={() => setLoginMsg({ name: d.full_name, username: d.username })}>
+                    Copy Login
+                  </button>
+                )}
                 <button style={smBtn(isDisabled ? T.green : T.red)} onClick={() => handleToggleActive(d.id)}>
                   {isDisabled ? 'Enable' : 'Disable'}
                 </button>
@@ -179,6 +188,55 @@ export default function Drivers() {
         })}
         {filtered.length === 0 && <div style={{ color: T.text3, padding: 20 }}>No drivers found.</div>}
       </div>
+
+      {/* Driver login info copy modal */}
+      {loginMsg && (() => {
+        const msg = [
+          `Hi ${loginMsg.name},`,
+          ``,
+          `Your driver portal is ready. Here's how to sign in:`,
+          ``,
+          `Website: https://goatpaji.com`,
+          `Username: ${loginMsg.username}`,
+          loginMsg.password ? `Password: ${loginMsg.password}` : null,
+          ``,
+          `Open in Chrome on your phone or any browser.`,
+          loginMsg.password ? `\nIf you have trouble signing in, contact your dispatcher.` : null,
+        ].filter(l => l !== null).join('\n')
+
+        async function copyMsg() {
+          await navigator.clipboard.writeText(msg)
+          setCopied(true)
+          setTimeout(() => setCopied(false), 2000)
+        }
+
+        return (
+          <div style={modalBg()} onClick={() => setLoginMsg(null)}>
+            <div style={modalBox()} onClick={e => e.stopPropagation()}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                <h2 style={{ fontSize: 17, fontWeight: 700, color: T.text, margin: 0 }}>Driver Login Info</h2>
+                <button onClick={() => setLoginMsg(null)} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: T.text3 }}>×</button>
+              </div>
+              <div style={{ fontSize: 12, color: T.text3, marginBottom: 12 }}>
+                Copy this and send it to the driver via text or WhatsApp.
+                {loginMsg.password && <span style={{ color: T.orange }}> Password will not be shown again once you close this.</span>}
+              </div>
+              <pre style={{
+                background: T.bg2, border: `1px solid ${T.sep}`, borderRadius: 10,
+                padding: '14px 16px', fontSize: 13, color: T.text, lineHeight: 1.7,
+                whiteSpace: 'pre-wrap', fontFamily: 'inherit', margin: 0,
+              }}>{msg}</pre>
+              <button onClick={copyMsg} style={{
+                marginTop: 14, width: '100%', padding: '12px',
+                background: copied ? T.green : T.blue, color: '#fff',
+                border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 700, cursor: 'pointer',
+              }}>
+                {copied ? '✓ Copied!' : 'Copy to Clipboard'}
+              </button>
+            </div>
+          </div>
+        )
+      })()}
 
       {/* Add / Edit form */}
       {show && (

@@ -84,6 +84,12 @@ function auth(req, res, next) {
   if (!token) return res.status(401).json({ error: 'No token' });
   try {
     req.user = jwt.verify(token, process.env.JWT_SECRET);
+    // Update last_seen_at — only write if >60s stale to reduce DB churn
+    try {
+      const u = db.prepare('SELECT last_seen_at FROM users WHERE id = ?').get(req.user.id);
+      const stale = !u?.last_seen_at || (Date.now() - new Date(u.last_seen_at).getTime()) > 60000;
+      if (stale) db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(new Date().toISOString(), req.user.id);
+    } catch {}
     next();
   } catch {
     res.status(401).json({ error: 'Invalid token' });
@@ -857,6 +863,22 @@ app.get('/api/recommendations', auth, (req, res) => {
   }
 
   res.json(results);
+});
+
+// ── Active users (admin only) ─────────────────────────────────────────────────
+app.get('/api/active-users', auth, (req, res) => {
+  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id;
+  if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
+  const cutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  const users = db.prepare(`
+    SELECT u.id, u.username, u.full_name, u.role, u.last_seen_at, c.name as company_name
+    FROM users u
+    LEFT JOIN companies c ON u.company_id = c.id
+    WHERE u.role IN ('dispatcher','company_owner')
+      AND u.last_seen_at >= ?
+    ORDER BY u.last_seen_at DESC
+  `).all(cutoff);
+  res.json(users);
 });
 
 // ── Trailer number + check-in / check-out ────────────────────────────────────
