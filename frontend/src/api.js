@@ -46,6 +46,8 @@ async function req(method, path, body, isForm = false) {
 export const api = {
   login: (u, p, adminCode) => req('POST', '/login', { username: u, password: p, admin_code: adminCode || undefined }),
   me: () => req('GET', '/me'),
+  changePassword: (new_password) => req('PUT', '/change-password', { new_password }),
+  resetAllPasswords: (password, user_ids) => req('POST', '/admin/reset-passwords', { password, user_ids }),
 
   companies: () => req('GET', '/companies'),
   createCompany: (d) => req('POST', '/companies', d),

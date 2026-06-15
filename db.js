@@ -182,8 +182,9 @@ db.exec(`
 `);
 
 const userCols = db.prepare("PRAGMA table_info(users)").all().map(r => r.name);
-if (!userCols.includes('last_seen_at'))     db.prepare('ALTER TABLE users ADD COLUMN last_seen_at TEXT').run();
-if (!userCols.includes('can_see_revenue'))  db.prepare('ALTER TABLE users ADD COLUMN can_see_revenue INTEGER DEFAULT 0').run();
+if (!userCols.includes('last_seen_at'))          db.prepare('ALTER TABLE users ADD COLUMN last_seen_at TEXT').run();
+if (!userCols.includes('can_see_revenue'))       db.prepare('ALTER TABLE users ADD COLUMN can_see_revenue INTEGER DEFAULT 0').run();
+if (!userCols.includes('must_change_password'))  db.prepare('ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0').run();
 
 // Seed a default dispatcher account
 const bcrypt = require('bcryptjs');

@@ -155,7 +155,7 @@ app.post('/api/refresh', auth, (req, res) => {
 app.get('/api/me', auth, (req, res) => {
   const user = db.prepare(`
     SELECT u.id, u.username, u.role, u.company_id, u.full_name, u.email, u.phone,
-           u.can_see_revenue, c.name as company_name
+           u.can_see_revenue, u.must_change_password, c.name as company_name
     FROM users u LEFT JOIN companies c ON u.company_id = c.id
     WHERE u.id = ?
   `).get(req.user.id);
@@ -163,6 +163,32 @@ app.get('/api/me', auth, (req, res) => {
     user.driver = db.prepare('SELECT * FROM drivers WHERE user_id = ?').get(user.id);
   }
   res.json(user);
+});
+
+// ── Change password ───────────────────────────────────────────────────────────
+app.put('/api/change-password', auth, (req, res) => {
+  const { new_password } = req.body;
+  if (!new_password || new_password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+  db.prepare('UPDATE users SET password = ?, must_change_password = 0 WHERE id = ?')
+    .run(bcrypt.hashSync(new_password, 10), req.user.id);
+  res.json({ ok: true });
+});
+
+// ── Admin: bulk reset passwords ───────────────────────────────────────────────
+app.post('/api/admin/reset-passwords', auth, (req, res) => {
+  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id;
+  if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
+  const { password, user_ids } = req.body;
+  if (!password) return res.status(400).json({ error: 'password required' });
+  const hash = bcrypt.hashSync(password, 10);
+  // Reset specific user_ids, or all non-admin users if none specified
+  const targets = user_ids?.length
+    ? db.prepare(`SELECT id FROM users WHERE id IN (${user_ids.map(() => '?').join(',')}) AND (company_id IS NOT NULL OR role != 'dispatcher')`).all(...user_ids)
+    : db.prepare(`SELECT id FROM users WHERE company_id IS NOT NULL OR role != 'dispatcher'`).all();
+  for (const u of targets) {
+    db.prepare('UPDATE users SET password = ?, must_change_password = 1 WHERE id = ?').run(hash, u.id);
+  }
+  res.json({ ok: true, count: targets.length });
 });
 
 // ── Companies ────────────────────────────────────────────────────────────────

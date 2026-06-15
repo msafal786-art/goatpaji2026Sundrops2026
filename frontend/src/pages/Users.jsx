@@ -27,6 +27,7 @@ export default function Users() {
   const [form, setForm] = useState({ ...EMPTY })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [resetting, setResetting] = useState(false)
 
   useEffect(() => { load() }, [])
 
@@ -75,14 +76,27 @@ export default function Users() {
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 24, flexWrap: 'wrap', gap: 10 }}>
         <div>
           <h1 style={{ fontSize: 24, fontWeight: 700, color: T.text, letterSpacing: -0.4, margin: 0 }}>Portal Users</h1>
           <div style={{ fontSize: 12, color: T.text3, marginTop: 4 }}>Dispatcher and company owner accounts</div>
         </div>
-        <button onClick={openNew} style={{ padding: '9px 18px', background: T.blue, color: '#fff', border: 'none', borderRadius: 9, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
-          + Add User
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={async () => {
+            const pw = window.prompt('Set temporary password for ALL users (except admin):', 'waheguru')
+            if (!pw) return
+            if (!window.confirm(`Reset ALL user passwords to "${pw}"? They will be forced to change it on next login.`)) return
+            setResetting(true)
+            try { await api.resetAllPasswords(pw); alert('Done — all users must change password on next login.') }
+            catch (err) { alert(err.message) }
+            finally { setResetting(false); load() }
+          }} style={{ padding: '9px 16px', background: T.orange + '20', color: T.orange, border: `1px solid ${T.orange}50`, borderRadius: 9, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
+            {resetting ? 'Resetting…' : '🔑 Reset All Passwords'}
+          </button>
+          <button onClick={openNew} style={{ padding: '9px 18px', background: T.blue, color: '#fff', border: 'none', borderRadius: 9, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
+            + Add User
+          </button>
+        </div>
       </div>
 
       {Object.entries(grouped).map(([company, members]) => (
