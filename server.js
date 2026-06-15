@@ -36,6 +36,9 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,
 }));
 
+// Trust Railway's reverse proxy so rate-limiters get real client IPs
+app.set('trust proxy', 1);
+
 // ── CORS — allow only our domain + localhost dev ─────────────────────────────
 const ALLOWED_ORIGINS = [
   'https://goatpaji.com',
