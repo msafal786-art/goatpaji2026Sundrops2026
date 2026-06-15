@@ -1338,8 +1338,16 @@ app.delete('/api/maintenance/:id', auth, requireRole('dispatcher', 'company_owne
 });
 
 // ── Serve frontend ────────────────────────────────────────────────────────────
-app.use(express.static(path.join(__dirname, 'frontend/dist')));
+// Assets (hashed filenames) get long-lived cache; index.html never cached
+app.use(express.static(path.join(__dirname, 'frontend/dist'), {
+  setHeaders(res, filePath) {
+    if (filePath.endsWith('index.html')) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    }
+  }
+}));
 app.get('/{*path}', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.sendFile(path.join(__dirname, 'frontend/dist/index.html'));
 });
 
