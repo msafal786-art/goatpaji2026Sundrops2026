@@ -196,7 +196,7 @@ export default function Drivers() {
           ``,
           `Your driver portal is ready. Here's how to sign in:`,
           ``,
-          `Website: https://goatpaji.com`,
+          `Sign in here: https://goatpaji.com/login`,
           `Username: ${loginMsg.username}`,
           loginMsg.password ? `Password: ${loginMsg.password}` : null,
           ``,
