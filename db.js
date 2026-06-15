@@ -130,8 +130,41 @@ if (!cols.includes('emergency_contact_name'))  db.prepare('ALTER TABLE drivers A
 if (!cols.includes('emergency_contact_phone')) db.prepare('ALTER TABLE drivers ADD COLUMN emergency_contact_phone TEXT').run();
 
 const loadCols = db.prepare("PRAGMA table_info(loads)").all().map(r => r.name);
-if (!loadCols.includes('relay_driver_id')) db.prepare('ALTER TABLE loads ADD COLUMN relay_driver_id INTEGER REFERENCES drivers(id)').run();
-if (!loadCols.includes('relay_split'))     db.prepare('ALTER TABLE loads ADD COLUMN relay_split INTEGER DEFAULT 50').run();
+if (!loadCols.includes('relay_driver_id'))   db.prepare('ALTER TABLE loads ADD COLUMN relay_driver_id INTEGER REFERENCES drivers(id)').run();
+if (!loadCols.includes('relay_split'))       db.prepare('ALTER TABLE loads ADD COLUMN relay_split INTEGER DEFAULT 50').run();
+if (!loadCols.includes('trailer_number'))    db.prepare('ALTER TABLE loads ADD COLUMN trailer_number TEXT').run();
+if (!loadCols.includes('checkin_time'))      db.prepare('ALTER TABLE loads ADD COLUMN checkin_time TEXT').run();
+if (!loadCols.includes('checkout_time'))     db.prepare('ALTER TABLE loads ADD COLUMN checkout_time TEXT').run();
+
+// Load documents (POD, BOL, Rate Con, Other)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS load_docs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    load_id INTEGER NOT NULL REFERENCES loads(id) ON DELETE CASCADE,
+    doc_type TEXT NOT NULL DEFAULT 'Other',
+    original_name TEXT NOT NULL,
+    filename TEXT NOT NULL,
+    uploaded_by INTEGER REFERENCES users(id),
+    uploaded_at TEXT DEFAULT (datetime('now'))
+  );
+`);
+
+// Maintenance records for trucks and trailers
+db.exec(`
+  CREATE TABLE IF NOT EXISTS maintenance_records (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    truck_id INTEGER NOT NULL REFERENCES trucks(id) ON DELETE CASCADE,
+    service_type TEXT NOT NULL,
+    service_date TEXT NOT NULL,
+    mileage TEXT,
+    notes TEXT,
+    next_due_date TEXT,
+    next_due_mileage TEXT,
+    company_id INTEGER REFERENCES companies(id),
+    created_by INTEGER REFERENCES users(id),
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+`);
 
 // Payroll — daily mileage entries, one row per driver per day
 db.exec(`

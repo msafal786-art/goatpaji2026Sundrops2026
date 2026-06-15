@@ -48,7 +48,7 @@ app.use(cors({
 
 // ── Body size limit ──────────────────────────────────────────────────────────
 app.use(express.json({ limit: '2mb' }));
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+// /uploads served after UPLOADS_DIR is defined below
 
 // ── Login rate limiter: 10 attempts per 15 min per IP ────────────────────────
 const loginLimiter = rateLimit({
@@ -69,7 +69,10 @@ const apiLimiter = rateLimit({
 });
 app.use('/api/', apiLimiter);
 
-const upload = multer({ dest: 'uploads/' });
+const UPLOADS_DIR = process.env.UPLOADS_DIR || path.join(__dirname, 'uploads');
+fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+app.use('/uploads', express.static(UPLOADS_DIR));
+const upload = multer({ dest: UPLOADS_DIR });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // ── Health check (Railway uses this) ────────────────────────────────────────
@@ -789,7 +792,7 @@ app.get('/api/recommendations', auth, (req, res) => {
   const activeDestinations = db.prepare(`
     SELECT DISTINCT delivery_state, delivery_city, COUNT(*) as trucks_delivering
     FROM loads
-    WHERE status IN ('in_transit','dispatched','assigned','pending')
+    WHERE status IN ('in_transit','dispatched')
     AND delivery_state IS NOT NULL AND delivery_state != ''
     ${companyClause}
     GROUP BY delivery_state
@@ -801,7 +804,7 @@ app.get('/api/recommendations', auth, (req, res) => {
   for (const dest of activeDestinations) {
     const fromState = dest.delivery_state;
 
-    // Top outbound lanes from this state in history
+    // Top outbound lanes from this state in history (delivered OR completed)
     const lanes = db.prepare(`
       SELECT
         pickup_state, pickup_city,
@@ -811,14 +814,14 @@ app.get('/api/recommendations', auth, (req, res) => {
         MIN(CAST(rate AS REAL)) as min_rate,
         MAX(CAST(rate AS REAL)) as max_rate
       FROM loads
-      WHERE status = 'completed'
+      WHERE status IN ('delivered','completed')
       AND pickup_state = ?
       AND delivery_state != ?
       AND broker_name IS NOT NULL AND broker_name != ''
       GROUP BY pickup_state, delivery_state
-      HAVING load_count >= 2
+      HAVING load_count >= 1
       ORDER BY load_count DESC
-      LIMIT 6
+      LIMIT 8
     `).all(fromState, fromState);
 
     for (const lane of lanes) {
@@ -831,7 +834,7 @@ app.get('/api/recommendations', auth, (req, res) => {
           broker_email,
           ROUND(AVG(CASE WHEN rate IS NOT NULL AND CAST(rate AS REAL) > 0 THEN CAST(rate AS REAL) END), 0) as avg_rate
         FROM loads
-        WHERE status = 'completed'
+        WHERE status IN ('delivered','completed')
         AND pickup_state = ?
         AND delivery_state = ?
         AND broker_name IS NOT NULL AND broker_name != ''
@@ -854,6 +857,105 @@ app.get('/api/recommendations', auth, (req, res) => {
   }
 
   res.json(results);
+});
+
+// ── Trailer number + check-in / check-out ────────────────────────────────────
+app.put('/api/loads/:id/trailer', auth, (req, res) => {
+  const { trailer_number } = req.body;
+  const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
+  if (!load) return res.status(404).json({ error: 'Not found' });
+  if (req.user.role === 'driver') {
+    const driver = db.prepare('SELECT id FROM drivers WHERE user_id = ?').get(req.user.id);
+    if (!driver || load.driver_id !== driver.id) return res.status(403).json({ error: 'Forbidden' });
+  }
+  db.prepare('UPDATE loads SET trailer_number = ? WHERE id = ?').run(trailer_number || null, req.params.id);
+  res.json({ ok: true });
+});
+
+app.put('/api/loads/:id/checkin', auth, (req, res) => {
+  const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
+  if (!load) return res.status(404).json({ error: 'Not found' });
+  if (req.user.role === 'driver') {
+    const driver = db.prepare('SELECT id FROM drivers WHERE user_id = ?').get(req.user.id);
+    if (!driver || load.driver_id !== driver.id) return res.status(403).json({ error: 'Forbidden' });
+  }
+  const time = req.body.time || new Date().toISOString();
+  db.prepare('UPDATE loads SET checkin_time = ? WHERE id = ?').run(time, req.params.id);
+  res.json({ ok: true, checkin_time: time });
+});
+
+app.put('/api/loads/:id/checkout', auth, (req, res) => {
+  const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
+  if (!load) return res.status(404).json({ error: 'Not found' });
+  if (req.user.role === 'driver') {
+    const driver = db.prepare('SELECT id FROM drivers WHERE user_id = ?').get(req.user.id);
+    if (!driver || load.driver_id !== driver.id) return res.status(403).json({ error: 'Forbidden' });
+  }
+  const time = req.body.time || new Date().toISOString();
+  db.prepare('UPDATE loads SET checkout_time = ? WHERE id = ?').run(time, req.params.id);
+  res.json({ ok: true, checkout_time: time });
+});
+
+// ── Load documents ───────────────────────────────────────────────────────────
+app.get('/api/loads/:id/docs', auth, (req, res) => {
+  res.json(db.prepare('SELECT * FROM load_docs WHERE load_id = ? ORDER BY uploaded_at DESC').all(req.params.id));
+});
+
+app.post('/api/loads/:id/docs', auth, upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file' });
+  const { doc_type } = req.body;
+  const r = db.prepare('INSERT INTO load_docs (load_id, doc_type, original_name, filename, uploaded_by) VALUES (?,?,?,?,?)')
+    .run(req.params.id, doc_type || 'Other', req.file.originalname, req.file.filename, req.user.id);
+  res.json(db.prepare('SELECT * FROM load_docs WHERE id = ?').get(r.lastInsertRowid));
+});
+
+app.get('/api/docs/:id/download', auth, (req, res) => {
+  const doc = db.prepare('SELECT * FROM load_docs WHERE id = ?').get(req.params.id);
+  if (!doc) return res.status(404).json({ error: 'Not found' });
+  const filePath = path.join(__dirname, 'uploads', doc.filename);
+  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found on disk' });
+  res.download(filePath, doc.original_name);
+});
+
+app.delete('/api/docs/:id', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
+  const doc = db.prepare('SELECT * FROM load_docs WHERE id = ?').get(req.params.id);
+  if (!doc) return res.status(404).json({ error: 'Not found' });
+  try { fs.unlinkSync(path.join(__dirname, 'uploads', doc.filename)); } catch {}
+  db.prepare('DELETE FROM load_docs WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
+// ── Maintenance records ──────────────────────────────────────────────────────
+app.get('/api/maintenance', auth, (req, res) => {
+  const isOwner = req.user.role === 'company_owner';
+  const clause = isOwner ? 'WHERE m.company_id = ?' : (req.query.truck_id ? 'WHERE m.truck_id = ?' : '');
+  const param = isOwner ? req.user.company_id : (req.query.truck_id ? req.query.truck_id : undefined);
+  const rows = db.prepare(`
+    SELECT m.*, t.tractor_number, t.trailer_number as truck_trailer
+    FROM maintenance_records m
+    LEFT JOIN trucks t ON m.truck_id = t.id
+    ${clause}
+    ORDER BY m.service_date DESC
+  `).all(...(param !== undefined ? [param] : []));
+  res.json(rows);
+});
+
+app.post('/api/maintenance', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
+  const { truck_id, service_type, service_date, mileage, notes, next_due_date, next_due_mileage } = req.body;
+  if (!truck_id || !service_type || !service_date) return res.status(400).json({ error: 'truck_id, service_type, service_date required' });
+  const truck = db.prepare('SELECT * FROM trucks WHERE id = ?').get(truck_id);
+  if (!truck) return res.status(404).json({ error: 'Truck not found' });
+  if (req.user.role === 'company_owner' && truck.company_id !== req.user.company_id)
+    return res.status(403).json({ error: 'Forbidden' });
+  const cid = truck.company_id;
+  const r = db.prepare('INSERT INTO maintenance_records (truck_id,service_type,service_date,mileage,notes,next_due_date,next_due_mileage,company_id,created_by) VALUES (?,?,?,?,?,?,?,?,?)')
+    .run(truck_id, service_type, service_date, mileage||null, notes||null, next_due_date||null, next_due_mileage||null, cid, req.user.id);
+  res.json(db.prepare('SELECT m.*, t.tractor_number FROM maintenance_records m LEFT JOIN trucks t ON m.truck_id = t.id WHERE m.id = ?').get(r.lastInsertRowid));
+});
+
+app.delete('/api/maintenance/:id', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
+  db.prepare('DELETE FROM maintenance_records WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
 });
 
 // ── Serve frontend ────────────────────────────────────────────────────────────

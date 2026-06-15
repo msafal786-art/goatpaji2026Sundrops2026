@@ -68,8 +68,19 @@ function LocationBlock({ type, load }) {
   )
 }
 
+function fmtTime(iso) {
+  if (!iso) return null
+  try { return new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
+  catch { return iso }
+}
+
 function LoadCard({ load, onStatusUpdate }) {
   const [updating, setUpdating] = useState(false)
+  const [trailerInput, setTrailerInput] = useState(load.trailer_number || '')
+  const [savingTrailer, setSavingTrailer] = useState(false)
+  const [timeSaving, setTimeSaving] = useState(null)
+  const [localCheckin, setLocalCheckin] = useState(load.checkin_time)
+  const [localCheckout, setLocalCheckout] = useState(load.checkout_time)
   const s = STATUS[load.status] || STATUS.pending
 
   async function doUpdate(newStatus) {
@@ -77,6 +88,31 @@ function LoadCard({ load, onStatusUpdate }) {
     setUpdating(true)
     try { await api.updateLoadStatus(load.id, newStatus); onStatusUpdate() }
     finally { setUpdating(false) }
+  }
+
+  async function saveTrailer() {
+    if (trailerInput === (load.trailer_number || '')) return
+    setSavingTrailer(true)
+    try { await api.setTrailer(load.id, trailerInput); onStatusUpdate() }
+    finally { setSavingTrailer(false) }
+  }
+
+  async function doCheckin() {
+    setTimeSaving('in')
+    try {
+      const res = await api.checkIn(load.id)
+      setLocalCheckin(res.checkin_time)
+      onStatusUpdate()
+    } finally { setTimeSaving(null) }
+  }
+
+  async function doCheckout() {
+    setTimeSaving('out')
+    try {
+      const res = await api.checkOut(load.id)
+      setLocalCheckout(res.checkout_time)
+      onStatusUpdate()
+    } finally { setTimeSaving(null) }
   }
 
   const NEXT = {
@@ -122,6 +158,55 @@ function LoadCard({ load, onStatusUpdate }) {
         </div>
       </div>
 
+      {/* Trailer # + check-in/out controls */}
+      <div style={{ padding: '12px 16px', borderBottom: `1px solid ${T.sep}`, display: 'flex', flexDirection: 'column', gap: 10 }}>
+        {/* Trailer number */}
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <span style={{ fontSize: 12, color: T.text3, fontWeight: 600, minWidth: 68 }}>Trailer #</span>
+          <input
+            value={trailerInput}
+            onChange={e => setTrailerInput(e.target.value)}
+            onBlur={saveTrailer}
+            placeholder="Enter trailer #"
+            style={{
+              flex: 1, padding: '8px 10px', background: T.bg2, border: `1px solid ${T.sep}`,
+              borderRadius: 8, fontSize: 13, color: T.text, outline: 'none',
+            }}
+          />
+          {savingTrailer && <span style={{ fontSize: 11, color: T.text3 }}>Saving…</span>}
+        </div>
+
+        {/* Check-in / Check-out */}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 140 }}>
+            {localCheckin ? (
+              <div style={{ background: T.green + '18', borderRadius: 10, padding: '8px 12px', border: `1px solid ${T.green}30` }}>
+                <div style={{ fontSize: 10, color: T.green, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.8 }}>Checked In</div>
+                <div style={{ fontSize: 12, color: T.text, marginTop: 3 }}>{fmtTime(localCheckin)}</div>
+              </div>
+            ) : (
+              <button onClick={doCheckin} disabled={timeSaving === 'in'} style={{
+                width: '100%', padding: '10px', background: T.green + '22', border: `1px solid ${T.green}40`,
+                borderRadius: 10, color: T.green, fontSize: 13, fontWeight: 700, cursor: 'pointer',
+              }}>{timeSaving === 'in' ? 'Saving…' : '📍 Check In'}</button>
+            )}
+          </div>
+          <div style={{ flex: 1, minWidth: 140 }}>
+            {localCheckout ? (
+              <div style={{ background: T.teal + '18', borderRadius: 10, padding: '8px 12px', border: `1px solid ${T.teal}30` }}>
+                <div style={{ fontSize: 10, color: T.teal, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.8 }}>Checked Out</div>
+                <div style={{ fontSize: 12, color: T.text, marginTop: 3 }}>{fmtTime(localCheckout)}</div>
+              </div>
+            ) : (
+              <button onClick={doCheckout} disabled={timeSaving === 'out'} style={{
+                width: '100%', padding: '10px', background: T.teal + '22', border: `1px solid ${T.teal}40`,
+                borderRadius: 10, color: T.teal, fontSize: 13, fontWeight: 700, cursor: 'pointer',
+              }}>{timeSaving === 'out' ? 'Saving…' : '🏁 Check Out'}</button>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* Action buttons */}
       {actions.length > 0 && (
         <div style={{ padding: '14px 16px', borderBottom: `1px solid ${T.sep}` }}>
@@ -151,11 +236,11 @@ function LoadCard({ load, onStatusUpdate }) {
         <LocationBlock type="pickup" load={load} />
         <LocationBlock type="delivery" load={load} />
 
-        {(load.tractor_number || load.truck_trailer || load.trailer_type || load.weight || load.commodity) && (
+        {(load.tractor_number || load.truck_trailer || load.trailer_number || load.trailer_type || load.weight || load.commodity) && (
           <div style={{ background: T.bg2, borderRadius: 12, padding: '12px 14px', border: `1px solid ${T.sep}` }}>
             <div style={{ fontSize: 10, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 6 }}>Equipment</div>
             <InfoRow label="Tractor"   value={load.tractor_number} />
-            <InfoRow label="Trailer"   value={load.truck_trailer} />
+            <InfoRow label="Trailer"   value={load.trailer_number || load.truck_trailer} />
             <InfoRow label="Type"      value={load.trailer_type} />
             <InfoRow label="Weight"    value={load.weight ? `${Number(load.weight).toLocaleString()} lbs` : null} />
             <InfoRow label="Commodity" value={load.commodity} />

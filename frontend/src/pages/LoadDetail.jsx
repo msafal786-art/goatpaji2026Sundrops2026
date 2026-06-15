@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api } from '../api.js'
 import { useAuth } from '../AuthContext.jsx'
@@ -6,11 +6,15 @@ import { T, STATUS } from '../theme.js'
 import { useIsMobile } from '../hooks/useIsMobile.js'
 import LoadForm from '../components/LoadForm.jsx'
 
+const DOC_TYPES = ['Rate Con', 'BOL', 'POD', 'Other']
+
 export default function LoadDetail() {
   const { id } = useParams()
   const { user } = useAuth()
   const mobile = useIsMobile()
   const navigate = useNavigate()
+  const fileRef = useRef()
+
   const [load, setLoad] = useState(null)
   const [allIds, setAllIds] = useState([])
   const [dispatchMsg, setDispatchMsg] = useState('')
@@ -18,7 +22,11 @@ export default function LoadDetail() {
   const [showEdit, setShowEdit] = useState(false)
   const [copying, setCopying] = useState(false)
 
-  useEffect(() => { loadData() }, [id])
+  const [docs, setDocs] = useState([])
+  const [uploading, setUploading] = useState(false)
+  const [uploadType, setUploadType] = useState('BOL')
+
+  useEffect(() => { loadData(); fetchDocs() }, [id])
   useEffect(() => {
     api.loads().then(ls => {
       const sorted = [...ls].sort((a, b) => {
@@ -32,6 +40,10 @@ export default function LoadDetail() {
   async function loadData() {
     const l = await api.load(id)
     setLoad(l)
+  }
+
+  async function fetchDocs() {
+    try { setDocs(await api.loadDocs(id)) } catch { setDocs([]) }
   }
 
   const currentIdx = allIds.indexOf(Number(id))
@@ -60,10 +72,35 @@ export default function LoadDetail() {
     await loadData()
   }
 
+  async function handleUpload(e) {
+    const file = e.target.files[0]
+    if (!file) return
+    setUploading(true)
+    try {
+      await api.uploadDoc(id, file, uploadType)
+      await fetchDocs()
+    } finally {
+      setUploading(false)
+      fileRef.current.value = ''
+    }
+  }
+
+  async function handleDeleteDoc(docId) {
+    if (!confirm('Remove this document?')) return
+    await api.deleteDoc(docId)
+    await fetchDocs()
+  }
+
   if (!load) return <div style={{ padding: 40, color: T.text2 }}>Loading…</div>
 
   const canEdit = user.role !== 'driver'
   const s = STATUS[load.status] || STATUS.pending
+
+  const fmtTime = (iso) => {
+    if (!iso) return null
+    try { return new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
+    catch { return iso }
+  }
 
   return (
     <div>
@@ -92,7 +129,7 @@ export default function LoadDetail() {
                 {load.broker_order}
               </h1>
             )}
-            <span style={{ fontSize: 14, fontWeight: 600, color: T.text3, letterSpacing: 0 }}>
+            <span style={{ fontSize: 14, fontWeight: 600, color: T.text3 }}>
               #{load.load_number || load.id}
             </span>
           </div>
@@ -176,22 +213,85 @@ export default function LoadDetail() {
           <Field label="Commodity" value={load.commodity} />
           <Field label="Weight" value={load.weight} />
           <Field label="Miles" value={load.miles} />
-          <Field label="Trailer" value={load.trailer_type} />
-          <Field label="BOL" value={load.bol} />
+          <Field label="Trailer Type" value={load.trailer_type} />
+          <Field label="BOL #" value={load.bol} />
         </Card>
         <Card title="Assignment">
           <Field label="Driver" value={load.driver_name || 'Unassigned'} bold />
           <Field label="Phone" value={load.driver_phone} />
           <Field label="Tractor #" value={load.tractor_number} />
-          <Field label="Trailer #" value={load.truck_trailer} />
+          <Field label="Trailer #" value={load.trailer_number || load.truck_trailer} />
+          {load.checkin_time && <Field label="Check-In" value={fmtTime(load.checkin_time)} />}
+          {load.checkout_time && <Field label="Check-Out" value={fmtTime(load.checkout_time)} />}
         </Card>
       </div>
 
       {load.special_instructions && (
         <Card title="Special Instructions">
-          <p style={{ fontSize: 13, color: T.text2, lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{load.special_instructions}</p>
+          <p style={{ fontSize: 13, color: T.text2, lineHeight: 1.6, whiteSpace: 'pre-wrap', margin: 0 }}>{load.special_instructions}</p>
         </Card>
       )}
+
+      {/* Documents */}
+      <div style={{ background: T.bg1, borderRadius: 14, padding: '16px 20px', marginTop: 14, border: `1px solid ${T.sep}` }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+          <h3 style={{ fontSize: 11, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 1, margin: 0 }}>Documents</h3>
+          {canEdit && (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <select value={uploadType} onChange={e => setUploadType(e.target.value)} style={{
+                padding: '5px 10px', borderRadius: 8, fontSize: 12, background: T.bg2,
+                border: `1px solid ${T.sep}`, color: T.text, cursor: 'pointer',
+              }}>
+                {DOC_TYPES.map(t => <option key={t}>{t}</option>)}
+              </select>
+              <button onClick={() => fileRef.current.click()} disabled={uploading} style={{
+                padding: '6px 14px', background: T.blue, color: '#fff', border: 'none',
+                borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              }}>{uploading ? 'Uploading…' : '+ Upload'}</button>
+              <input ref={fileRef} type="file" style={{ display: 'none' }} onChange={handleUpload} />
+            </div>
+          )}
+        </div>
+
+        {docs.length === 0 ? (
+          <div style={{ fontSize: 13, color: T.text3, padding: '12px 0' }}>No documents uploaded yet.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {docs.map(doc => (
+              <div key={doc.id} style={{
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                padding: '10px 14px', background: T.bg2, borderRadius: 10, gap: 10,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+                  <span style={{
+                    padding: '2px 8px', borderRadius: 6, fontSize: 10, fontWeight: 700,
+                    background: docTypeColor(doc.doc_type) + '22', color: docTypeColor(doc.doc_type),
+                    flexShrink: 0, textTransform: 'uppercase',
+                  }}>{doc.doc_type}</span>
+                  <span style={{ fontSize: 13, color: T.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {doc.original_name}
+                  </span>
+                  <span style={{ fontSize: 11, color: T.text3, flexShrink: 0 }}>
+                    {doc.uploaded_at?.slice(0,10)}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                  <button onClick={() => api.downloadDoc(doc.id, doc.original_name)} style={{
+                    padding: '5px 12px', background: T.bg3, color: T.text, border: 'none',
+                    borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                  }}>Download</button>
+                  {canEdit && (
+                    <button onClick={() => handleDeleteDoc(doc.id)} style={{
+                      padding: '5px 12px', background: T.red + '22', color: T.red, border: 'none',
+                      borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                    }}>Remove</button>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Dispatch message modal */}
       {showMsg && (
@@ -226,6 +326,13 @@ export default function LoadDetail() {
       )}
     </div>
   )
+}
+
+function docTypeColor(type) {
+  if (type === 'Rate Con') return T.blue
+  if (type === 'BOL') return T.orange
+  if (type === 'POD') return T.green
+  return T.purple
 }
 
 function Card({ title, children }) {

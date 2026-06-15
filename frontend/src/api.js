@@ -85,6 +85,45 @@ export const api = {
     return req('POST', '/parse-rate-con', fd, true)
   },
 
+  // Load documents
+  loadDocs: (loadId) => req('GET', `/loads/${loadId}/docs`),
+  uploadDoc: (loadId, file, doc_type) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    fd.append('doc_type', doc_type)
+    return req('POST', `/loads/${loadId}/docs`, fd, true)
+  },
+  downloadDoc: async (docId, filename) => {
+    const token = localStorage.getItem('token')
+    const res = await fetch(`/api/docs/${docId}/download`, {
+      headers: { Authorization: `Bearer ${token}` }
+    })
+    if (!res.ok) throw new Error('Download failed')
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename || 'document'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  },
+  deleteDoc: (docId) => req('DELETE', `/docs/${docId}`),
+
+  // Trailer / check-in / check-out
+  setTrailer: (loadId, trailer_number) => req('PUT', `/loads/${loadId}/trailer`, { trailer_number }),
+  checkIn: (loadId) => req('PUT', `/loads/${loadId}/checkin`, {}),
+  checkOut: (loadId) => req('PUT', `/loads/${loadId}/checkout`, {}),
+
+  // Maintenance
+  maintenance: (params = {}) => {
+    const q = new URLSearchParams(params).toString()
+    return req('GET', `/maintenance${q ? '?' + q : ''}`)
+  },
+  createMaintenance: (d) => req('POST', '/maintenance', d),
+  deleteMaintenance: (id) => req('DELETE', `/maintenance/${id}`),
+
   stats: () => req('GET', '/stats'),
 
   search: (q) => req('GET', `/search?q=${encodeURIComponent(q)}`),

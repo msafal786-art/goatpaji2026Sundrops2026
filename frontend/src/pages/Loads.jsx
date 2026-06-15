@@ -114,6 +114,15 @@ function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer }) {
           {shortCompany && (
             <div style={{ fontSize: 10, fontWeight: 700, color: compColor, marginTop: 2 }}>{shortCompany}</div>
           )}
+          {load.trailer_number && (
+            <div style={{ fontSize: 10, color: T.text3, marginTop: 2 }}>Trailer: {load.trailer_number}</div>
+          )}
+          {load.checkin_time && !load.checkout_time && (
+            <div style={{ fontSize: 10, color: T.green, fontWeight: 700, marginTop: 2 }}>● Checked In</div>
+          )}
+          {load.checkout_time && (
+            <div style={{ fontSize: 10, color: T.teal, fontWeight: 700, marginTop: 2 }}>✓ Checked Out</div>
+          )}
         </td>
 
         {/* Ship Date */}
