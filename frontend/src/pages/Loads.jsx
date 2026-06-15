@@ -9,7 +9,7 @@ import LoadForm from '../components/LoadForm.jsx'
 function isLate(load) {
   const now = new Date()
   const pickupPassed = load.pickup_date && new Date(load.pickup_date + 'T' + (load.pickup_time?.replace(' AM','').replace(' PM','') || '00:00')) < now
-  const notPickedUp = ['pending','assigned'].includes(load.status)
+  const notPickedUp = ['open','covered','pending','assigned'].includes(load.status)
   const deliveryPassed = load.delivery_date && new Date(load.delivery_date + 'T00:00') < now
   const notDelivered = !['delivered','completed'].includes(load.status)
   return (pickupPassed && notPickedUp) || (deliveryPassed && notDelivered)
@@ -17,21 +17,22 @@ function isLate(load) {
 
 // Urgency color: overrides status color for unassigned/near-pickup loads
 function urgencyColor(load) {
-  const s = STATUS[load.status] || STATUS.pending
-  if (isLate(load)) return T.red                          // overdue — red
-  if (['in_transit'].includes(load.status)) return T.green // moving — green
-  if (['dispatched'].includes(load.status)) return T.orange // dispatched, on way to pickup — warm amber
-  if (['delivered'].includes(load.status)) return T.teal   // delivered — teal
-  if (['completed'].includes(load.status)) return T.text3  // done — muted
+  const s = STATUS[load.status] || STATUS.open
+  if (isLate(load)) return T.red
+  if (['on_route','in_transit'].includes(load.status)) return T.green
+  if (['loading','unloading','in_yard'].includes(load.status)) return '#ff6b35'
+  if (['dispatched'].includes(load.status)) return T.orange
+  if (['delivered'].includes(load.status)) return T.teal
+  if (['completed'].includes(load.status)) return T.text3
 
-  // Pending/assigned: check proximity to pickup
+  // Open/covered: check proximity to pickup
   if (load.pickup_date) {
     const now = new Date()
     const pickup = new Date(load.pickup_date + 'T06:00')
     const hoursUntil = (pickup - now) / 36e5
-    if (!load.driver_id && hoursUntil <= 24 && hoursUntil >= 0) return T.red   // urgent unassigned
-    if (!load.driver_id) return 'rgba(235,235,245,0.22)'                         // unassigned, far out — pale
-    if (hoursUntil <= 24) return T.orange                                         // assigned, pickup soon — warm
+    if (!load.driver_id && hoursUntil <= 24 && hoursUntil >= 0) return T.red
+    if (!load.driver_id) return 'rgba(235,235,245,0.22)'
+    if (hoursUntil <= 24) return T.orange
   }
   return s.color
 }
@@ -49,14 +50,14 @@ function pickupAlertNeeded(load) {
       pickupDT = new Date(load.pickup_date + 'T' + String(h).padStart(2,'0') + ':' + String(min).padStart(2,'0'))
     }
   }
-  return pickupDT < now && ['pending','assigned','dispatched'].includes(load.status)
+  return pickupDT < now && ['open','covered','dispatched','pending','assigned'].includes(load.status)
 }
 
-function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer }) {
+function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer, user }) {
   const navigate = useNavigate()
   const late = isLate(load)
   const alert = pickupAlertNeeded(load)
-  const s = STATUS[load.status] || STATUS.pending
+  const s = STATUS[load.status] || STATUS.open
   const accentColor = urgencyColor(load)
   const compColor = carrierColor(load.company_name)
   const shortCompany = load.company_name
@@ -81,11 +82,13 @@ function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer }) {
 
   const rowBg = late
     ? (T.isDark ? 'rgba(255,69,58,0.09)' : 'rgba(255,59,48,0.07)')
-    : load.status === 'in_transit'
+    : ['on_route','in_transit'].includes(load.status)
       ? (T.isDark ? 'rgba(48,209,88,0.07)' : 'rgba(48,209,88,0.06)')
-      : load.status === 'dispatched'
-        ? (T.isDark ? 'rgba(191,90,242,0.07)' : 'rgba(191,90,242,0.05)')
-        : 'transparent'
+      : ['loading','unloading','in_yard'].includes(load.status)
+        ? (T.isDark ? 'rgba(255,107,53,0.07)' : 'rgba(255,107,53,0.05)')
+        : load.status === 'dispatched'
+          ? (T.isDark ? 'rgba(191,90,242,0.07)' : 'rgba(191,90,242,0.05)')
+          : 'transparent'
 
   return (
     <>
@@ -183,8 +186,10 @@ function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer }) {
           <td colSpan={8} onClick={e => e.stopPropagation()} style={{ padding: '6px 14px 8px 17px', borderBottom: `1px solid ${T.sep}` }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 11, fontWeight: 600, color: T.orange }}>Pickup window passed</span>
-              <button style={alertBtn(T.green)}  onClick={e => handleStatusClick(e, 'in_transit')}>Picked Up</button>
-              <button style={alertBtn(T.blue)}   onClick={e => handleStatusClick(e, 'dispatched')}>Loaded</button>
+              {user?.role !== 'driver' && <>
+                <button style={alertBtn('#ff6b35')} onClick={e => handleStatusClick(e, 'loading')}>Loading</button>
+                <button style={alertBtn(T.green)}   onClick={e => handleStatusClick(e, 'on_route')}>On Route</button>
+              </>}
               <button style={alertBtn(T.orange)} onClick={e => { e.stopPropagation(); navigate(`/loads/${load.id}`) }}>Detention</button>
             </div>
           </td>
@@ -209,23 +214,180 @@ function ghostBtn() {
 }
 
 const STATUS_FLOW = [
-  { key: 'pending',    label: 'Pending',     desc: 'Not yet assigned' },
-  { key: 'assigned',   label: 'Assigned',    desc: 'Driver assigned' },
-  { key: 'dispatched', label: 'Dispatched',  desc: 'En route to pickup' },
-  { key: 'in_transit', label: 'In Transit',  desc: 'Picked up, moving' },
-  { key: 'delivered',  label: 'Delivered',   desc: 'At destination' },
-  { key: 'completed',  label: 'Completed',   desc: 'Invoiced & done' },
+  { key: 'open',       label: 'Open',       desc: 'Load posted, not yet covered' },
+  { key: 'covered',    label: 'Covered',    desc: 'Driver assigned, not dispatched' },
+  { key: 'dispatched', label: 'Dispatched', desc: 'Driver en route to pickup' },
+  { key: 'loading',    label: 'Loading',    desc: 'At pickup facility, loading' },
+  { key: 'on_route',   label: 'On Route',   desc: 'Loaded and driving to delivery' },
+  { key: 'unloading',  label: 'Unloading',  desc: 'At delivery facility' },
+  { key: 'in_yard',    label: 'In Yard',    desc: 'In delivery yard' },
+  { key: 'delivered',  label: 'Delivered',  desc: 'Load delivered successfully' },
+  { key: 'completed',  label: 'Completed',  desc: 'Invoiced & done' },
 ]
 
-function StatusDrawer({ load, onClose, onSaved }) {
+// Statuses where drivers must supply extra check-in/out info
+const DRIVER_EXTRA_STATUSES = ['dispatched', 'on_route', 'unloading', 'delivered']
+const DRIVER_ALLOWED_STATUSES = ['dispatched','loading','on_route','unloading','in_yard','delivered']
+
+const DRIVER_MODAL_CONFIG = {
+  dispatched: {
+    title: 'Pickup Check-In',
+    subtitle: 'Confirm arrival at pickup facility',
+    fields: ['checkin_time', 'trailer_number', 'checkin_notes'],
+  },
+  on_route: {
+    title: 'Loaded & Departing',
+    subtitle: 'Confirm you have loaded and are leaving pickup',
+    fields: ['checkout_time', 'bol_sent'],
+  },
+  unloading: {
+    title: 'Arrived at Delivery',
+    subtitle: 'Confirm arrival at delivery facility',
+    fields: ['delivery_checkin_time'],
+  },
+  delivered: {
+    title: 'Delivery Complete',
+    subtitle: 'Confirm the delivery is done',
+    fields: ['delivery_checkout_time', 'delivery_bol_sent'],
+  },
+}
+
+function DriverStatusModal({ load, targetStatus, onClose, onSaved }) {
+  const now = new Date()
+  const timeNow = now.toTimeString().slice(0, 5)
+  const [form, setForm] = useState({
+    checkin_time: timeNow,
+    trailer_number: load.trailer_number || '',
+    checkin_notes: '',
+    checkout_time: timeNow,
+    bol_sent: false,
+    delivery_checkin_time: timeNow,
+    delivery_checkout_time: timeNow,
+    delivery_bol_sent: false,
+  })
+  const [saving, setSaving] = useState(false)
+  const cfg = DRIVER_MODAL_CONFIG[targetStatus]
+  if (!cfg) return null
+
+  function setF(k, v) { setForm(f => ({ ...f, [k]: v })) }
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    setSaving(true)
+    const extra = {}
+    cfg.fields.forEach(f => { extra[f] = form[f] })
+    await api.updateLoadStatus(load.id, targetStatus, extra)
+    setSaving(false)
+    onSaved()
+    onClose()
+  }
+
+  const inp = { width: '100%', padding: '11px 13px', border: `1px solid ${T.sep}`, borderRadius: 10, fontSize: 15, background: T.bg2, color: T.text, outline: 'none', boxSizing: 'border-box' }
+  const lbl = { fontSize: 11, fontWeight: 600, color: T.text3, display: 'block', marginBottom: 6 }
+
+  return (
+    <>
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', zIndex: 1200 }} />
+      <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, background: T.bg1, borderRadius: '20px 20px 0 0', padding: '24px 24px 44px', zIndex: 1201, maxHeight: '85vh', overflowY: 'auto' }}>
+        <div style={{ width: 36, height: 4, borderRadius: 2, background: T.sep, margin: '0 auto 20px' }} />
+        <div style={{ fontSize: 19, fontWeight: 700, color: T.text, marginBottom: 4 }}>{cfg.title}</div>
+        <div style={{ fontSize: 13, color: T.text3, marginBottom: 22 }}>{cfg.subtitle}</div>
+        <form onSubmit={handleSubmit}>
+          {cfg.fields.includes('checkin_time') && (
+            <div style={{ marginBottom: 16 }}>
+              <label style={lbl}>Check-In Time</label>
+              <input type="time" value={form.checkin_time} onChange={e => setF('checkin_time', e.target.value)} style={inp} />
+            </div>
+          )}
+          {cfg.fields.includes('trailer_number') && (
+            <div style={{ marginBottom: 16 }}>
+              <label style={lbl}>Trailer Number</label>
+              <input type="text" value={form.trailer_number} onChange={e => setF('trailer_number', e.target.value)} placeholder="e.g. T-12345" style={inp} />
+            </div>
+          )}
+          {cfg.fields.includes('checkin_notes') && (
+            <div style={{ marginBottom: 16 }}>
+              <label style={lbl}>Notes (optional)</label>
+              <textarea value={form.checkin_notes} onChange={e => setF('checkin_notes', e.target.value)} placeholder="Any notes about this pickup…" rows={3}
+                style={{ ...inp, resize: 'none', fontSize: 13 }} />
+            </div>
+          )}
+          {cfg.fields.includes('checkout_time') && (
+            <div style={{ marginBottom: 16 }}>
+              <label style={lbl}>Check-Out Time</label>
+              <input type="time" value={form.checkout_time} onChange={e => setF('checkout_time', e.target.value)} style={inp} />
+            </div>
+          )}
+          {cfg.fields.includes('bol_sent') && (
+            <div style={{ marginBottom: 20, display: 'flex', alignItems: 'center', gap: 14, background: T.bg2, padding: '14px 16px', borderRadius: 12, border: `1px solid ${T.sep}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: T.text }}>BOL sent to company group?</div>
+                <div style={{ fontSize: 11, color: T.text3, marginTop: 2 }}>Confirm Bill of Lading was shared</div>
+              </div>
+              <button type="button" onClick={() => setF('bol_sent', !form.bol_sent)}
+                style={{ width: 48, height: 28, borderRadius: 14, border: 'none', cursor: 'pointer', background: form.bol_sent ? T.green : T.bg3, position: 'relative', flexShrink: 0 }}>
+                <span style={{ position: 'absolute', top: 3, left: form.bol_sent ? 23 : 3, width: 22, height: 22, borderRadius: '50%', background: '#fff', transition: 'left 0.18s' }} />
+              </button>
+            </div>
+          )}
+          {cfg.fields.includes('delivery_checkin_time') && (
+            <div style={{ marginBottom: 16 }}>
+              <label style={lbl}>Arrival Time at Delivery</label>
+              <input type="time" value={form.delivery_checkin_time} onChange={e => setF('delivery_checkin_time', e.target.value)} style={inp} />
+            </div>
+          )}
+          {cfg.fields.includes('delivery_checkout_time') && (
+            <div style={{ marginBottom: 16 }}>
+              <label style={lbl}>Check-Out Time at Delivery</label>
+              <input type="time" value={form.delivery_checkout_time} onChange={e => setF('delivery_checkout_time', e.target.value)} style={inp} />
+            </div>
+          )}
+          {cfg.fields.includes('delivery_bol_sent') && (
+            <div style={{ marginBottom: 20, display: 'flex', alignItems: 'center', gap: 14, background: T.bg2, padding: '14px 16px', borderRadius: 12, border: `1px solid ${T.sep}` }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: T.text }}>POD / BOL sent to company group?</div>
+                <div style={{ fontSize: 11, color: T.text3, marginTop: 2 }}>Confirm proof of delivery was shared</div>
+              </div>
+              <button type="button" onClick={() => setF('delivery_bol_sent', !form.delivery_bol_sent)}
+                style={{ width: 48, height: 28, borderRadius: 14, border: 'none', cursor: 'pointer', background: form.delivery_bol_sent ? T.green : T.bg3, position: 'relative', flexShrink: 0 }}>
+                <span style={{ position: 'absolute', top: 3, left: form.delivery_bol_sent ? 23 : 3, width: 22, height: 22, borderRadius: '50%', background: '#fff', transition: 'left 0.18s' }} />
+              </button>
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+            <button type="button" onClick={onClose}
+              style={{ flex: 1, padding: 14, background: T.bg2, color: T.text2, border: `1px solid ${T.sep}`, borderRadius: 12, cursor: 'pointer', fontWeight: 600, fontSize: 15 }}>Cancel</button>
+            <button type="submit" disabled={saving}
+              style={{ flex: 2, padding: 14, background: T.blue, color: '#fff', border: 'none', borderRadius: 12, cursor: 'pointer', fontWeight: 700, fontSize: 15 }}>
+              {saving ? 'Updating…' : 'Confirm'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </>
+  )
+}
+
+function StatusDrawer({ load, onClose, onSaved, user, onDriverExtra }) {
   const [saving, setSaving] = useState(null)
   if (!load) return null
+
+  const isDriver = user?.role === 'driver'
+  const visibleStatuses = isDriver
+    ? STATUS_FLOW.filter(s => DRIVER_ALLOWED_STATUSES.includes(s.key))
+    : STATUS_FLOW
 
   const pickupCity = [load.pickup_city, load.pickup_state].filter(Boolean).join(', ')
   const delivCity  = [load.delivery_city, load.delivery_state].filter(Boolean).join(', ')
 
   async function handleStatus(key) {
     if (key === load.status) { onClose(); return }
+    // Driver selecting a status that needs extra info → hand off to DriverStatusModal
+    if (isDriver && DRIVER_EXTRA_STATUSES.includes(key)) {
+      onClose()
+      onDriverExtra(key)
+      return
+    }
     setSaving(key)
     await api.updateLoadStatus(load.id, key)
     setSaving(null)
@@ -235,26 +397,20 @@ function StatusDrawer({ load, onClose, onSaved }) {
 
   return (
     <>
-      {/* Backdrop */}
       <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1100 }} />
-      {/* Drawer */}
       <div style={{
         position: 'fixed', top: 0, right: 0, bottom: 0, width: 340, maxWidth: '95vw',
         background: T.bg1, borderLeft: `1px solid ${T.sep}`, zIndex: 1101,
         display: 'flex', flexDirection: 'column', boxShadow: '-8px 0 32px rgba(0,0,0,0.25)',
       }}>
-        {/* Header */}
         <div style={{ padding: '18px 20px 14px', borderBottom: `1px solid ${T.sep}`, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
-            <div style={{ fontSize: 17, fontWeight: 700, color: T.text }}>
-              {load.load_number || `#${load.id}`}
-            </div>
+            <div style={{ fontSize: 17, fontWeight: 700, color: T.text }}>{load.load_number || `#${load.id}`}</div>
             <div style={{ fontSize: 12, color: T.text3, marginTop: 3 }}>{load.broker_name || '—'}</div>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 22, color: T.text3, cursor: 'pointer', lineHeight: 1 }}>×</button>
         </div>
 
-        {/* Load summary */}
         <div style={{ padding: '14px 20px', borderBottom: `1px solid ${T.sep}`, display: 'flex', gap: 12 }}>
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 9, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>Pickup</div>
@@ -276,38 +432,33 @@ function StatusDrawer({ load, onClose, onSaved }) {
           </div>
         )}
 
-        {/* Status buttons */}
         <div style={{ padding: '18px 20px', flex: 1, overflowY: 'auto' }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 12 }}>Update Status</div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {STATUS_FLOW.map(({ key, label, desc }) => {
+            {visibleStatuses.map(({ key, label, desc }) => {
               const isCurrent = load.status === key
-              const sc = STATUS[key] || STATUS.pending
+              const sc = STATUS[key] || STATUS.open
               const isSaving = saving === key
+              const needsExtra = isDriver && DRIVER_EXTRA_STATUSES.includes(key)
               return (
-                <button
-                  key={key}
-                  onClick={() => handleStatus(key)}
-                  disabled={!!saving}
+                <button key={key} onClick={() => handleStatus(key)} disabled={!!saving}
                   style={{
                     padding: '12px 16px', borderRadius: 10, cursor: isSaving ? 'wait' : 'pointer',
                     border: `2px solid ${isCurrent ? sc.color : T.sep}`,
                     background: isCurrent ? sc.color + '18' : T.bg2,
                     display: 'flex', alignItems: 'center', gap: 12, textAlign: 'left',
                     opacity: saving && !isSaving ? 0.5 : 1, transition: 'all 0.12s',
-                  }}
-                >
-                  <div style={{
-                    width: 10, height: 10, borderRadius: '50%', flexShrink: 0,
-                    background: isCurrent ? sc.color : T.sep,
-                    boxShadow: isCurrent ? `0 0 0 3px ${sc.color}30` : 'none',
-                  }} />
+                  }}>
+                  <div style={{ width: 10, height: 10, borderRadius: '50%', flexShrink: 0, background: isCurrent ? sc.color : T.sep, boxShadow: isCurrent ? `0 0 0 3px ${sc.color}30` : 'none' }} />
                   <div style={{ flex: 1 }}>
                     <div style={{ fontSize: 13, fontWeight: 700, color: isCurrent ? sc.color : T.text }}>
                       {label} {isCurrent && '✓'} {isSaving && '…'}
                     </div>
-                    <div style={{ fontSize: 11, color: T.text3, marginTop: 1 }}>{desc}</div>
+                    <div style={{ fontSize: 11, color: T.text3, marginTop: 1 }}>
+                      {desc}{needsExtra ? ' — will ask for details' : ''}
+                    </div>
                   </div>
+                  {needsExtra && <span style={{ fontSize: 10, color: T.blue, fontWeight: 700 }}>›</span>}
                 </button>
               )
             })}
@@ -336,10 +487,10 @@ const SORT_OPTIONS = [
 const STATUS_TABS = [
   { key: 'active',     label: 'Active' },
   { key: 'late',       label: 'Late' },
-  { key: 'pending',    label: 'Pending' },
-  { key: 'assigned',   label: 'Assigned' },
+  { key: 'open',       label: 'Open' },
+  { key: 'covered',    label: 'Covered' },
   { key: 'dispatched', label: 'Dispatched' },
-  { key: 'in_transit', label: 'In Transit' },
+  { key: 'on_route',   label: 'On Route' },
   { key: 'invoice',    label: 'To Invoice' },
   { key: 'completed',  label: 'Completed' },
   { key: 'all',        label: 'All' },
@@ -365,6 +516,7 @@ export default function Loads() {
   const [showForm, setShowForm] = useState(false)
   const [editLoad, setEditLoad] = useState(null)
   const [drawerLoad, setDrawerLoad] = useState(null)
+  const [driverModal, setDriverModal] = useState(null) // { load, targetStatus }
   const [lastRefresh, setLastRefresh] = useState(new Date())
 
   const fetchLoads = useCallback(async () => {
@@ -384,7 +536,7 @@ export default function Loads() {
     return () => clearInterval(interval)
   }, [fetchLoads])
 
-  const ACTIVE_STATUSES = ['pending','assigned','dispatched','in_transit']
+  const ACTIVE_STATUSES = ['open','covered','dispatched','loading','on_route','unloading','in_yard']
 
   const filtered = loads.filter(l => {
     if (activeTab === 'all') return true
@@ -536,6 +688,7 @@ export default function Loads() {
                   <LoadRow
                     key={l.id}
                     load={l}
+                    user={user}
                     onStatusUpdate={fetchLoads}
                     onEdit={(load) => { setEditLoad(load); setShowForm(true) }}
                     onStatusDrawer={setDrawerLoad}
@@ -557,9 +710,20 @@ export default function Loads() {
 
       <StatusDrawer
         load={drawerLoad}
+        user={user}
         onClose={() => setDrawerLoad(null)}
         onSaved={fetchLoads}
+        onDriverExtra={(targetStatus) => setDriverModal({ load: drawerLoad, targetStatus })}
       />
+
+      {driverModal && (
+        <DriverStatusModal
+          load={driverModal.load}
+          targetStatus={driverModal.targetStatus}
+          onClose={() => setDriverModal(null)}
+          onSaved={() => { setDriverModal(null); fetchLoads() }}
+        />
+      )}
     </div>
   )
 }

@@ -43,12 +43,19 @@ export function applyTheme(mode) {
 }
 
 export const STATUS = {
-  pending:    { color: '#ff9f0a', label: 'Pending' },
-  assigned:   { color: '#0a84ff', label: 'Assigned' },
+  open:       { color: '#ff9f0a', label: 'Open' },
+  covered:    { color: '#0a84ff', label: 'Covered' },
   dispatched: { color: '#bf5af2', label: 'Dispatched' },
-  in_transit: { color: '#30d158', label: 'In Transit' },
-  delivered:  { color: '#5ac8f5', label: 'Delivered' },
+  loading:    { color: '#ff6b35', label: 'Loading' },
+  on_route:   { color: '#30d158', label: 'On Route' },
+  unloading:  { color: '#5ac8f5', label: 'Unloading' },
+  in_yard:    { color: '#64d2ff', label: 'In Yard' },
+  delivered:  { color: '#34c759', label: 'Delivered' },
   completed:  { color: 'rgba(120,120,128,0.55)', label: 'Completed' },
+  // legacy aliases so old JWT loads still render
+  pending:    { color: '#ff9f0a', label: 'Open' },
+  assigned:   { color: '#0a84ff', label: 'Covered' },
+  in_transit: { color: '#30d158', label: 'On Route' },
   available:  { color: '#30d158', label: 'Available' },
   on_load:    { color: '#0a84ff', label: 'On Load' },
   off_duty:   { color: 'rgba(120,120,128,0.55)', label: 'Off Duty' },

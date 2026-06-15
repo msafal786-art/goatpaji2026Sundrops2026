@@ -82,7 +82,7 @@ function timeAgo(isoStr) {
 function Sidebar({ user, onLogout }) {
   const loc = useLocation()
   const links = NAV_LINKS[user.role] || []
-  const isAdmin = user.role === 'dispatcher' && !user.company_id
+  const isAdmin = user.role === 'dispatcher' && !user.company_id && !user.allowed_company_ids
   const [onlineUsers, setOnlineUsers] = useState([])
 
   useEffect(() => {
@@ -110,7 +110,7 @@ function Sidebar({ user, onLogout }) {
               : 'Dispatch Portal'}
         </div>
         <div style={{ fontSize: 11, color: T.text3, marginTop: 2 }}>
-          {user.role === 'dispatcher' && !user.company_id ? 'Admin · All Companies' : 'Freight Management'}
+          {isAdmin ? 'Admin · All Companies' : 'Freight Management'}
         </div>
       </div>
       <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto' }}>

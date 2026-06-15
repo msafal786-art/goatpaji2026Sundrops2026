@@ -181,7 +181,7 @@ ${load.company_name || 'Dispatch'}`
   if (!load) return <div style={{ padding: 40, color: T.text2 }}>Loading…</div>
 
   const canEdit = user.role !== 'driver'
-  const s = STATUS[load.status] || STATUS.pending
+  const s = STATUS[load.status] || STATUS.open
 
   const fmtTime = (iso) => {
     if (!iso) return null
@@ -252,7 +252,7 @@ ${load.company_name || 'Dispatch'}`
         <div style={{ background: T.bg1, borderRadius: 14, padding: '16px 20px', marginBottom: 20, border: `1px solid ${T.sep}` }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 12 }}>Update Status</div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-            {['pending','assigned','dispatched','in_transit','delivered','completed'].map(st => {
+            {['open','covered','dispatched','loading','on_route','unloading','in_yard','delivered','completed'].map(st => {
               const ss = STATUS[st]
               const active = load.status === st
               return (

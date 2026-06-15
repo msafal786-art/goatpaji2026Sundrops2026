@@ -3,7 +3,7 @@ import { api } from '../api.js'
 import { useAuth } from '../AuthContext.jsx'
 import { T } from '../theme.js'
 
-const EMPTY = { username: '', password: '', full_name: '', email: '', phone: '', role: 'dispatcher', company_id: '', can_see_revenue: false }
+const EMPTY = { username: '', password: '', full_name: '', email: '', phone: '', role: 'dispatcher', company_id: '', can_see_revenue: false, allowed_company_ids: [] }
 const ROLES = [
   { value: 'dispatcher',    label: 'Dispatcher' },
   { value: 'company_owner', label: 'Company Owner' },
@@ -20,6 +20,7 @@ function timeAgo(iso) {
 
 export default function Users() {
   const { user: me } = useAuth()
+  const isAdmin = me.role === 'dispatcher' && !me.company_id && !me.allowed_company_ids
   const [users, setUsers] = useState([])
   const [companies, setCompanies] = useState([])
   const [show, setShow] = useState(false)
@@ -38,16 +39,27 @@ export default function Users() {
   }
 
   function openNew() { setForm({ ...EMPTY }); setEditing(null); setShow(true); setError('') }
-  function openEdit(u) { setForm({ ...EMPTY, ...u, password: '', can_see_revenue: !!u.can_see_revenue }); setEditing(u); setShow(true); setError('') }
+  function openEdit(u) {
+    setForm({
+      ...EMPTY, ...u, password: '', can_see_revenue: !!u.can_see_revenue,
+      allowed_company_ids: u.allowed_company_ids ? JSON.parse(u.allowed_company_ids) : []
+    });
+    setEditing(u); setShow(true); setError('')
+  }
 
   async function handleSubmit(e) {
     e.preventDefault(); setSaving(true); setError('')
     try {
+      const payload = {
+        ...form,
+        // Only send allowed_company_ids for dispatchers; clear it otherwise
+        allowed_company_ids: form.role === 'dispatcher' ? form.allowed_company_ids : [],
+      }
       if (editing) {
-        const updated = await api.updateUser(editing.id, form)
+        const updated = await api.updateUser(editing.id, payload)
         setUsers(us => us.map(u => u.id === editing.id ? updated : u))
       } else {
-        const created = await api.createUser(form)
+        const created = await api.createUser(payload)
         setUsers(us => [created, ...us])
       }
       setShow(false)
@@ -117,7 +129,7 @@ export default function Users() {
                     <span style={{ fontSize: 15, fontWeight: 700, color: T.blue }}>
                       {(u.full_name || u.username).charAt(0).toUpperCase()}
                     </span>
-                    {isOnline && (
+                    {isAdmin && isOnline && (
                       <span style={{ position: 'absolute', bottom: 0, right: 0, width: 10, height: 10, borderRadius: '50%', background: T.green, border: `2px solid ${T.bg1}` }} />
                     )}
                   </div>
@@ -126,10 +138,19 @@ export default function Users() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
                       <span style={{ fontSize: 14, fontWeight: 700, color: T.text }}>{u.full_name || u.username}</span>
                       {isMe && <span style={{ fontSize: 10, fontWeight: 700, color: T.blue, background: T.blue + '20', padding: '2px 7px', borderRadius: 20 }}>You</span>}
-                      <span style={{ fontSize: 10, fontWeight: 700, color: T.text3, background: T.bg2, padding: '2px 8px', borderRadius: 20 }}>{roleLabel}</span>
+                      <span style={{ fontSize: 10, fontWeight: 700, color: T.text3, background: T.bg2, padding: '2px 8px', borderRadius: 20 }}>
+                        {u.role === 'company_owner' ? 'Company Owner' : u.allowed_company_ids ? 'Scoped Dispatcher' : u.company_id ? 'Dispatcher' : 'Admin Dispatcher'}
+                      </span>
                       {u.can_see_revenue === 1 && (
                         <span style={{ fontSize: 10, fontWeight: 700, color: T.green, background: T.green + '15', padding: '2px 8px', borderRadius: 20 }}>Sees Revenue</span>
                       )}
+                      {u.allowed_company_ids && (() => {
+                        const ids = JSON.parse(u.allowed_company_ids)
+                        const names = ids.map(id => companies.find(c => c.id === id)?.name || id).join(', ')
+                        return <span title={names} style={{ fontSize: 10, color: T.orange, background: T.orange + '18', padding: '2px 8px', borderRadius: 20, fontWeight: 600 }}>
+                          {ids.length} {ids.length === 1 ? 'company' : 'companies'}
+                        </span>
+                      })()}
                     </div>
                     <div style={{ fontSize: 11, color: T.text3, marginTop: 3 }}>
                       @{u.username}{u.email ? ` · ${u.email}` : ''}
@@ -137,9 +158,11 @@ export default function Users() {
                   </div>
 
                   <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                    <div style={{ fontSize: 11, color: isOnline ? T.green : T.text3, fontWeight: isOnline ? 700 : 400 }}>
-                      {isOnline ? 'Online now' : lastSeen}
-                    </div>
+                    {isAdmin && (
+                      <div style={{ fontSize: 11, color: isOnline ? T.green : T.text3, fontWeight: isOnline ? 700 : 400 }}>
+                        {isOnline ? 'Online now' : lastSeen}
+                      </div>
+                    )}
                     <div style={{ display: 'flex', gap: 6, marginTop: 8, justifyContent: 'flex-end' }}>
                       <button onClick={() => openEdit(u)} style={{ padding: '5px 12px', background: T.bg2, border: `1px solid ${T.sep}`, color: T.text2, borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Edit</button>
                       {!isMe && (
@@ -193,21 +216,54 @@ export default function Users() {
                 </div>
               </div>
 
-              <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
-                <div style={{ flex: 1 }}>
-                  <label style={lbl()}>Role *</label>
-                  <select style={inp()} value={form.role} onChange={e => set('role', e.target.value)}>
-                    {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-                  </select>
-                </div>
-                <div style={{ flex: 1 }}>
-                  <label style={lbl()}>Company</label>
+              <div style={{ marginBottom: 12 }}>
+                <label style={lbl()}>Role *</label>
+                <select style={inp()} value={form.role} onChange={e => set('role', e.target.value)}>
+                  {ROLES.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
+                </select>
+              </div>
+
+              {form.role === 'company_owner' ? (
+                <div style={{ marginBottom: 12 }}>
+                  <label style={lbl()}>Company *</label>
                   <select style={inp()} value={form.company_id} onChange={e => set('company_id', e.target.value)}>
-                    <option value="">None (Admin)</option>
+                    <option value="">Select company…</option>
                     {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                   </select>
                 </div>
-              </div>
+              ) : (
+                <div style={{ background: T.bg2, borderRadius: 10, padding: '14px 16px', marginBottom: 12, border: `1px solid ${T.sep}` }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: T.text, marginBottom: 4 }}>Company Access</div>
+                  <div style={{ fontSize: 11, color: T.text3, marginBottom: 10 }}>
+                    Check the companies this dispatcher can see. Leave all unchecked for full admin access.
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+                    {companies.map(c => {
+                      const checked = (form.allowed_company_ids || []).includes(c.id)
+                      return (
+                        <label key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 7, cursor: 'pointer', background: checked ? T.blue + '15' : 'transparent', border: `1px solid ${checked ? T.blue + '40' : 'transparent'}` }}>
+                          <input type="checkbox" checked={checked}
+                            onChange={e => {
+                              const ids = form.allowed_company_ids || []
+                              set('allowed_company_ids', e.target.checked ? [...ids, c.id] : ids.filter(id => id !== c.id))
+                            }}
+                            style={{ accentColor: T.blue }}
+                          />
+                          <span style={{ fontSize: 12, color: checked ? T.blue : T.text, fontWeight: checked ? 600 : 400, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.name}</span>
+                        </label>
+                      )
+                    })}
+                  </div>
+                  {(form.allowed_company_ids || []).length === 0 && (
+                    <div style={{ marginTop: 8, fontSize: 11, color: T.orange, fontWeight: 600 }}>No companies selected → Full admin access to all companies</div>
+                  )}
+                  {(form.allowed_company_ids || []).length > 0 && (
+                    <div style={{ marginTop: 8, fontSize: 11, color: T.blue, fontWeight: 600 }}>
+                      Access limited to {(form.allowed_company_ids || []).length} {(form.allowed_company_ids || []).length === 1 ? 'company' : 'companies'}
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div style={{ display: 'flex', gap: 12, marginBottom: 12 }}>
                 <div style={{ flex: 1 }}>
@@ -228,23 +284,23 @@ export default function Users() {
                     <div style={{ fontSize: 11, color: T.text3, marginTop: 2 }}>
                       {form.role === 'company_owner'
                         ? 'Company owners always see revenue — this toggle has no effect.'
-                        : form.company_id
+                        : (form.allowed_company_ids || []).length > 0
                           ? 'Allow this dispatcher to see revenue totals on the dashboard.'
                           : 'Admin dispatchers always see revenue.'}
                     </div>
                   </div>
                   <button
                     type="button"
-                    disabled={form.role === 'company_owner' || !form.company_id}
+                    disabled={form.role === 'company_owner' || (form.allowed_company_ids || []).length === 0}
                     onClick={() => set('can_see_revenue', !form.can_see_revenue)}
                     style={{
                       width: 44, height: 26, borderRadius: 13, border: 'none', cursor: 'pointer',
-                      background: (form.can_see_revenue || form.role === 'company_owner') ? T.green : T.bg3,
+                      background: (form.can_see_revenue || form.role === 'company_owner' || (form.allowed_company_ids || []).length === 0) ? T.green : T.bg3,
                       position: 'relative', flexShrink: 0, transition: 'background 0.2s',
                     }}
                   >
                     <span style={{
-                      position: 'absolute', top: 3, left: (form.can_see_revenue || form.role === 'company_owner') ? 21 : 3,
+                      position: 'absolute', top: 3, left: (form.can_see_revenue || form.role === 'company_owner' || (form.allowed_company_ids || []).length === 0) ? 21 : 3,
                       width: 20, height: 20, borderRadius: '50%', background: '#fff', transition: 'left 0.2s',
                     }} />
                   </button>

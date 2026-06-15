@@ -199,10 +199,79 @@ db.exec(`
   );
 `);
 
+// ── Status migration: rebuild loads table with new status values ─────────────
+const loadsSchema = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='loads'").get()?.sql || '';
+if (loadsSchema.includes("'in_transit'") || loadsSchema.includes("'pending'")) {
+  db.exec(`
+    PRAGMA foreign_keys = OFF;
+    DROP TABLE IF EXISTS loads_new;
+    CREATE TABLE loads_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      company_id INTEGER REFERENCES companies(id),
+      load_number TEXT, broker_name TEXT, broker_order TEXT, broker_contact TEXT, broker_email TEXT,
+      commodity TEXT, weight TEXT, miles TEXT, trailer_type TEXT, bol TEXT, rate TEXT,
+      pickup_name TEXT, pickup_address TEXT, pickup_city TEXT, pickup_state TEXT, pickup_zip TEXT,
+      pickup_date TEXT, pickup_time TEXT, pickup_phone TEXT, pickup_refs TEXT,
+      delivery_name TEXT, delivery_address TEXT, delivery_city TEXT, delivery_state TEXT, delivery_zip TEXT,
+      delivery_date TEXT, delivery_time TEXT, delivery_phone TEXT, delivery_refs TEXT,
+      special_instructions TEXT,
+      driver_id INTEGER REFERENCES drivers(id),
+      truck_id INTEGER REFERENCES trucks(id),
+      dispatch_sent INTEGER DEFAULT 0, dispatch_sent_at TEXT,
+      status TEXT DEFAULT 'open' CHECK(status IN ('open','covered','dispatched','loading','on_route','unloading','in_yard','delivered','completed')),
+      rate_con_filename TEXT, created_at TEXT DEFAULT (datetime('now')),
+      relay_driver_id INTEGER REFERENCES drivers(id), relay_split INTEGER DEFAULT 50,
+      trailer_number TEXT, checkin_time TEXT, checkout_time TEXT,
+      detention_start TEXT, detention_end TEXT, detention_rate REAL DEFAULT 65,
+      original_driver_id INTEGER REFERENCES drivers(id),
+      checkin_notes TEXT, bol_sent INTEGER DEFAULT 0,
+      delivery_checkin_time TEXT, delivery_checkout_time TEXT, delivery_bol_sent INTEGER DEFAULT 0
+    );
+    INSERT INTO loads_new (
+      id, company_id, load_number, broker_name, broker_order, broker_contact, broker_email,
+      commodity, weight, miles, trailer_type, bol, rate,
+      pickup_name, pickup_address, pickup_city, pickup_state, pickup_zip,
+      pickup_date, pickup_time, pickup_phone, pickup_refs,
+      delivery_name, delivery_address, delivery_city, delivery_state, delivery_zip,
+      delivery_date, delivery_time, delivery_phone, delivery_refs,
+      special_instructions, driver_id, truck_id, dispatch_sent, dispatch_sent_at,
+      status, rate_con_filename, created_at,
+      relay_driver_id, relay_split, trailer_number, checkin_time, checkout_time,
+      detention_start, detention_end, detention_rate, original_driver_id
+    )
+    SELECT
+      id, company_id, load_number, broker_name, broker_order, broker_contact, broker_email,
+      commodity, weight, miles, trailer_type, bol, rate,
+      pickup_name, pickup_address, pickup_city, pickup_state, pickup_zip,
+      pickup_date, pickup_time, pickup_phone, pickup_refs,
+      delivery_name, delivery_address, delivery_city, delivery_state, delivery_zip,
+      delivery_date, delivery_time, delivery_phone, delivery_refs,
+      special_instructions, driver_id, truck_id, dispatch_sent, dispatch_sent_at,
+      CASE status WHEN 'pending' THEN 'open' WHEN 'assigned' THEN 'covered' WHEN 'in_transit' THEN 'on_route' ELSE status END,
+      rate_con_filename, created_at,
+      relay_driver_id, relay_split, trailer_number, checkin_time, checkout_time,
+      detention_start, detention_end, detention_rate, original_driver_id
+    FROM loads;
+    DROP TABLE loads;
+    ALTER TABLE loads_new RENAME TO loads;
+    PRAGMA foreign_keys = ON;
+  `);
+  console.log('[migration] loads table rebuilt with new status values');
+}
+
+// New columns for driver check-in/out flow (safe to run even after table rebuild)
+const latestLoadCols = db.prepare("PRAGMA table_info(loads)").all().map(r => r.name);
+if (!latestLoadCols.includes('checkin_notes'))          db.prepare('ALTER TABLE loads ADD COLUMN checkin_notes TEXT').run();
+if (!latestLoadCols.includes('bol_sent'))               db.prepare('ALTER TABLE loads ADD COLUMN bol_sent INTEGER DEFAULT 0').run();
+if (!latestLoadCols.includes('delivery_checkin_time'))  db.prepare('ALTER TABLE loads ADD COLUMN delivery_checkin_time TEXT').run();
+if (!latestLoadCols.includes('delivery_checkout_time')) db.prepare('ALTER TABLE loads ADD COLUMN delivery_checkout_time TEXT').run();
+if (!latestLoadCols.includes('delivery_bol_sent'))      db.prepare('ALTER TABLE loads ADD COLUMN delivery_bol_sent INTEGER DEFAULT 0').run();
+
 const userCols = db.prepare("PRAGMA table_info(users)").all().map(r => r.name);
-if (!userCols.includes('last_seen_at'))          db.prepare('ALTER TABLE users ADD COLUMN last_seen_at TEXT').run();
-if (!userCols.includes('can_see_revenue'))       db.prepare('ALTER TABLE users ADD COLUMN can_see_revenue INTEGER DEFAULT 0').run();
-if (!userCols.includes('must_change_password'))  db.prepare('ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0').run();
+if (!userCols.includes('last_seen_at'))            db.prepare('ALTER TABLE users ADD COLUMN last_seen_at TEXT').run();
+if (!userCols.includes('can_see_revenue'))         db.prepare('ALTER TABLE users ADD COLUMN can_see_revenue INTEGER DEFAULT 0').run();
+if (!userCols.includes('must_change_password'))    db.prepare('ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0').run();
+if (!userCols.includes('allowed_company_ids'))     db.prepare('ALTER TABLE users ADD COLUMN allowed_company_ids TEXT DEFAULT NULL').run();
 
 // Seed a default dispatcher account
 const bcrypt = require('bcryptjs');

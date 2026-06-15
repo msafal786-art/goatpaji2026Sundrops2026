@@ -82,7 +82,7 @@ export const api = {
   deleteLoad: (id) => req('DELETE', `/loads/${id}`),
   dispatchMessage: (id) => req('GET', `/loads/${id}/dispatch-message`),
   markDispatched: (id) => req('POST', `/loads/${id}/mark-dispatched`),
-  updateLoadStatus: (id, status) => req('POST', `/loads/${id}/status`, { status }),
+  updateLoadStatus: (id, status, extra = {}) => req('POST', `/loads/${id}/status`, { status, ...extra }),
 
   parseRateCon: (file) => {
     const fd = new FormData()

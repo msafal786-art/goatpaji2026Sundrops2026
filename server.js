@@ -108,11 +108,12 @@ function auth(req, res, next) {
   if (!token) return res.status(401).json({ error: 'No token' });
   try {
     req.user = jwt.verify(token, process.env.JWT_SECRET);
-    // Update last_seen_at — only write if >60s stale to reduce DB churn
+    // Fetch allowed_company_ids fresh (admin can change access without requiring re-login)
     try {
-      const u = db.prepare('SELECT last_seen_at FROM users WHERE id = ?').get(req.user.id);
+      const u = db.prepare('SELECT last_seen_at, allowed_company_ids FROM users WHERE id = ?').get(req.user.id);
       const stale = !u?.last_seen_at || (Date.now() - new Date(u.last_seen_at).getTime()) > 60000;
       if (stale) db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(new Date().toISOString(), req.user.id);
+      if (u) req.user.allowed_company_ids = u.allowed_company_ids || null;
     } catch {}
     next();
   } catch {
@@ -146,8 +147,8 @@ app.post('/api/login', loginLimiter, (req, res) => {
     return res.status(401).json({ error: 'Invalid credentials' });
   }
 
-  // Admin accounts (dispatcher with no company_id) require the admin code if ADMIN_SECRET is set
-  const isAdmin = user.role === 'dispatcher' && !user.company_id;
+  // Admin accounts (dispatcher with no company_id AND no allowed_company_ids) require the admin code
+  const isAdmin = user.role === 'dispatcher' && !user.company_id && !user.allowed_company_ids;
   const secret = process.env.ADMIN_SECRET;
   if (isAdmin && secret) {
     if (!admin_code || admin_code !== secret) {
@@ -161,7 +162,7 @@ app.post('/api/login', loginLimiter, (req, res) => {
     { expiresIn: '24h' }
   );
   console.log(`[login] user=${user.id} role=${user.role} ip=${req.ip} at=${new Date().toISOString()}`);
-  res.json({ token, role: user.role, full_name: user.full_name, company_id: user.company_id });
+  res.json({ token, role: user.role, full_name: user.full_name, company_id: user.company_id, allowed_company_ids: user.allowed_company_ids || null });
 });
 
 // ── Token refresh — extends session if still valid ───────────────────────────
@@ -179,7 +180,7 @@ app.post('/api/refresh', auth, (req, res) => {
 app.get('/api/me', auth, (req, res) => {
   const user = db.prepare(`
     SELECT u.id, u.username, u.role, u.company_id, u.full_name, u.email, u.phone,
-           u.can_see_revenue, u.must_change_password, c.name as company_name
+           u.can_see_revenue, u.must_change_password, u.allowed_company_ids, c.name as company_name
     FROM users u LEFT JOIN companies c ON u.company_id = c.id
     WHERE u.id = ?
   `).get(req.user.id);
@@ -200,7 +201,7 @@ app.put('/api/change-password', auth, (req, res) => {
 
 // ── Admin: bulk reset passwords ───────────────────────────────────────────────
 app.post('/api/admin/reset-passwords', auth, (req, res) => {
-  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id;
+  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
   if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
   const { password, user_ids } = req.body;
   if (!password) return res.status(400).json({ error: 'password required' });
@@ -236,7 +237,7 @@ app.put('/api/companies/:id', auth, requireRole('dispatcher'), (req, res) => {
 app.get('/api/users', auth, requireRole('dispatcher'), (req, res) => {
   const users = db.prepare(`
     SELECT u.id, u.username, u.role, u.company_id, u.full_name, u.email, u.phone,
-           u.can_see_revenue, u.last_seen_at, c.name as company_name
+           u.can_see_revenue, u.last_seen_at, u.allowed_company_ids, c.name as company_name
     FROM users u LEFT JOIN companies c ON u.company_id = c.id
     WHERE u.role != 'driver'
     ORDER BY c.name, u.full_name
@@ -245,12 +246,14 @@ app.get('/api/users', auth, requireRole('dispatcher'), (req, res) => {
 });
 
 app.post('/api/users', auth, requireRole('dispatcher'), (req, res) => {
-  const { username, password, role, company_id, full_name, email, phone, can_see_revenue } = req.body;
+  const { username, password, role, company_id, full_name, email, phone, can_see_revenue, allowed_company_ids } = req.body;
   if (!username || !password || !role) return res.status(400).json({ error: 'username, password, role required' });
   const hash = bcrypt.hashSync(password, 10);
+  const acIds = Array.isArray(allowed_company_ids) && allowed_company_ids.length > 0
+    ? JSON.stringify(allowed_company_ids) : null;
   try {
-    const r = db.prepare('INSERT INTO users (username,password,role,company_id,full_name,email,phone,can_see_revenue) VALUES (?,?,?,?,?,?,?,?)')
-      .run(username, hash, role, company_id || null, full_name || null, email || null, phone || null, can_see_revenue ? 1 : 0);
+    const r = db.prepare('INSERT INTO users (username,password,role,company_id,full_name,email,phone,can_see_revenue,allowed_company_ids) VALUES (?,?,?,?,?,?,?,?,?)')
+      .run(username, hash, role, company_id || null, full_name || null, email || null, phone || null, can_see_revenue ? 1 : 0, acIds);
     res.json(db.prepare('SELECT u.*, c.name as company_name FROM users u LEFT JOIN companies c ON u.company_id = c.id WHERE u.id = ?').get(r.lastInsertRowid));
   } catch {
     res.status(400).json({ error: 'Username already exists' });
@@ -258,24 +261,25 @@ app.post('/api/users', auth, requireRole('dispatcher'), (req, res) => {
 });
 
 app.put('/api/users/:id', auth, requireRole('dispatcher'), (req, res) => {
-  const { full_name, email, phone, can_see_revenue, password, company_id, role } = req.body;
+  const { full_name, email, phone, can_see_revenue, password, company_id, role, allowed_company_ids } = req.body;
   const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Not found' });
-  // Protect: cannot change admin's own role/company
-  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id;
+  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
   if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
   if (password) {
     db.prepare('UPDATE users SET password = ? WHERE id = ?').run(bcrypt.hashSync(password, 10), req.params.id);
   }
-  db.prepare('UPDATE users SET full_name=?, email=?, phone=?, can_see_revenue=?, company_id=?, role=? WHERE id = ?')
+  const acIds = Array.isArray(allowed_company_ids) && allowed_company_ids.length > 0
+    ? JSON.stringify(allowed_company_ids) : null;
+  db.prepare('UPDATE users SET full_name=?, email=?, phone=?, can_see_revenue=?, company_id=?, role=?, allowed_company_ids=? WHERE id = ?')
     .run(full_name || existing.full_name, email || existing.email, phone || existing.phone,
          can_see_revenue ? 1 : 0, company_id !== undefined ? (company_id || null) : existing.company_id,
-         role || existing.role, req.params.id);
+         role || existing.role, acIds !== undefined ? acIds : existing.allowed_company_ids, req.params.id);
   res.json(db.prepare('SELECT u.*, c.name as company_name FROM users u LEFT JOIN companies c ON u.company_id = c.id WHERE u.id = ?').get(req.params.id));
 });
 
 app.delete('/api/users/:id', auth, requireRole('dispatcher'), (req, res) => {
-  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id;
+  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
   if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
   if (Number(req.params.id) === req.user.id) return res.status(400).json({ error: 'Cannot delete yourself' });
   db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
@@ -287,6 +291,15 @@ app.get('/api/drivers', auth, (req, res) => {
   let query = 'SELECT d.*, c.name as company_name FROM drivers d LEFT JOIN companies c ON d.company_id = c.id';
   const params = [];
   if (req.user.role === 'company_owner') {
+    query += ' WHERE d.company_id = ?';
+    params.push(req.user.company_id);
+  } else if (req.user.allowed_company_ids) {
+    const ids = JSON.parse(req.user.allowed_company_ids);
+    if (ids.length > 0) {
+      query += ` WHERE d.company_id IN (${ids.map(() => '?').join(',')})`;
+      params.push(...ids);
+    }
+  } else if (req.user.company_id) {
     query += ' WHERE d.company_id = ?';
     params.push(req.user.company_id);
   }
@@ -358,6 +371,15 @@ app.get('/api/trucks', auth, (req, res) => {
   if (req.user.role === 'company_owner') {
     query += ' WHERE t.company_id = ?';
     params.push(req.user.company_id);
+  } else if (req.user.allowed_company_ids) {
+    const ids = JSON.parse(req.user.allowed_company_ids);
+    if (ids.length > 0) {
+      query += ` WHERE t.company_id IN (${ids.map(() => '?').join(',')})`;
+      params.push(...ids);
+    }
+  } else if (req.user.company_id) {
+    query += ' WHERE t.company_id = ?';
+    params.push(req.user.company_id);
   }
   query += ' ORDER BY t.tractor_number';
   res.json(db.prepare(query).all(...params));
@@ -407,12 +429,32 @@ app.get('/api/loads', auth, (req, res) => {
     if (!driver) return res.json([]);
     // Drivers only see loads once dispatched and while active — not pending/assigned/completed
     // Strip financial fields — drivers must never see rate/pay amounts
-    return res.json(loadsQuery("WHERE l.driver_id = ? AND l.status IN ('dispatched','in_transit','delivered')", [driver.id])
+    return res.json(loadsQuery("WHERE l.driver_id = ? AND l.status IN ('dispatched','loading','on_route','unloading','in_yard','delivered')", [driver.id])
       .map(({ rate, relay_split, ...rest }) => rest));
   }
   if (req.user.role === 'company_owner') {
     return res.json(loadsQuery('WHERE l.company_id = ?', [req.user.company_id]));
   }
+  // Multi-company scoped dispatcher
+  if (req.user.allowed_company_ids) {
+    const ids = JSON.parse(req.user.allowed_company_ids);
+    if (ids.length > 0) {
+      const { status } = req.query;
+      let where = `WHERE l.company_id IN (${ids.map(() => '?').join(',')})`;
+      const params = [...ids];
+      if (status) { where += ' AND l.status = ?'; params.push(status); }
+      return res.json(loadsQuery(where, params));
+    }
+  }
+  // Single-company scoped dispatcher (old style)
+  if (req.user.company_id) {
+    const { status } = req.query;
+    let where = 'WHERE l.company_id = ?';
+    const params = [req.user.company_id];
+    if (status) { where += ' AND l.status = ?'; params.push(status); }
+    return res.json(loadsQuery(where, params));
+  }
+  // Admin dispatcher — can filter by any company via query param
   const { company_id, status } = req.query;
   let where = 'WHERE 1=1';
   const params = [];
@@ -452,7 +494,7 @@ app.get('/api/loads/:id', auth, (req, res) => {
 
 app.post('/api/loads', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
   // company_owner → their company; scoped dispatcher (has company_id) → their company; admin dispatcher → body value
-  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id;
+  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
   const cid = req.user.role === 'company_owner' ? req.user.company_id
             : isAdmin ? req.body.company_id
             : req.user.company_id;
@@ -484,7 +526,7 @@ app.post('/api/loads', auth, requireRole('dispatcher', 'company_owner'), (req, r
     delivery_name, delivery_address, delivery_city, delivery_state, delivery_zip,
     delivery_date, delivery_time, delivery_phone, delivery_refs,
     special_instructions, driver_id || null, truck_id || null,
-    driver_id ? 'assigned' : 'pending'
+    driver_id ? 'covered' : 'open'
   );
 
   if (driver_id) {
@@ -523,10 +565,10 @@ app.put('/api/loads/:id', auth, requireRole('dispatcher', 'company_owner'), (req
     db.prepare("UPDATE trucks SET status = 'available' WHERE id = ?").run(existing.truck_id);
   }
 
-  const newStatus = status || (driver_id ? 'assigned' : 'pending');
+  const newStatus = status || (driver_id ? 'covered' : 'open');
 
   // Only admin dispatcher can change which company a load belongs to
-  const isAdminEdit = req.user.role === 'dispatcher' && !req.user.company_id;
+  const isAdminEdit = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
   const effectiveCompanyId = isAdminEdit ? (company_id || existing.company_id) : existing.company_id;
 
   db.prepare(`UPDATE loads SET
@@ -597,26 +639,51 @@ app.post('/api/loads/:id/mark-dispatched', auth, requireRole('dispatcher', 'comp
 });
 
 app.post('/api/loads/:id/status', auth, (req, res) => {
-  const { status } = req.body;
-  const validStatuses = ['pending','assigned','dispatched','in_transit','delivered','completed'];
+  const {
+    status,
+    checkin_time, checkin_notes, trailer_number,
+    checkout_time, bol_sent,
+    delivery_checkin_time,
+    delivery_checkout_time, delivery_bol_sent,
+  } = req.body;
+  const validStatuses = ['open','covered','dispatched','loading','on_route','unloading','in_yard','delivered','completed'];
   if (!validStatuses.includes(status)) return res.status(400).json({ error: 'Invalid status' });
 
   const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
   if (!load) return res.status(404).json({ error: 'Not found' });
 
-  // Drivers can only move their own load forward (dispatched → in_transit → delivered)
   if (req.user.role === 'driver') {
     const driver = db.prepare('SELECT id FROM drivers WHERE user_id = ?').get(req.user.id);
     if (!driver || load.driver_id !== driver.id) return res.status(403).json({ error: 'Forbidden' });
-    const driverAllowed = ['dispatched','in_transit','delivered'];
+    const driverAllowed = ['dispatched','loading','on_route','unloading','in_yard','delivered'];
     if (!driverAllowed.includes(status)) return res.status(403).json({ error: 'Drivers cannot set this status' });
   }
 
-  db.prepare('UPDATE loads SET status=? WHERE id=?').run(status, req.params.id);
+  // Build UPDATE including any extra check-in/out fields the driver submitted
+  const fields = { status };
+  if (['dispatched','loading'].includes(status)) {
+    if (checkin_time)  fields.checkin_time  = checkin_time;
+    if (checkin_notes) fields.checkin_notes = checkin_notes;
+    if (trailer_number) fields.trailer_number = trailer_number;
+  }
+  if (status === 'on_route') {
+    if (checkout_time) fields.checkout_time = checkout_time;
+    if (bol_sent !== undefined) fields.bol_sent = bol_sent ? 1 : 0;
+  }
+  if (status === 'unloading') {
+    if (delivery_checkin_time) fields.delivery_checkin_time = delivery_checkin_time;
+  }
+  if (status === 'delivered') {
+    if (delivery_checkout_time) fields.delivery_checkout_time = delivery_checkout_time;
+    if (delivery_bol_sent !== undefined) fields.delivery_bol_sent = delivery_bol_sent ? 1 : 0;
+  }
+
+  const setClauses = Object.keys(fields).map(k => `${k}=?`).join(', ');
+  db.prepare(`UPDATE loads SET ${setClauses} WHERE id=?`).run(...Object.values(fields), req.params.id);
 
   if (['delivered','completed'].includes(status)) {
     if (load.driver_id) db.prepare("UPDATE drivers SET status='available' WHERE id=?").run(load.driver_id);
-    if (load.truck_id) db.prepare("UPDATE trucks SET status='available' WHERE id=?").run(load.truck_id);
+    if (load.truck_id)  db.prepare("UPDATE trucks SET status='available' WHERE id=?").run(load.truck_id);
   }
 
   res.json({ ok: true });
@@ -718,12 +785,25 @@ For dates format as YYYY-MM-DD. For times use HH:MM AM/PM format.`
 // ── Rich dashboard stats ──────────────────────────────────────────────────────
 app.get('/api/dashboard-stats', auth, (req, res) => {
   const isOwner = req.user.role === 'company_owner';
-  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id;
+  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
   const canRevenue = isOwner || isAdmin || req.user.can_see_revenue;
-  const cid = isOwner ? req.user.company_id
-             : (!isAdmin && req.user.company_id) ? req.user.company_id : null;
-  const cWhere = cid ? 'AND l.company_id = ?' : '';
-  const cParams = cid ? [cid] : [];
+
+  // Build company filter — supports single company_id, multi allowed_company_ids, or none (admin sees all)
+  let cWhere = '';
+  let cParams = [];
+  if (isOwner) {
+    cWhere = 'AND l.company_id = ?';
+    cParams = [req.user.company_id];
+  } else if (req.user.allowed_company_ids) {
+    const ids = JSON.parse(req.user.allowed_company_ids);
+    if (ids.length > 0) {
+      cWhere = `AND l.company_id IN (${ids.map(() => '?').join(',')})`;
+      cParams = ids;
+    }
+  } else if (req.user.company_id) {
+    cWhere = 'AND l.company_id = ?';
+    cParams = [req.user.company_id];
+  }
 
   const thisMonth = new Date().toISOString().slice(0, 7); // YYYY-MM
   const lastMonthDate = new Date(); lastMonthDate.setMonth(lastMonthDate.getMonth() - 1);
@@ -774,7 +854,7 @@ app.get('/api/dashboard-stats', auth, (req, res) => {
   const needsDriver = db.prepare(`
     SELECT COUNT(*) as n FROM loads l
     WHERE l.driver_id IS NULL
-      AND l.status IN ('pending','assigned')
+      AND l.status IN ('open','covered')
       AND l.pickup_date <= date('now', '+14 days')
       ${cWhere}
   `).get(...cParams).n;
@@ -990,7 +1070,7 @@ app.get('/api/recommendations', auth, (req, res) => {
   const activeDestinations = db.prepare(`
     SELECT DISTINCT delivery_state, delivery_city, COUNT(*) as trucks_delivering
     FROM loads
-    WHERE status IN ('in_transit','dispatched')
+    WHERE status IN ('dispatched','loading','on_route','unloading','in_yard')
     AND delivery_state IS NOT NULL AND delivery_state != ''
     ${companyClause}
     GROUP BY delivery_state
@@ -1059,7 +1139,7 @@ app.get('/api/recommendations', auth, (req, res) => {
 
 // ── Active users (admin only) ─────────────────────────────────────────────────
 app.get('/api/active-users', auth, (req, res) => {
-  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id;
+  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
   if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
   const cutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString();
   const users = db.prepare(`
@@ -1095,7 +1175,7 @@ app.put('/api/loads/:id/change-driver', auth, requireRole('dispatcher', 'company
   }
 
   db.prepare('UPDATE loads SET driver_id=?, original_driver_id=?, status=? WHERE id=?')
-    .run(driver_id, originalId || null, load.status === 'pending' ? 'assigned' : load.status, req.params.id);
+    .run(driver_id, originalId || null, load.status === 'open' ? 'covered' : load.status, req.params.id);
   db.prepare("UPDATE drivers SET status='on_load' WHERE id=?").run(driver_id);
 
   const updated = db.prepare(`
@@ -1275,7 +1355,7 @@ app.put('/api/loads/:id/detention', auth, requireRole('dispatcher', 'company_own
 // ── Compliance data ──────────────────────────────────────────────────────────
 app.get('/api/compliance', auth, (req, res) => {
   const isOwner = req.user.role === 'company_owner';
-  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id;
+  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
   const cid = isOwner ? req.user.company_id : (!isAdmin && req.user.company_id) ? req.user.company_id : null;
 
   const driverWhere = cid ? 'WHERE d.company_id = ?' : '';
