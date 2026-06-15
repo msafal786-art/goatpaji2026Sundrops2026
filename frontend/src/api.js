@@ -117,6 +117,7 @@ export const api = {
   deleteDoc: (docId) => req('DELETE', `/docs/${docId}`),
 
   // Trailer / check-in / check-out
+  changeDriver: (loadId, driver_id) => req('PUT', `/loads/${loadId}/change-driver`, { driver_id }),
   setTrailer: (loadId, trailer_number) => req('PUT', `/loads/${loadId}/trailer`, { trailer_number }),
   checkIn: (loadId) => req('PUT', `/loads/${loadId}/checkin`, {}),
   checkOut: (loadId) => req('PUT', `/loads/${loadId}/checkout`, {}),

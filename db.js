@@ -136,9 +136,10 @@ if (!loadCols.includes('relay_split'))       db.prepare('ALTER TABLE loads ADD C
 if (!loadCols.includes('trailer_number'))    db.prepare('ALTER TABLE loads ADD COLUMN trailer_number TEXT').run();
 if (!loadCols.includes('checkin_time'))      db.prepare('ALTER TABLE loads ADD COLUMN checkin_time TEXT').run();
 if (!loadCols.includes('checkout_time'))     db.prepare('ALTER TABLE loads ADD COLUMN checkout_time TEXT').run();
-if (!loadCols.includes('detention_start'))   db.prepare('ALTER TABLE loads ADD COLUMN detention_start TEXT').run();
-if (!loadCols.includes('detention_end'))     db.prepare('ALTER TABLE loads ADD COLUMN detention_end TEXT').run();
-if (!loadCols.includes('detention_rate'))    db.prepare('ALTER TABLE loads ADD COLUMN detention_rate REAL DEFAULT 65').run();
+if (!loadCols.includes('detention_start'))    db.prepare('ALTER TABLE loads ADD COLUMN detention_start TEXT').run();
+if (!loadCols.includes('detention_end'))      db.prepare('ALTER TABLE loads ADD COLUMN detention_end TEXT').run();
+if (!loadCols.includes('detention_rate'))     db.prepare('ALTER TABLE loads ADD COLUMN detention_rate REAL DEFAULT 65').run();
+if (!loadCols.includes('original_driver_id')) db.prepare('ALTER TABLE loads ADD COLUMN original_driver_id INTEGER REFERENCES drivers(id)').run();
 
 // Load documents (POD, BOL, Rate Con, Other)
 db.exec(`

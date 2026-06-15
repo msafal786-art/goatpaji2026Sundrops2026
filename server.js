@@ -363,11 +363,13 @@ function loadsQuery(where = '', params = []) {
     SELECT l.*,
       d.full_name as driver_name, d.phone as driver_phone,
       rd.full_name as relay_driver_name,
+      od.full_name as original_driver_name, od.phone as original_driver_phone,
       t.tractor_number, t.trailer_number as truck_trailer,
       c.name as company_name
     FROM loads l
     LEFT JOIN drivers d ON l.driver_id = d.id
     LEFT JOIN drivers rd ON l.relay_driver_id = rd.id
+    LEFT JOIN drivers od ON l.original_driver_id = od.id
     LEFT JOIN trucks t ON l.truck_id = t.id
     LEFT JOIN companies c ON l.company_id = c.id
     ${where}
@@ -397,10 +399,12 @@ app.get('/api/loads/:id', auth, (req, res) => {
   const load = db.prepare(`
     SELECT l.*,
       d.full_name as driver_name, d.phone as driver_phone,
+      od.full_name as original_driver_name, od.phone as original_driver_phone,
       t.tractor_number, t.trailer_number as truck_trailer,
       c.name as company_name
     FROM loads l
     LEFT JOIN drivers d ON l.driver_id = d.id
+    LEFT JOIN drivers od ON l.original_driver_id = od.id
     LEFT JOIN trucks t ON l.truck_id = t.id
     LEFT JOIN companies c ON l.company_id = c.id
     WHERE l.id = ?
@@ -1020,6 +1024,46 @@ app.get('/api/active-users', auth, (req, res) => {
     ORDER BY u.last_seen_at DESC
   `).all(cutoff);
   res.json(users);
+});
+
+// ── Driver change ────────────────────────────────────────────────────────────
+app.put('/api/loads/:id/change-driver', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
+  const { driver_id } = req.body;
+  if (!driver_id) return res.status(400).json({ error: 'driver_id required' });
+
+  const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
+  if (!load) return res.status(404).json({ error: 'Not found' });
+  if (req.user.company_id && load.company_id !== req.user.company_id)
+    return res.status(403).json({ error: 'Forbidden' });
+
+  const newDriver = db.prepare('SELECT * FROM drivers WHERE id = ?').get(driver_id);
+  if (!newDriver) return res.status(404).json({ error: 'Driver not found' });
+
+  // Store original driver the first time a swap happens
+  const originalId = load.original_driver_id || load.driver_id;
+
+  // Free previous driver if different
+  if (load.driver_id && load.driver_id !== Number(driver_id)) {
+    db.prepare("UPDATE drivers SET status='available' WHERE id=?").run(load.driver_id);
+  }
+
+  db.prepare('UPDATE loads SET driver_id=?, original_driver_id=?, status=? WHERE id=?')
+    .run(driver_id, originalId || null, load.status === 'pending' ? 'assigned' : load.status, req.params.id);
+  db.prepare("UPDATE drivers SET status='on_load' WHERE id=?").run(driver_id);
+
+  const updated = db.prepare(`
+    SELECT l.*, d.full_name as driver_name, d.phone as driver_phone,
+      od.full_name as original_driver_name, od.phone as original_driver_phone,
+      t.tractor_number, c.name as company_name
+    FROM loads l
+    LEFT JOIN drivers d ON l.driver_id = d.id
+    LEFT JOIN drivers od ON l.original_driver_id = od.id
+    LEFT JOIN trucks t ON l.truck_id = t.id
+    LEFT JOIN companies c ON l.company_id = c.id
+    WHERE l.id = ?
+  `).get(req.params.id);
+
+  res.json(updated);
 });
 
 // ── Trailer number + check-in / check-out ────────────────────────────────────

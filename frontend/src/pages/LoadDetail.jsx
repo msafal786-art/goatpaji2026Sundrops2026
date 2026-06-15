@@ -30,6 +30,14 @@ export default function LoadDetail() {
   const [detForm, setDetForm] = useState({ detention_start: '', detention_end: '', detention_rate: 65 })
   const [savingDet, setSavingDet] = useState(false)
 
+  const [showChangeDriver, setShowChangeDriver] = useState(false)
+  const [allDrivers, setAllDrivers] = useState([])
+  const [driverSearch, setDriverSearch] = useState('')
+  const [selectedDriver, setSelectedDriver] = useState(null)
+  const [brokerMsg, setBrokerMsg] = useState('')
+  const [msgCopied, setMsgCopied] = useState(false)
+  const [savingDriver, setSavingDriver] = useState(false)
+
   useEffect(() => { loadData(); fetchDocs() }, [id])
   useEffect(() => {
     api.loads().then(ls => {
@@ -98,6 +106,56 @@ export default function LoadDetail() {
     if (!confirm('Remove this document?')) return
     await api.deleteDoc(docId)
     await fetchDocs()
+  }
+
+  async function openChangeDriver() {
+    const drivers = await api.drivers()
+    setAllDrivers(drivers.filter(d => d.is_active !== 0))
+    setSelectedDriver(null)
+    setDriverSearch('')
+    setBrokerMsg('')
+    setMsgCopied(false)
+    setShowChangeDriver(true)
+  }
+
+  function buildBrokerMsg(driver) {
+    const loadRef = load.broker_order || load.load_number || `#${load.id}`
+    const broker = load.broker_contact || load.broker_name || 'Team'
+    const origName = load.driver_name || 'previous driver'
+    return `Hi ${broker},
+
+Please be advised that the driver assigned to Load ${loadRef} has been changed.
+
+Previous Driver: ${origName}
+New Driver: ${driver.full_name}
+New Driver Phone: ${driver.phone || 'N/A'}
+
+Please update your tracking portal and carrier contact with the new driver information. The load details and schedule remain unchanged.
+
+Thank you,
+${load.company_name || 'Dispatch'}`
+  }
+
+  function pickDriver(d) {
+    setSelectedDriver(d)
+    setBrokerMsg(buildBrokerMsg(d))
+    setMsgCopied(false)
+  }
+
+  async function handleCopyBrokerMsg() {
+    await navigator.clipboard.writeText(brokerMsg)
+    setMsgCopied(true)
+    setTimeout(() => setMsgCopied(false), 2000)
+  }
+
+  async function handleSaveDriverChange() {
+    if (!selectedDriver) return
+    setSavingDriver(true)
+    try {
+      const updated = await api.changeDriver(id, selectedDriver.id)
+      setLoad(updated)
+      setShowChangeDriver(false)
+    } finally { setSavingDriver(false) }
   }
 
   async function handleSaveDetention() {
@@ -246,12 +304,31 @@ export default function LoadDetail() {
           <Field label="BOL #" value={load.bol} />
         </Card>
         <Card title="Assignment">
-          <Field label="Driver" value={load.driver_name || 'Unassigned'} bold />
-          <Field label="Phone" value={load.driver_phone} />
+          {/* Current driver — large */}
+          <div style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 11, color: T.text3, marginBottom: 2 }}>Driver</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: T.text }}>{load.driver_name || 'Unassigned'}</div>
+            {load.driver_phone && <div style={{ fontSize: 12, color: T.text2 }}>{load.driver_phone}</div>}
+          </div>
+          {/* Original driver — small chip, shown only after a swap */}
+          {load.original_driver_id && load.original_driver_id !== load.driver_id && (
+            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: T.bg2, border: `1px solid ${T.sep}`, borderRadius: 8, padding: '4px 10px', marginBottom: 10 }}>
+              <span style={{ fontSize: 10, color: T.text3, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.4 }}>Loaded by</span>
+              <span style={{ fontSize: 11, fontWeight: 600, color: T.text2 }}>{load.original_driver_name}</span>
+              {load.original_driver_phone && <span style={{ fontSize: 10, color: T.text3 }}>{load.original_driver_phone}</span>}
+            </div>
+          )}
           <Field label="Tractor #" value={load.tractor_number} />
           <Field label="Trailer #" value={load.trailer_number || load.truck_trailer} />
           {load.checkin_time && <Field label="Check-In" value={fmtTime(load.checkin_time)} />}
           {load.checkout_time && <Field label="Check-Out" value={fmtTime(load.checkout_time)} />}
+          {canEdit && (
+            <button onClick={openChangeDriver} style={{
+              marginTop: 10, padding: '6px 14px', background: T.orange + '18',
+              color: T.orange, border: `1px solid ${T.orange}40`, borderRadius: 8,
+              cursor: 'pointer', fontSize: 12, fontWeight: 600,
+            }}>Change Driver</button>
+          )}
         </Card>
       </div>
 
@@ -404,6 +481,110 @@ export default function LoadDetail() {
           </div>
         )
       })()}
+
+      {/* Change Driver modal */}
+      {showChangeDriver && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}
+          onClick={() => setShowChangeDriver(false)}>
+          <div style={{ background: T.bg1, borderRadius: 20, padding: 24, width: '100%', maxWidth: 560, maxHeight: '92vh', overflowY: 'auto', border: `1px solid ${T.sep}` }}
+            onClick={e => e.stopPropagation()}>
+
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+              <div>
+                <h2 style={{ fontSize: 17, fontWeight: 700, color: T.text, margin: 0 }}>Change Driver</h2>
+                <div style={{ fontSize: 12, color: T.text3, marginTop: 3 }}>
+                  Load {load.broker_order || load.load_number || `#${load.id}`} · currently {load.driver_name || 'unassigned'}
+                </div>
+              </div>
+              <button onClick={() => setShowChangeDriver(false)} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: T.text3 }}>×</button>
+            </div>
+
+            {/* Driver search */}
+            <input
+              value={driverSearch}
+              onChange={e => setDriverSearch(e.target.value)}
+              placeholder="Search driver by name…"
+              autoFocus
+              style={{
+                width: '100%', padding: '10px 13px', background: T.bg2, border: `1px solid ${T.sep}`,
+                borderRadius: 10, fontSize: 13, color: T.text, outline: 'none', boxSizing: 'border-box', marginBottom: 12,
+              }}
+            />
+
+            {/* Driver list */}
+            <div style={{ maxHeight: 200, overflowY: 'auto', marginBottom: 18, borderRadius: 10, border: `1px solid ${T.sep}` }}>
+              {allDrivers
+                .filter(d => d.id !== load.driver_id && (!driverSearch || d.full_name.toLowerCase().includes(driverSearch.toLowerCase())))
+                .map((d, i, arr) => (
+                  <div key={d.id} onClick={() => pickDriver(d)} style={{
+                    padding: '11px 14px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    background: selectedDriver?.id === d.id ? T.orange + '18' : 'transparent',
+                    borderBottom: i < arr.length - 1 ? `1px solid ${T.sep}` : 'none',
+                    borderLeft: selectedDriver?.id === d.id ? `3px solid ${T.orange}` : '3px solid transparent',
+                  }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{d.full_name}</div>
+                      <div style={{ fontSize: 11, color: T.text3, marginTop: 1 }}>{d.phone || 'No phone'} · {d.company_name || 'Independent'}</div>
+                    </div>
+                    <span style={{
+                      fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 20,
+                      background: d.status === 'available' ? T.green + '20' : T.orange + '20',
+                      color: d.status === 'available' ? T.green : T.orange,
+                    }}>
+                      {d.status === 'available' ? 'Available' : d.status === 'on_load' ? 'On Load' : d.status}
+                    </span>
+                  </div>
+                ))
+              }
+              {allDrivers.filter(d => d.id !== load.driver_id && (!driverSearch || d.full_name.toLowerCase().includes(driverSearch.toLowerCase()))).length === 0 && (
+                <div style={{ padding: 16, color: T.text3, fontSize: 13, textAlign: 'center' }}>No drivers found</div>
+              )}
+            </div>
+
+            {/* Broker message — shown once a driver is picked */}
+            {selectedDriver && (
+              <div style={{ marginBottom: 18 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                    Broker Change Notice
+                  </div>
+                  <button onClick={handleCopyBrokerMsg} style={{
+                    padding: '4px 12px', background: msgCopied ? T.green + '20' : T.bg2,
+                    color: msgCopied ? T.green : T.text2, border: `1px solid ${msgCopied ? T.green + '40' : T.sep}`,
+                    borderRadius: 7, cursor: 'pointer', fontSize: 11, fontWeight: 700,
+                  }}>{msgCopied ? '✓ Copied' : 'Copy'}</button>
+                </div>
+                <textarea
+                  value={brokerMsg}
+                  onChange={e => setBrokerMsg(e.target.value)}
+                  rows={10}
+                  style={{
+                    width: '100%', padding: '12px 14px', background: T.bg2, border: `1px solid ${T.sep}`,
+                    borderRadius: 10, fontSize: 12, color: T.text, lineHeight: 1.7,
+                    fontFamily: 'inherit', resize: 'vertical', outline: 'none', boxSizing: 'border-box',
+                  }}
+                />
+                <div style={{ fontSize: 11, color: T.text3, marginTop: 6 }}>
+                  Edit the message above if needed, copy it, then save the driver change.
+                </div>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+              <button onClick={() => setShowChangeDriver(false)} style={{
+                padding: '10px 18px', background: T.bg2, color: T.text2, border: `1px solid ${T.sep}`,
+                borderRadius: 10, cursor: 'pointer', fontWeight: 600, fontSize: 13,
+              }}>Cancel</button>
+              <button onClick={handleSaveDriverChange} disabled={!selectedDriver || savingDriver} style={{
+                padding: '10px 22px', background: selectedDriver ? T.orange : T.bg2,
+                color: selectedDriver ? '#fff' : T.text3, border: 'none',
+                borderRadius: 10, cursor: selectedDriver ? 'pointer' : 'default',
+                fontWeight: 700, fontSize: 13, opacity: savingDriver ? 0.7 : 1,
+              }}>{savingDriver ? 'Saving…' : `Assign ${selectedDriver ? selectedDriver.full_name.split(' ')[0] : 'Driver'}`}</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Dispatch message modal */}
       {showMsg && (
