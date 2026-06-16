@@ -165,15 +165,15 @@ function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer, user, compact }
         onMouseEnter={e => e.currentTarget.style.background = T.bg2}
         onMouseLeave={e => e.currentTarget.style.background = rowBg}
       >
-        {/* Load # — broker order big, our # small */}
+        {/* Load # — our number big, broker order small */}
         <td style={{ padding: pad, whiteSpace: 'nowrap', borderLeft: `3px solid ${accentColor}` }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: late ? T.red : T.text, letterSpacing: -0.2 }}>
             {late && <span style={{ color: T.red, marginRight: 3 }}>!</span>}
-            {load.broker_order || load.load_number || `#${load.id}`}
+            {load.load_number || `#${load.id}`}
           </div>
           {!compact && (
             <div style={{ fontSize: 10, color: T.text3, marginTop: 2, maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {load.load_number && load.broker_order ? `#${load.load_number} · ` : ''}{load.broker_name || ''}
+              {load.broker_order ? `Order: ${load.broker_order}` : ''}{load.broker_name ? (load.broker_order ? ' · ' : '') + load.broker_name : ''}
             </div>
           )}
         </td>
@@ -546,13 +546,6 @@ function alertBtn(color) {
   }
 }
 
-const SORT_OPTIONS = [
-  { key: 'delivery_asc',  label: '↑ Delivery' },
-  { key: 'delivery_desc', label: '↓ Delivery' },
-  { key: 'pickup_asc',   label: '↑ Pickup' },
-  { key: 'pickup_desc',  label: '↓ Pickup' },
-]
-
 const STATUS_TABS = [
   { key: 'active',     label: 'Active' },
   { key: 'late',       label: 'Late' },
@@ -583,7 +576,8 @@ export default function Loads() {
   const [companies, setCompanies] = useState([])
   const [companyFilter, setCompanyFilter] = useState('')
   const [activeTab, setActiveTab] = useState('active')
-  const [sort, setSort] = useState('delivery_asc')
+  const [sortField, setSortField] = useState('pickup')
+  const [sortDir, setSortDir] = useState('asc')
   const [showForm, setShowForm] = useState(false)
   const [editLoad, setEditLoad] = useState(null)
   const [drawerLoad, setDrawerLoad] = useState(null)
@@ -617,11 +611,23 @@ export default function Loads() {
     return l.status === activeTab
   })
 
+  function toggleSort(field) {
+    if (sortField === field) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    else { setSortField(field); setSortDir('asc') }
+  }
+
   const sorted = [...filtered].sort((a, b) => {
-    const [field, dir] = sort.split('_')
-    const da = new Date((field === 'delivery' ? a.delivery_date : a.pickup_date) || '9999')
-    const db2 = new Date((field === 'delivery' ? b.delivery_date : b.pickup_date) || '9999')
-    return dir === 'asc' ? da - db2 : db2 - da
+    let va, vb
+    if (sortField === 'pickup')   { va = a.pickup_date || '9999';   vb = b.pickup_date || '9999' }
+    else if (sortField === 'delivery') { va = a.delivery_date || '9999'; vb = b.delivery_date || '9999' }
+    else if (sortField === 'load')     { va = a.load_number || a.broker_order || ''; vb = b.load_number || b.broker_order || '' }
+    else if (sortField === 'driver')   { va = (a.driver_name || '').toLowerCase(); vb = (b.driver_name || '').toLowerCase() }
+    else if (sortField === 'origin')   { va = a.pickup_city || ''; vb = b.pickup_city || '' }
+    else if (sortField === 'dest')     { va = a.delivery_city || ''; vb = b.delivery_city || '' }
+    else if (sortField === 'status')   { va = a.status || ''; vb = b.status || '' }
+    else { va = a.pickup_date || '9999'; vb = b.pickup_date || '9999' }
+    const cmp = va < vb ? -1 : va > vb ? 1 : 0
+    return sortDir === 'asc' ? cmp : -cmp
   })
 
   const countTab = (key) => {
@@ -691,19 +697,6 @@ export default function Loads() {
         </div>
       )}
 
-      {/* Sort + controls */}
-      <div style={{ display: 'flex', gap: 10, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-        <div style={{ display: 'flex', gap: 2, background: T.bg2, borderRadius: 8, padding: 3 }}>
-          {SORT_OPTIONS.map(o => (
-            <button key={o.key} onClick={() => setSort(o.key)} style={{
-              padding: '5px 10px', borderRadius: 6, border: 'none', fontSize: 11, fontWeight: 600, cursor: 'pointer',
-              background: sort === o.key ? T.bg3 : 'transparent',
-              color: sort === o.key ? T.text : T.text2,
-            }}>{o.label}</button>
-          ))}
-        </div>
-      </div>
-
       {/* Status tabs */}
       <div style={{ display: 'flex', gap: 3, marginBottom: 14, overflowX: 'auto', paddingBottom: 2 }}>
         {STATUS_TABS.map(t => {
@@ -743,15 +736,31 @@ export default function Loads() {
             <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 780 }}>
               <thead>
                 <tr style={{ background: T.bg2, borderBottom: `2px solid ${T.sep}` }}>
-                  {['Load #', 'Driver / Carrier', 'Ship Date', 'Del Date', 'Origin', 'Destination', 'Status', ''].map((h, i) => (
-                    <th key={i} style={{
-                      padding: i === 0 ? '8px 10px 8px 14px' : '8px 10px',
-                      fontSize: 10, fontWeight: 700, color: T.text3,
-                      textTransform: 'uppercase', letterSpacing: 0.7,
-                      textAlign: 'left', whiteSpace: 'nowrap',
-                      borderLeft: i === 0 ? '3px solid transparent' : undefined,
-                    }}>{h}</th>
-                  ))}
+                  {[
+                    { label: 'Load #',          field: 'load',     first: true },
+                    { label: 'Driver / Carrier', field: 'driver' },
+                    { label: 'Ship Date',        field: 'pickup' },
+                    { label: 'Del Date',         field: 'delivery' },
+                    { label: 'Origin',           field: 'origin' },
+                    { label: 'Destination',      field: 'dest' },
+                    { label: 'Status',           field: 'status' },
+                    { label: '',                 field: null },
+                  ].map(({ label, field, first }, i) => {
+                    const active = field && sortField === field
+                    return (
+                      <th key={i} onClick={field ? () => toggleSort(field) : undefined} style={{
+                        padding: first ? '8px 10px 8px 14px' : '8px 10px',
+                        fontSize: 10, fontWeight: 700, color: active ? T.text : T.text3,
+                        textTransform: 'uppercase', letterSpacing: 0.7,
+                        textAlign: 'left', whiteSpace: 'nowrap',
+                        borderLeft: first ? '3px solid transparent' : undefined,
+                        cursor: field ? 'pointer' : 'default',
+                        userSelect: 'none',
+                      }}>
+                        {label}{active ? (sortDir === 'asc' ? ' ↑' : ' ↓') : ''}
+                      </th>
+                    )
+                  })}
                 </tr>
               </thead>
               <tbody>
