@@ -103,14 +103,10 @@ function Sidebar({ user, onLogout }) {
     }}>
       <div style={{ padding: '20px 16px 16px', borderBottom: `1px solid ${T.sep}` }}>
         <div style={{ fontSize: 13, fontWeight: 800, color: T.text, letterSpacing: 0.5, textTransform: 'uppercase', lineHeight: 1.3 }}>
-          {user.role === 'company_owner' && user.company_name
-            ? user.company_name
-            : user.role === 'dispatcher' && user.company_name
-              ? user.company_name
-              : 'Dispatch Portal'}
+          {user.company_name || (isAdmin ? 'Goat Inc' : 'Dispatch Portal')}
         </div>
         <div style={{ fontSize: 11, color: T.text3, marginTop: 2 }}>
-          {isAdmin ? 'Admin · All Companies' : 'Freight Management'}
+          {isAdmin ? (user.full_name || 'Safal Madaan') : 'Freight Management'}
         </div>
       </div>
       <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto' }}>

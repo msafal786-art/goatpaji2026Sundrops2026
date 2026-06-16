@@ -1,9 +1,11 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, lazy, Suspense } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api.js'
 import { useAuth } from '../AuthContext.jsx'
 import { T, STATUS } from '../theme.js'
 import { useIsMobile } from '../hooks/useIsMobile.js'
+
+const FleetMap = lazy(() => import('../components/FleetMap.jsx'))
 
 function fmt$(n) { return '$' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 }) }
 function fmtMi(n) { return Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' mi' }
@@ -12,7 +14,7 @@ function pct(a, b) { if (!b) return null; return Math.round(((a - b) / b) * 100)
 function isLate(load) {
   const now = new Date()
   const pickupPassed = load.pickup_date && new Date(load.pickup_date + 'T06:00') < now
-  const notPickedUp = ['pending', 'assigned'].includes(load.status)
+  const notPickedUp = ['open','covered','pending','assigned'].includes(load.status)
   const delivPassed = load.delivery_date && new Date(load.delivery_date + 'T00:00') < now
   const notDelivered = !['delivered', 'completed'].includes(load.status)
   return (pickupPassed && notPickedUp) || (delivPassed && notDelivered)
@@ -160,14 +162,14 @@ export default function Dashboard() {
     return () => { clearInterval(poll); clearInterval(clock) }
   }, [])
 
-  const activeLoads = loads.filter(l => ['pending','assigned','dispatched','in_transit'].includes(l.status))
+  const activeLoads = loads.filter(l => ['open','covered','dispatched','loading','on_route','unloading','in_yard'].includes(l.status))
   const lateLoads   = loads.filter(isLate)
-  const inTransit   = loads.filter(l => l.status === 'in_transit')
+  const inTransit   = loads.filter(l => l.status === 'on_route')
   const todayStr    = now.toISOString().slice(0, 10)
 
   const urgentUnassigned = loads.filter(l => {
     if (!l.pickup_date || l.driver_id) return false
-    if (['dispatched','in_transit','delivered','completed'].includes(l.status)) return false
+    if (['dispatched','loading','on_route','unloading','in_yard','delivered','completed'].includes(l.status)) return false
     const hrs = (new Date(l.pickup_date + 'T' + (l.pickup_time?.match(/(\d+:\d+)/)?.[1] || '06:00')) - now) / 36e5
     return hrs >= 0 && hrs <= 24
   })
@@ -240,6 +242,16 @@ export default function Dashboard() {
             <KPI label="Late" value={lateLoads.length} color={T.red} sub="need attention" onClick={() => navigate('/loads')} />
           )}
         </div>
+      )}
+
+      {/* Fleet Map */}
+      {!mobile && loads.filter(l => ['dispatched','loading','on_route','unloading','in_yard'].includes(l.status)).length > 0 && (
+        <Card style={{ marginBottom: 14, padding: '14px 16px' }}>
+          <SH title={`Fleet Map — ${loads.filter(l => ['dispatched','loading','on_route','unloading','in_yard'].includes(l.status)).length} active trucks`} action="Full board →" to="/loads" />
+          <Suspense fallback={<div style={{ height: 400, display: 'flex', alignItems: 'center', justifyContent: 'center', color: T.text3, fontSize: 13 }}>Loading map…</div>}>
+            <FleetMap loads={loads} />
+          </Suspense>
+        </Card>
       )}
 
       {/* To-Do strip */}
