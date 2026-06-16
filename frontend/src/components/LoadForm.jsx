@@ -119,6 +119,27 @@ export default function LoadForm({ load, onClose, onSave }) {
         </div>
 
         <form onSubmit={handleSubmit}>
+          <Section title="Assign Driver & Truck">
+            <Row>
+              <Field label="Driver">
+                <select style={inputS} value={form.driver_id} onChange={e => set('driver_id', e.target.value)}>
+                  <option value="">Unassigned</option>
+                  {drivers.map(d => (
+                    <option key={d.id} value={d.id}>{d.full_name} — {d.company_name}{d.status !== 'available' ? ` (${d.status})` : ''}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Truck / Trailer">
+                <select style={inputS} value={form.truck_id} onChange={e => set('truck_id', e.target.value)}>
+                  <option value="">None</option>
+                  {trucks.map(t => (
+                    <option key={t.id} value={t.id}>T:{t.tractor_number} / Tr:{t.trailer_number} — {t.company_name}{t.status !== 'available' ? ` (${t.status})` : ''}</option>
+                  ))}
+                </select>
+              </Field>
+            </Row>
+          </Section>
+
           {user.role === 'dispatcher' && (
             <Section title="Company">
               <Row>
@@ -191,27 +212,6 @@ export default function LoadForm({ load, onClose, onSave }) {
             </Row>
             <Row>
               <Field label="References (PO#, AO#, etc)"><input style={inputS} value={form.delivery_refs} onChange={e => set('delivery_refs', e.target.value)} /></Field>
-            </Row>
-          </Section>
-
-          <Section title="Assign Driver & Truck">
-            <Row>
-              <Field label="Driver">
-                <select style={inputS} value={form.driver_id} onChange={e => set('driver_id', e.target.value)}>
-                  <option value="">Unassigned</option>
-                  {drivers.map(d => (
-                    <option key={d.id} value={d.id}>{d.full_name} — {d.company_name}{d.status !== 'available' ? ` (${d.status})` : ''}</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Truck / Trailer">
-                <select style={inputS} value={form.truck_id} onChange={e => set('truck_id', e.target.value)}>
-                  <option value="">None</option>
-                  {trucks.map(t => (
-                    <option key={t.id} value={t.id}>T:{t.tractor_number} / Tr:{t.trailer_number} — {t.company_name}{t.status !== 'available' ? ` (${t.status})` : ''}</option>
-                  ))}
-                </select>
-              </Field>
             </Row>
           </Section>
 

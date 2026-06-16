@@ -6,11 +6,33 @@ import { T, STATUS, carrierColor, ACTIVE_CARRIERS } from '../theme.js'
 import { useIsMobile } from '../hooks/useIsMobile.js'
 import LoadForm from '../components/LoadForm.jsx'
 
+// Parse a date+time as Eastern Time and return a UTC-based Date for comparison
+function parseET(dateStr, h24 = 0, min = 0) {
+  if (!dateStr) return null
+  const [y, mo, d] = dateStr.split('-').map(Number)
+  const month0 = mo - 1
+  // Simple DST rule: EDT (UTC-4) March–October, EST (UTC-5) otherwise
+  const utcOffset = (month0 >= 2 && month0 <= 9) ? 4 : 5
+  return new Date(Date.UTC(y, month0, d, h24 + utcOffset, min))
+}
+
+// Parse "8:00 AM" / "14:30" style strings into [hours24, minutes]
+function parseHM(timeStr) {
+  if (!timeStr) return [0, 0]
+  const m = timeStr.trim().match(/(\d+):(\d+)\s*(AM|PM)?/i)
+  if (!m) return [0, 0]
+  let h = parseInt(m[1]), min = parseInt(m[2])
+  if (m[3]?.toUpperCase() === 'PM' && h !== 12) h += 12
+  if (m[3]?.toUpperCase() === 'AM' && h === 12) h = 0
+  return [h, min]
+}
+
 function isLate(load) {
   const now = new Date()
-  const pickupPassed = load.pickup_date && new Date(load.pickup_date + 'T' + (load.pickup_time?.replace(' AM','').replace(' PM','') || '00:00')) < now
+  const [ph, pm] = parseHM(load.pickup_time)
+  const pickupPassed = load.pickup_date && parseET(load.pickup_date, ph, pm) < now
   const notPickedUp = ['open','covered','pending','assigned'].includes(load.status)
-  const deliveryPassed = load.delivery_date && new Date(load.delivery_date + 'T00:00') < now
+  const deliveryPassed = load.delivery_date && parseET(load.delivery_date) < now
   const notDelivered = !['delivered','completed'].includes(load.status)
   return (pickupPassed && notPickedUp) || (deliveryPassed && notDelivered)
 }
@@ -25,10 +47,10 @@ function urgencyColor(load) {
   if (['delivered'].includes(load.status)) return T.teal
   if (['completed'].includes(load.status)) return T.text3
 
-  // Open/covered: check proximity to pickup
+  // Open/covered: check proximity to pickup in ET
   if (load.pickup_date) {
     const now = new Date()
-    const pickup = new Date(load.pickup_date + 'T06:00')
+    const pickup = parseET(load.pickup_date, 6, 0) // 6 AM ET
     const hoursUntil = (pickup - now) / 36e5
     if (!load.driver_id && hoursUntil <= 24 && hoursUntil >= 0) return T.red
     if (!load.driver_id) return 'rgba(235,235,245,0.22)'
@@ -39,18 +61,8 @@ function urgencyColor(load) {
 
 function pickupAlertNeeded(load) {
   if (!load.pickup_date) return false
-  const now = new Date()
-  let pickupDT = new Date(load.pickup_date + 'T00:00')
-  if (load.pickup_time) {
-    const m = load.pickup_time.trim().match(/(\d+):(\d+)\s*(AM|PM)?/i)
-    if (m) {
-      let h = parseInt(m[1]), min = parseInt(m[2])
-      if (m[3]?.toUpperCase() === 'PM' && h !== 12) h += 12
-      if (m[3]?.toUpperCase() === 'AM' && h === 12) h = 0
-      pickupDT = new Date(load.pickup_date + 'T' + String(h).padStart(2,'0') + ':' + String(min).padStart(2,'0'))
-    }
-  }
-  return pickupDT < now && ['open','covered','dispatched','pending','assigned'].includes(load.status)
+  const [ph, pm] = parseHM(load.pickup_time)
+  return parseET(load.pickup_date, ph, pm) < new Date() && ['open','covered','dispatched','pending','assigned'].includes(load.status)
 }
 
 function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer, user }) {
