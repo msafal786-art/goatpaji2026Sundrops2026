@@ -16,6 +16,7 @@ const fs = require('fs');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const Anthropic = require('@anthropic-ai/sdk');
+const drive = require('./drive.js');
 
 // If running on Railway with a volume, seed the DB from the bundled file on first deploy
 const VOL_DB = process.env.DB_PATH;
@@ -616,41 +617,28 @@ app.get('/api/loads/:id/dispatch-message', auth, (req, res) => {
   const lines = []
   lines.push(`Hello ${load.driver_name || 'Driver'},`)
   lines.push('')
-  lines.push('━━━ LOAD DETAILS ━━━')
-  if (load.load_number)   lines.push(`Load #:       ${load.load_number}`)
-  if (load.broker_order)  lines.push(`Order #:      ${load.broker_order}`)
-  if (load.broker_name)   lines.push(`Broker:       ${load.broker_name}`)
-  if (load.broker_contact || load.broker_email) {
-    const contact = [load.broker_contact, load.broker_email].filter(Boolean).join(' | ')
-    lines.push(`Contact:      ${contact}`)
-  }
-  if (load.commodity)     lines.push(`Commodity:    ${load.commodity}${load.weight ? ' · ' + load.weight : ''}`)
-  if (load.trailer_type)  lines.push(`Equipment:    ${load.trailer_type}`)
-  if (load.miles)         lines.push(`Miles:        ${load.miles}`)
-  if (load.bol)           lines.push(`BOL #:        ${load.bol}`)
-  if (load.trailer_number) lines.push(`Trailer #:   ${load.trailer_number}`)
+  lines.push(`Load Number: ${load.load_number || load.id}`)
 
+  // Pickup block
   lines.push('')
-  lines.push('━━━ PICKUP ━━━')
-  if (load.pickup_name)   lines.push(load.pickup_name)
+  lines.push(`Pick: ${load.pickup_name || ''}`)
   const puAddr = [load.pickup_address, load.pickup_city, load.pickup_state, load.pickup_zip].filter(Boolean).join(', ')
-  if (puAddr)             lines.push(puAddr)
-  if (load.pickup_date)   lines.push(`Date:  ${load.pickup_date}${load.pickup_time ? ' @ ' + load.pickup_time : ''}`)
-  if (load.pickup_phone)  lines.push(`Phone: ${load.pickup_phone}`)
-  if (load.pickup_refs)   lines.push(`Refs:  ${load.pickup_refs}`)
+  if (puAddr) lines.push(`At: ${puAddr}`)
+  if (load.pickup_date) lines.push(`On: ${load.pickup_date}${load.pickup_time ? ' @ ' + load.pickup_time : ''}`)
+  lines.push(`PO: ${load.pickup_refs || ''}`)
+  lines.push(`Call: ${load.pickup_phone || ''}`)
 
+  // Delivery block
   lines.push('')
-  lines.push('━━━ DELIVERY ━━━')
-  if (load.delivery_name)  lines.push(load.delivery_name)
+  lines.push(`Drop: ${load.delivery_name || ''}`)
   const delAddr = [load.delivery_address, load.delivery_city, load.delivery_state, load.delivery_zip].filter(Boolean).join(', ')
-  if (delAddr)             lines.push(delAddr)
-  if (load.delivery_date)  lines.push(`Date:  ${load.delivery_date}${load.delivery_time ? ' @ ' + load.delivery_time : ''}`)
-  if (load.delivery_phone) lines.push(`Phone: ${load.delivery_phone}`)
-  if (load.delivery_refs)  lines.push(`Refs:  ${load.delivery_refs}`)
+  if (delAddr) lines.push(`At: ${delAddr}`)
+  if (load.delivery_date) lines.push(`On: ${load.delivery_date}${load.delivery_time ? ' @ ' + load.delivery_time : ''}`)
+  lines.push(`PO: ${load.delivery_refs || ''}`)
+  lines.push(`Call: ${load.delivery_phone || ''}`)
 
   if (load.special_instructions) {
     lines.push('')
-    lines.push('━━━ SPECIAL INSTRUCTIONS ━━━')
     lines.push(load.special_instructions)
   }
 
@@ -1273,7 +1261,7 @@ app.get('/api/loads/:id/docs', auth, (req, res) => {
   res.json(db.prepare('SELECT * FROM load_docs WHERE load_id = ? ORDER BY uploaded_at DESC').all(req.params.id));
 });
 
-app.post('/api/loads/:id/docs', auth, upload.single('file'), (req, res) => {
+app.post('/api/loads/:id/docs', auth, upload.single('file'), async (req, res) => {
   if (req._fileTypeError) return res.status(400).json({ error: req._fileTypeError });
   if (!req.file) return res.status(400).json({ error: 'No file' });
   const load = db.prepare('SELECT company_id, driver_id FROM loads WHERE id = ?').get(req.params.id);
@@ -1285,12 +1273,14 @@ app.post('/api/loads/:id/docs', auth, upload.single('file'), (req, res) => {
     return res.status(403).json({ error: 'Forbidden' });
   }
   const { doc_type } = req.body;
-  const r = db.prepare('INSERT INTO load_docs (load_id, doc_type, original_name, filename, uploaded_by) VALUES (?,?,?,?,?)')
-    .run(req.params.id, doc_type || 'Other', req.file.originalname, req.file.filename, req.user.id);
+  const localPath = path.join(UPLOADS_DIR, req.file.filename);
+  const driveId = await drive.upload(localPath, req.file.originalname, req.file.mimetype);
+  const r = db.prepare('INSERT INTO load_docs (load_id, doc_type, original_name, filename, uploaded_by, drive_file_id) VALUES (?,?,?,?,?,?)')
+    .run(req.params.id, doc_type || 'Other', req.file.originalname, req.file.filename, req.user.id, driveId || null);
   res.json(db.prepare('SELECT * FROM load_docs WHERE id = ?').get(r.lastInsertRowid));
 });
 
-app.get('/api/docs/:id/download', auth, (req, res) => {
+app.get('/api/docs/:id/download', auth, async (req, res) => {
   const doc = db.prepare(`
     SELECT ld.*, l.company_id as load_company_id, l.driver_id as load_driver_id
     FROM load_docs ld JOIN loads l ON ld.load_id = l.id WHERE ld.id = ?
@@ -1302,12 +1292,18 @@ app.get('/api/docs/:id/download', auth, (req, res) => {
   } else if (req.user.company_id && doc.load_company_id !== req.user.company_id) {
     return res.status(403).json({ error: 'Forbidden' });
   }
+  res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(doc.original_name)}"`);
+  if (doc.drive_file_id) {
+    const ok = await drive.download(doc.drive_file_id, res);
+    if (ok) return res.end();
+    // Drive failed — fall through to disk
+  }
   const filePath = path.join(UPLOADS_DIR, doc.filename);
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found on disk' });
   res.download(filePath, doc.original_name);
 });
 
-app.delete('/api/docs/:id', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
+app.delete('/api/docs/:id', auth, requireRole('dispatcher', 'company_owner'), async (req, res) => {
   const doc = db.prepare(`
     SELECT ld.*, l.company_id as load_company_id
     FROM load_docs ld JOIN loads l ON ld.load_id = l.id WHERE ld.id = ?
@@ -1315,7 +1311,8 @@ app.delete('/api/docs/:id', auth, requireRole('dispatcher', 'company_owner'), (r
   if (!doc) return res.status(404).json({ error: 'Not found' });
   if (req.user.company_id && doc.load_company_id !== req.user.company_id)
     return res.status(403).json({ error: 'Forbidden' });
-  try { fs.unlinkSync(path.join(UPLOADS_DIR, doc.filename)); } catch {}   // fixed: was __dirname/uploads
+  if (doc.drive_file_id) await drive.remove(doc.drive_file_id);
+  try { fs.unlinkSync(path.join(UPLOADS_DIR, doc.filename)); } catch {}
   db.prepare('DELETE FROM load_docs WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
@@ -1329,7 +1326,7 @@ app.get('/api/trucks/:id/docs', auth, (req, res) => {
   res.json(db.prepare('SELECT * FROM truck_docs WHERE truck_id = ? ORDER BY uploaded_at DESC').all(req.params.id));
 });
 
-app.post('/api/trucks/:id/docs', auth, requireRole('dispatcher', 'company_owner'), upload.single('file'), (req, res) => {
+app.post('/api/trucks/:id/docs', auth, requireRole('dispatcher', 'company_owner'), upload.single('file'), async (req, res) => {
   if (req._fileTypeError) return res.status(400).json({ error: req._fileTypeError });
   if (!req.file) return res.status(400).json({ error: 'No file' });
   const truck = db.prepare('SELECT * FROM trucks WHERE id = ?').get(req.params.id);
@@ -1337,12 +1334,14 @@ app.post('/api/trucks/:id/docs', auth, requireRole('dispatcher', 'company_owner'
   if (req.user.role === 'company_owner' && truck.company_id !== req.user.company_id)
     return res.status(403).json({ error: 'Forbidden' });
   const { doc_type } = req.body;
-  const r = db.prepare('INSERT INTO truck_docs (truck_id, doc_type, original_name, filename, uploaded_by) VALUES (?,?,?,?,?)')
-    .run(req.params.id, doc_type || 'Other', req.file.originalname, req.file.filename, req.user.id);
+  const localPath = path.join(UPLOADS_DIR, req.file.filename);
+  const driveId = await drive.upload(localPath, req.file.originalname, req.file.mimetype);
+  const r = db.prepare('INSERT INTO truck_docs (truck_id, doc_type, original_name, filename, uploaded_by, drive_file_id) VALUES (?,?,?,?,?,?)')
+    .run(req.params.id, doc_type || 'Other', req.file.originalname, req.file.filename, req.user.id, driveId || null);
   res.json(db.prepare('SELECT * FROM truck_docs WHERE id = ?').get(r.lastInsertRowid));
 });
 
-app.get('/api/truck-docs/:id/download', auth, (req, res) => {
+app.get('/api/truck-docs/:id/download', auth, async (req, res) => {
   const doc = db.prepare(`
     SELECT td.*, t.company_id as truck_company_id
     FROM truck_docs td JOIN trucks t ON td.truck_id = t.id WHERE td.id = ?
@@ -1350,12 +1349,17 @@ app.get('/api/truck-docs/:id/download', auth, (req, res) => {
   if (!doc) return res.status(404).json({ error: 'Not found' });
   if (req.user.company_id && doc.truck_company_id !== req.user.company_id)
     return res.status(403).json({ error: 'Forbidden' });
+  res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(doc.original_name)}"`);
+  if (doc.drive_file_id) {
+    const ok = await drive.download(doc.drive_file_id, res);
+    if (ok) return res.end();
+  }
   const filePath = path.join(UPLOADS_DIR, doc.filename);
   if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found on disk' });
   res.download(filePath, doc.original_name);
 });
 
-app.delete('/api/truck-docs/:id', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
+app.delete('/api/truck-docs/:id', auth, requireRole('dispatcher', 'company_owner'), async (req, res) => {
   const doc = db.prepare(`
     SELECT td.*, t.company_id as truck_company_id
     FROM truck_docs td JOIN trucks t ON td.truck_id = t.id WHERE td.id = ?
@@ -1363,6 +1367,7 @@ app.delete('/api/truck-docs/:id', auth, requireRole('dispatcher', 'company_owner
   if (!doc) return res.status(404).json({ error: 'Not found' });
   if (req.user.company_id && doc.truck_company_id !== req.user.company_id)
     return res.status(403).json({ error: 'Forbidden' });
+  if (doc.drive_file_id) await drive.remove(doc.drive_file_id);
   try { fs.unlinkSync(path.join(UPLOADS_DIR, doc.filename)); } catch {}
   db.prepare('DELETE FROM truck_docs WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
