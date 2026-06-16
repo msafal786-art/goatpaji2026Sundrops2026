@@ -613,26 +613,48 @@ app.get('/api/loads/:id/dispatch-message', auth, (req, res) => {
   const load = db.prepare('SELECT l.*, d.full_name as driver_name FROM loads l LEFT JOIN drivers d ON l.driver_id = d.id WHERE l.id = ?').get(req.params.id);
   if (!load) return res.status(404).json({ error: 'Not found' });
 
-  const pickupRefs = load.pickup_refs || '';
-  const deliveryRefs = load.delivery_refs || '';
+  const lines = []
+  lines.push(`Hello ${load.driver_name || 'Driver'},`)
+  lines.push('')
+  lines.push('━━━ LOAD DETAILS ━━━')
+  if (load.load_number)   lines.push(`Load #:       ${load.load_number}`)
+  if (load.broker_order)  lines.push(`Order #:      ${load.broker_order}`)
+  if (load.broker_name)   lines.push(`Broker:       ${load.broker_name}`)
+  if (load.broker_contact || load.broker_email) {
+    const contact = [load.broker_contact, load.broker_email].filter(Boolean).join(' | ')
+    lines.push(`Contact:      ${contact}`)
+  }
+  if (load.commodity)     lines.push(`Commodity:    ${load.commodity}${load.weight ? ' · ' + load.weight : ''}`)
+  if (load.trailer_type)  lines.push(`Equipment:    ${load.trailer_type}`)
+  if (load.miles)         lines.push(`Miles:        ${load.miles}`)
+  if (load.bol)           lines.push(`BOL #:        ${load.bol}`)
+  if (load.trailer_number) lines.push(`Trailer #:   ${load.trailer_number}`)
 
-  const msg = `Hello ${load.driver_name || 'Driver'},
+  lines.push('')
+  lines.push('━━━ PICKUP ━━━')
+  if (load.pickup_name)   lines.push(load.pickup_name)
+  const puAddr = [load.pickup_address, load.pickup_city, load.pickup_state, load.pickup_zip].filter(Boolean).join(', ')
+  if (puAddr)             lines.push(puAddr)
+  if (load.pickup_date)   lines.push(`Date:  ${load.pickup_date}${load.pickup_time ? ' @ ' + load.pickup_time : ''}`)
+  if (load.pickup_phone)  lines.push(`Phone: ${load.pickup_phone}`)
+  if (load.pickup_refs)   lines.push(`Refs:  ${load.pickup_refs}`)
 
-Load Number: ${load.load_number || load.id}
+  lines.push('')
+  lines.push('━━━ DELIVERY ━━━')
+  if (load.delivery_name)  lines.push(load.delivery_name)
+  const delAddr = [load.delivery_address, load.delivery_city, load.delivery_state, load.delivery_zip].filter(Boolean).join(', ')
+  if (delAddr)             lines.push(delAddr)
+  if (load.delivery_date)  lines.push(`Date:  ${load.delivery_date}${load.delivery_time ? ' @ ' + load.delivery_time : ''}`)
+  if (load.delivery_phone) lines.push(`Phone: ${load.delivery_phone}`)
+  if (load.delivery_refs)  lines.push(`Refs:  ${load.delivery_refs}`)
 
-Pick: ${load.pickup_name || ''}
-At: ${[load.pickup_address, load.pickup_city, load.pickup_state, load.pickup_zip].filter(Boolean).join(', ')}
-On: ${load.pickup_date || ''} @ ${load.pickup_time || ''}
-Call: ${load.pickup_phone || ''}
-PO: ${pickupRefs}
+  if (load.special_instructions) {
+    lines.push('')
+    lines.push('━━━ SPECIAL INSTRUCTIONS ━━━')
+    lines.push(load.special_instructions)
+  }
 
-Drop: ${load.delivery_name || ''}
-At: ${[load.delivery_address, load.delivery_city, load.delivery_state, load.delivery_zip].filter(Boolean).join(', ')}
-On: ${load.delivery_date || ''} @ ${load.delivery_time || ''}
-Call: ${load.delivery_phone || ''}
-PO: ${deliveryRefs}${load.special_instructions ? '\n\nSpecial Instructions:\n' + load.special_instructions : ''}`;
-
-  res.json({ message: msg });
+  res.json({ message: lines.join('\n') });
 });
 
 app.post('/api/loads/:id/mark-dispatched', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
@@ -756,8 +778,14 @@ app.post('/api/parse-rate-con', auth, requireRole('dispatcher', 'company_owner')
   "trailer_number": ""
 }
 
-For pickup_refs and delivery_refs, combine all reference numbers (PU#, BOL#, PO#, AO#, CF#, etc.) into one string like "PU #12345 PO #67890".
-For dates format as YYYY-MM-DD. For times use HH:MM AM/PM format.`
+CRITICAL RULES — follow exactly:
+- pickup_refs: Find EVERY reference number associated with the pickup/shipper location. Look for any label like PU#, PU No, Pickup Ref, PO#, PO No, Purchase Order, BOL#, BOL No, Bill of Lading, AO#, CF#, SH#, SN#, SO#, REF#, Reference, Shipper Ref, Confirmation #, Load Ref, or any number printed near the pickup/shipper block. Combine ALL of them into one string, e.g. "PU #12345 PO #67890 BOL #ABC". Do NOT leave this blank if any reference numbers appear near the pickup location.
+- delivery_refs: Same as above but for delivery/consignee location. Capture every PO#, AO#, DEL#, Consignee Ref, Delivery Ref, PRO#, or any other number near the delivery block.
+- broker_order: The broker's load/order/confirmation number (often labelled "Load #", "Order #", "Confirmation #", "Pro #").
+- load_number: The carrier's own internal load number if shown separately from the broker order number.
+- rate: The total payment/rate amount (all-in or line-haul). Include only the numeric value with no $ sign.
+- For dates use YYYY-MM-DD format. For times use HH:MM AM/PM format.
+- special_instructions: Any notes, requirements, appointments, lumper info, dock info, or instructions for the driver.`
           }
         ]
       }]
