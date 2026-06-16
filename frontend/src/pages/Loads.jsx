@@ -6,6 +6,16 @@ import { T, STATUS, carrierColor, ACTIVE_CARRIERS } from '../theme.js'
 import { useIsMobile } from '../hooks/useIsMobile.js'
 import LoadForm from '../components/LoadForm.jsx'
 
+function useDensity() {
+  const [density, setDensity] = useState(() => localStorage.getItem('density') || 'comfortable')
+  useEffect(() => {
+    const fn = () => setDensity(localStorage.getItem('density') || 'comfortable')
+    window.addEventListener('densitychange', fn)
+    return () => window.removeEventListener('densitychange', fn)
+  }, [])
+  return density
+}
+
 // US state → IANA timezone (default to ET for unknown/empty)
 const STATE_TZ = {
   // Eastern
@@ -108,7 +118,7 @@ function pickupAlertNeeded(load) {
     && ['open','covered','dispatched','pending','assigned'].includes(load.status)
 }
 
-function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer, user }) {
+function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer, user, compact }) {
   const navigate = useNavigate()
   const late = isLate(load)
   const alert = pickupAlertNeeded(load)
@@ -118,6 +128,8 @@ function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer, user }) {
   const shortCompany = load.company_name
     ? load.company_name.replace(' INC','').replace(' LLC','').replace('THE FRONTLINE FREIGHT','FRONTLINE').replace(' BROS','')
     : null
+  const pad = compact ? '5px 8px 5px 12px' : '8px 10px 8px 14px'
+  const padCell = compact ? '5px 8px' : '8px 10px'
 
   async function handleStatusClick(e, status) {
     e.stopPropagation()
@@ -154,59 +166,61 @@ function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer, user }) {
         onMouseLeave={e => e.currentTarget.style.background = rowBg}
       >
         {/* Load # — broker order big, our # small */}
-        <td style={{ padding: '8px 10px 8px 14px', whiteSpace: 'nowrap', borderLeft: `3px solid ${accentColor}` }}>
+        <td style={{ padding: pad, whiteSpace: 'nowrap', borderLeft: `3px solid ${accentColor}` }}>
           <div style={{ fontSize: 13, fontWeight: 700, color: late ? T.red : T.text, letterSpacing: -0.2 }}>
             {late && <span style={{ color: T.red, marginRight: 3 }}>!</span>}
             {load.broker_order || load.load_number || `#${load.id}`}
           </div>
-          <div style={{ fontSize: 10, color: T.text3, marginTop: 2, maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-            {load.load_number && load.broker_order ? `#${load.load_number} · ` : ''}{load.broker_name || ''}
-          </div>
+          {!compact && (
+            <div style={{ fontSize: 10, color: T.text3, marginTop: 2, maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {load.load_number && load.broker_order ? `#${load.load_number} · ` : ''}{load.broker_name || ''}
+            </div>
+          )}
         </td>
 
         {/* Driver / Carrier */}
-        <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+        <td style={{ padding: padCell, whiteSpace: 'nowrap' }}>
           <div style={{ fontSize: 12, fontWeight: 600, color: load.driver_name ? T.text : T.orange }}>
             {load.driver_name || '— Unassigned —'}
           </div>
-          {shortCompany && (
+          {!compact && shortCompany && (
             <div style={{ fontSize: 10, fontWeight: 700, color: compColor, marginTop: 2 }}>{shortCompany}</div>
           )}
-          {load.trailer_number && (
+          {!compact && load.trailer_number && (
             <div style={{ fontSize: 10, color: T.text3, marginTop: 2 }}>Trailer: {load.trailer_number}</div>
           )}
-          {load.checkin_time && !load.checkout_time && (
+          {!compact && load.checkin_time && !load.checkout_time && (
             <div style={{ fontSize: 10, color: T.green, fontWeight: 700, marginTop: 2 }}>● Checked In</div>
           )}
-          {load.checkout_time && (
+          {!compact && load.checkout_time && (
             <div style={{ fontSize: 10, color: T.teal, fontWeight: 700, marginTop: 2 }}>✓ Checked Out</div>
           )}
         </td>
 
         {/* Ship Date */}
-        <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+        <td style={{ padding: padCell, whiteSpace: 'nowrap' }}>
           <div style={{ fontSize: 12, color: T.text }}>{load.pickup_date || '—'}</div>
-          {load.pickup_time && <div style={{ fontSize: 10, color: T.text3, marginTop: 1 }}>{load.pickup_time}</div>}
+          {!compact && load.pickup_time && <div style={{ fontSize: 10, color: T.text3, marginTop: 1 }}>{load.pickup_time}</div>}
         </td>
 
         {/* Del Date */}
-        <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+        <td style={{ padding: padCell, whiteSpace: 'nowrap' }}>
           <div style={{ fontSize: 12, color: T.text }}>{load.delivery_date || '—'}</div>
-          {load.delivery_time && <div style={{ fontSize: 10, color: T.text3, marginTop: 1 }}>{load.delivery_time}</div>}
+          {!compact && load.delivery_time && <div style={{ fontSize: 10, color: T.text3, marginTop: 1 }}>{load.delivery_time}</div>}
         </td>
 
         {/* Origin */}
-        <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+        <td style={{ padding: padCell, whiteSpace: 'nowrap' }}>
           <div style={{ fontSize: 12, fontWeight: 500, color: T.text }}>{pickupCity || load.pickup_name || '—'}</div>
         </td>
 
         {/* Destination */}
-        <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+        <td style={{ padding: padCell, whiteSpace: 'nowrap' }}>
           <div style={{ fontSize: 12, fontWeight: 500, color: T.text }}>{delivCity || load.delivery_name || '—'}</div>
         </td>
 
         {/* Status badge */}
-        <td style={{ padding: '8px 10px', whiteSpace: 'nowrap' }}>
+        <td style={{ padding: padCell, whiteSpace: 'nowrap' }}>
           <span style={{
             display: 'inline-block', fontSize: 10, fontWeight: 700,
             padding: '3px 8px', borderRadius: 5,
@@ -218,7 +232,7 @@ function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer, user }) {
         </td>
 
         {/* Actions */}
-        <td style={{ padding: '8px 14px 8px 6px', whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
+        <td style={{ padding: compact ? '5px 10px 5px 4px' : '8px 14px 8px 6px', whiteSpace: 'nowrap' }} onClick={e => e.stopPropagation()}>
           <div style={{ display: 'flex', gap: 5 }}>
             <button
               style={{
@@ -563,6 +577,8 @@ const CARRIER_SHORT = {
 export default function Loads() {
   const { user } = useAuth()
   const mobile = useIsMobile()
+  const density = useDensity()
+  const compact = density === 'compact'
   const [loads, setLoads] = useState([])
   const [companies, setCompanies] = useState([])
   const [companyFilter, setCompanyFilter] = useState('')
@@ -744,6 +760,7 @@ export default function Loads() {
                     key={l.id}
                     load={l}
                     user={user}
+                    compact={compact}
                     onStatusUpdate={fetchLoads}
                     onEdit={(load) => { setEditLoad(load); setShowForm(true) }}
                     onStatusDrawer={setDrawerLoad}
