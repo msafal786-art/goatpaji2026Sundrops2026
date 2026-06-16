@@ -174,11 +174,10 @@ export default function Dashboard() {
     return hrs >= 0 && hrs <= 24
   })
 
-  const delivToday = loads.filter(l => l.delivery_date === todayStr && !['completed'].includes(l.status) && l.driver_name)
   const tom = new Date(now); tom.setDate(now.getDate() + 1)
   const dat = new Date(now); dat.setDate(now.getDate() + 2)
-  const delivTomorrow = loads.filter(l => l.delivery_date === tom.toISOString().slice(0,10) && !['completed'].includes(l.status) && l.driver_name)
-  const delivDayAfter = loads.filter(l => l.delivery_date === dat.toISOString().slice(0,10) && !['completed'].includes(l.status) && l.driver_name)
+  const delivTomorrow = loads.filter(l => l.delivery_date === tom.toISOString().slice(0,10) && !['completed'].includes(l.status))
+  const delivDayAfter = loads.filter(l => l.delivery_date === dat.toISOString().slice(0,10) && !['completed'].includes(l.status))
 
   const greeting = now.getHours() < 12 ? 'Good morning' : now.getHours() < 17 ? 'Good afternoon' : 'Good evening'
   const dateLabel = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
@@ -309,19 +308,13 @@ export default function Dashboard() {
             )}
           </Card>
 
-          {/* Deliveries today / tomorrow / day after */}
-          {(delivToday.length > 0 || delivTomorrow.length > 0 || delivDayAfter.length > 0) && (
+          {/* Deliveries tomorrow + day after */}
+          {(delivTomorrow.length > 0 || delivDayAfter.length > 0) && (
             <Card style={{ marginBottom: 14 }}>
-              <SH title="Deliveries" />
-              {delivToday.length > 0 && (
-                <>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.7, marginBottom: 6 }}>Today</div>
-                  {delivToday.map(l => <LoadRow key={l.id} load={l} />)}
-                </>
-              )}
+              <SH title="Upcoming Deliveries" />
               {delivTomorrow.length > 0 && (
                 <>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.7, marginTop: delivToday.length ? 10 : 0, marginBottom: 6 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.7, marginBottom: 6 }}>
                     Tomorrow · {tom.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
                   </div>
                   {delivTomorrow.map(l => <LoadRow key={l.id} load={l} />)}
@@ -329,7 +322,7 @@ export default function Dashboard() {
               )}
               {delivDayAfter.length > 0 && (
                 <>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.7, marginTop: (delivToday.length || delivTomorrow.length) ? 10 : 0, marginBottom: 6 }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.7, marginTop: delivTomorrow.length ? 10 : 0, marginBottom: 6 }}>
                     {dat.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
                   </div>
                   {delivDayAfter.map(l => <LoadRow key={l.id} load={l} />)}
