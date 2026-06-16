@@ -6,14 +6,54 @@ import { T, STATUS, carrierColor, ACTIVE_CARRIERS } from '../theme.js'
 import { useIsMobile } from '../hooks/useIsMobile.js'
 import LoadForm from '../components/LoadForm.jsx'
 
-// Parse a date+time as Eastern Time and return a UTC-based Date for comparison
-function parseET(dateStr, h24 = 0, min = 0) {
+// US state → IANA timezone (default to ET for unknown/empty)
+const STATE_TZ = {
+  // Eastern
+  CT:'America/New_York', DE:'America/New_York', FL:'America/New_York',
+  GA:'America/New_York', IN:'America/New_York', ME:'America/New_York',
+  MD:'America/New_York', MA:'America/New_York', MI:'America/New_York',
+  NH:'America/New_York', NJ:'America/New_York', NY:'America/New_York',
+  NC:'America/New_York', OH:'America/New_York', PA:'America/New_York',
+  RI:'America/New_York', SC:'America/New_York', VT:'America/New_York',
+  VA:'America/New_York', WV:'America/New_York', DC:'America/New_York',
+  // Central
+  AL:'America/Chicago', AR:'America/Chicago', IL:'America/Chicago',
+  IA:'America/Chicago', KS:'America/Chicago', KY:'America/Chicago',
+  LA:'America/Chicago', MN:'America/Chicago', MS:'America/Chicago',
+  MO:'America/Chicago', NE:'America/Chicago', ND:'America/Chicago',
+  OK:'America/Chicago', SD:'America/Chicago', TN:'America/Chicago',
+  TX:'America/Chicago', WI:'America/Chicago',
+  // Mountain
+  CO:'America/Denver', ID:'America/Denver', MT:'America/Denver',
+  NM:'America/Denver', UT:'America/Denver', WY:'America/Denver',
+  AZ:'America/Phoenix',
+  // Pacific
+  CA:'America/Los_Angeles', NV:'America/Los_Angeles',
+  OR:'America/Los_Angeles', WA:'America/Los_Angeles',
+  // Other
+  AK:'America/Anchorage', HI:'Pacific/Honolulu',
+}
+
+function stateToTZ(state) {
+  return STATE_TZ[(state || '').toUpperCase().trim()] || 'America/New_York'
+}
+
+// Parse a date+time as a specific IANA timezone wall-clock and return a UTC Date.
+// Uses Intl to correctly handle DST for any timezone.
+function parseInTZ(dateStr, h24 = 0, min = 0, tz = 'America/New_York') {
   if (!dateStr) return null
-  const [y, mo, d] = dateStr.split('-').map(Number)
-  const month0 = mo - 1
-  // Simple DST rule: EDT (UTC-4) March–October, EST (UTC-5) otherwise
-  const utcOffset = (month0 >= 2 && month0 <= 9) ? 4 : 5
-  return new Date(Date.UTC(y, month0, d, h24 + utcOffset, min))
+  const y = parseInt(dateStr.slice(0, 4))
+  const mo = parseInt(dateStr.slice(5, 7)) - 1
+  const d = parseInt(dateStr.slice(8, 10))
+  // Probe noon UTC to get the TZ offset at that date (handles DST correctly)
+  const probeUTC = new Date(Date.UTC(y, mo, d, 12, 0, 0))
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).formatToParts(probeUTC)
+  const get = type => parseInt(parts.find(p => p.type === type)?.value || 0)
+  const offsetMs = probeUTC - new Date(Date.UTC(get('year'), get('month') - 1, get('day'), get('hour'), get('minute')))
+  return new Date(Date.UTC(y, mo, d, h24, min) + offsetMs)
 }
 
 // Parse "8:00 AM" / "14:30" style strings into [hours24, minutes]
@@ -30,9 +70,11 @@ function parseHM(timeStr) {
 function isLate(load) {
   const now = new Date()
   const [ph, pm] = parseHM(load.pickup_time)
-  const pickupPassed = load.pickup_date && parseET(load.pickup_date, ph, pm) < now
+  const pickupTZ = stateToTZ(load.pickup_state)
+  const delivTZ  = stateToTZ(load.delivery_state)
+  const pickupPassed = load.pickup_date && parseInTZ(load.pickup_date, ph, pm, pickupTZ) < now
   const notPickedUp = ['open','covered','pending','assigned'].includes(load.status)
-  const deliveryPassed = load.delivery_date && parseET(load.delivery_date) < now
+  const deliveryPassed = load.delivery_date && parseInTZ(load.delivery_date, 0, 0, delivTZ) < now
   const notDelivered = !['delivered','completed'].includes(load.status)
   return (pickupPassed && notPickedUp) || (deliveryPassed && notDelivered)
 }
@@ -47,10 +89,10 @@ function urgencyColor(load) {
   if (['delivered'].includes(load.status)) return T.teal
   if (['completed'].includes(load.status)) return T.text3
 
-  // Open/covered: check proximity to pickup in ET
+  // Open/covered: check proximity to pickup in pickup city's timezone
   if (load.pickup_date) {
     const now = new Date()
-    const pickup = parseET(load.pickup_date, 6, 0) // 6 AM ET
+    const pickup = parseInTZ(load.pickup_date, 6, 0, stateToTZ(load.pickup_state))
     const hoursUntil = (pickup - now) / 36e5
     if (!load.driver_id && hoursUntil <= 24 && hoursUntil >= 0) return T.red
     if (!load.driver_id) return 'rgba(235,235,245,0.22)'
@@ -62,7 +104,8 @@ function urgencyColor(load) {
 function pickupAlertNeeded(load) {
   if (!load.pickup_date) return false
   const [ph, pm] = parseHM(load.pickup_time)
-  return parseET(load.pickup_date, ph, pm) < new Date() && ['open','covered','dispatched','pending','assigned'].includes(load.status)
+  return parseInTZ(load.pickup_date, ph, pm, stateToTZ(load.pickup_state)) < new Date()
+    && ['open','covered','dispatched','pending','assigned'].includes(load.status)
 }
 
 function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer, user }) {
