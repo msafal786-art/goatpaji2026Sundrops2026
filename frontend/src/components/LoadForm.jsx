@@ -15,6 +15,7 @@ const EMPTY = {
 
 export default function LoadForm({ load, onClose, onSave }) {
   const { user } = useAuth()
+  const isAdmin = user.role === 'dispatcher' && !user.company_id && !user.allowed_company_ids
   const [form, setForm] = useState(load ? { ...EMPTY, ...load, driver_id: load.driver_id || '', truck_id: load.truck_id || '' } : { ...EMPTY })
   const [companies, setCompanies] = useState([])
   const [drivers, setDrivers] = useState([])
@@ -222,9 +223,23 @@ export default function LoadForm({ load, onClose, onSave }) {
 
           {error && <div style={{ color: T.red, fontSize: 13, marginBottom: 12, padding: '8px 12px', background: T.red + '18', borderRadius: 6 }}>{error}</div>}
 
-          <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-            <button type="button" style={secBtn} onClick={onClose}>Cancel</button>
-            <button type="submit" style={primaryBtn} disabled={saving}>{saving ? 'Saving…' : load ? 'Update Load' : 'Create Load'}</button>
+          <div style={{ display: 'flex', gap: 10, justifyContent: 'space-between', alignItems: 'center' }}>
+            <div>
+              {load && isAdmin && (
+                <button type="button" disabled={saving} onClick={async () => {
+                  if (!confirm(`Delete this load? This cannot be undone.`)) return
+                  setSaving(true)
+                  try { await api.deleteLoad(load.id); onSave() }
+                  catch (err) { setError(err.message); setSaving(false) }
+                }} style={{ padding: '10px 16px', background: T.red + '15', color: T.red, border: `1px solid ${T.red}40`, borderRadius: 9, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
+                  Delete Load
+                </button>
+              )}
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button type="button" style={secBtn} onClick={onClose}>Cancel</button>
+              <button type="submit" style={primaryBtn} disabled={saving}>{saving ? 'Saving…' : load ? 'Update Load' : 'Create Load'}</button>
+            </div>
           </div>
         </form>
       </div>

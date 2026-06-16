@@ -526,7 +526,7 @@ app.post('/api/loads', auth, requireRole('dispatcher', 'company_owner'), (req, r
     delivery_name, delivery_address, delivery_city, delivery_state, delivery_zip,
     delivery_date, delivery_time, delivery_phone, delivery_refs,
     special_instructions, driver_id || null, truck_id || null,
-    driver_id ? 'covered' : 'open'
+    'open'
   );
 
   if (driver_id) {
@@ -565,7 +565,7 @@ app.put('/api/loads/:id', auth, requireRole('dispatcher', 'company_owner'), (req
     db.prepare("UPDATE trucks SET status = 'available' WHERE id = ?").run(existing.truck_id);
   }
 
-  const newStatus = status || (driver_id ? 'covered' : 'open');
+  const newStatus = status || existing.status;
 
   // Only admin dispatcher can change which company a load belongs to
   const isAdminEdit = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
@@ -599,6 +599,8 @@ app.put('/api/loads/:id', auth, requireRole('dispatcher', 'company_owner'), (req
 });
 
 app.delete('/api/loads/:id', auth, requireRole('dispatcher'), (req, res) => {
+  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
+  if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
   const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
   if (load?.driver_id) db.prepare("UPDATE drivers SET status = 'available' WHERE id = ?").run(load.driver_id);
   if (load?.truck_id) db.prepare("UPDATE trucks SET status = 'available' WHERE id = ?").run(load.truck_id);

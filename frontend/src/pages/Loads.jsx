@@ -158,7 +158,7 @@ function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer, user }) {
             background: accentColor + '22', color: accentColor,
             border: `1px solid ${accentColor}50`,
           }}>
-            {late ? 'LATE' : s.label.toUpperCase()}{load.dispatch_sent ? ' ✓' : ''}
+            {late && <span style={{ marginRight: 3 }}>!</span>}{s.label.toUpperCase()}{load.dispatch_sent ? ' ✓' : ''}
           </span>
         </td>
 
