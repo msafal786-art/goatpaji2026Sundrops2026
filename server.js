@@ -506,7 +506,7 @@ app.post('/api/loads', auth, requireRole('dispatcher', 'company_owner'), (req, r
     pickup_date, pickup_time, pickup_phone, pickup_refs,
     delivery_name, delivery_address, delivery_city, delivery_state, delivery_zip,
     delivery_date, delivery_time, delivery_phone, delivery_refs,
-    special_instructions, driver_id, truck_id
+    special_instructions, notes, driver_id, truck_id
   } = req.body;
 
   const r = db.prepare(`INSERT INTO loads (
@@ -516,9 +516,9 @@ app.post('/api/loads', auth, requireRole('dispatcher', 'company_owner'), (req, r
     pickup_date, pickup_time, pickup_phone, pickup_refs,
     delivery_name, delivery_address, delivery_city, delivery_state, delivery_zip,
     delivery_date, delivery_time, delivery_phone, delivery_refs,
-    special_instructions, driver_id, truck_id,
+    special_instructions, notes, driver_id, truck_id,
     status
-  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(
     cid, load_number, broker_name, broker_order, broker_contact, broker_email,
     commodity, weight, miles, trailer_type, bol, rate,
@@ -526,7 +526,7 @@ app.post('/api/loads', auth, requireRole('dispatcher', 'company_owner'), (req, r
     pickup_date, pickup_time, pickup_phone, pickup_refs,
     delivery_name, delivery_address, delivery_city, delivery_state, delivery_zip,
     delivery_date, delivery_time, delivery_phone, delivery_refs,
-    special_instructions, driver_id || null, truck_id || null,
+    special_instructions, notes || null, driver_id || null, truck_id || null,
     'open'
   );
 
@@ -555,7 +555,7 @@ app.put('/api/loads/:id', auth, requireRole('dispatcher', 'company_owner'), (req
     pickup_date, pickup_time, pickup_phone, pickup_refs,
     delivery_name, delivery_address, delivery_city, delivery_state, delivery_zip,
     delivery_date, delivery_time, delivery_phone, delivery_refs,
-    special_instructions, driver_id, truck_id, status, company_id
+    special_instructions, notes, driver_id, truck_id, status, company_id
   } = req.body;
 
   // Free up old driver/truck if changed
@@ -579,7 +579,7 @@ app.put('/api/loads/:id', auth, requireRole('dispatcher', 'company_owner'), (req
     pickup_date=?, pickup_time=?, pickup_phone=?, pickup_refs=?,
     delivery_name=?, delivery_address=?, delivery_city=?, delivery_state=?, delivery_zip=?,
     delivery_date=?, delivery_time=?, delivery_phone=?, delivery_refs=?,
-    special_instructions=?, driver_id=?, truck_id=?, status=?
+    special_instructions=?, notes=?, driver_id=?, truck_id=?, status=?
     WHERE id=?
   `).run(
     effectiveCompanyId,
@@ -589,7 +589,7 @@ app.put('/api/loads/:id', auth, requireRole('dispatcher', 'company_owner'), (req
     pickup_date, pickup_time, pickup_phone, pickup_refs,
     delivery_name, delivery_address, delivery_city, delivery_state, delivery_zip,
     delivery_date, delivery_time, delivery_phone, delivery_refs,
-    special_instructions, driver_id || null, truck_id || null, newStatus,
+    special_instructions, notes || null, driver_id || null, truck_id || null, newStatus,
     req.params.id
   );
 

@@ -267,6 +267,9 @@ if (!latestLoadCols.includes('delivery_checkin_time'))  db.prepare('ALTER TABLE 
 if (!latestLoadCols.includes('delivery_checkout_time')) db.prepare('ALTER TABLE loads ADD COLUMN delivery_checkout_time TEXT').run();
 if (!latestLoadCols.includes('delivery_bol_sent'))      db.prepare('ALTER TABLE loads ADD COLUMN delivery_bol_sent INTEGER DEFAULT 0').run();
 
+// Internal notes field on loads
+if (!latestLoadCols.includes('notes')) db.prepare('ALTER TABLE loads ADD COLUMN notes TEXT').run();
+
 // Drive file ID columns for document tables
 const loadDocCols = db.prepare("PRAGMA table_info(load_docs)").all().map(r => r.name);
 if (!loadDocCols.includes('drive_file_id')) db.prepare('ALTER TABLE load_docs ADD COLUMN drive_file_id TEXT').run();

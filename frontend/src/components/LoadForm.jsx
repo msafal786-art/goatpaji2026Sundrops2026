@@ -10,7 +10,7 @@ const EMPTY = {
   pickup_date: '', pickup_time: '', pickup_phone: '', pickup_refs: '',
   delivery_name: '', delivery_address: '', delivery_city: '', delivery_state: '', delivery_zip: '',
   delivery_date: '', delivery_time: '', delivery_phone: '', delivery_refs: '',
-  special_instructions: '', driver_id: '', truck_id: ''
+  special_instructions: '', notes: '', driver_id: '', truck_id: ''
 }
 
 export default function LoadForm({ load, onClose, onSave }) {
@@ -219,6 +219,12 @@ export default function LoadForm({ load, onClose, onSave }) {
             <textarea style={{ ...inputS, width: '100%', height: 80, resize: 'vertical' }}
               value={form.special_instructions} onChange={e => set('special_instructions', e.target.value)}
               placeholder="Carrier instructions, requirements…" />
+          </Section>
+
+          <Section title="Internal Notes">
+            <textarea style={{ ...inputS, width: '100%', height: 80, resize: 'vertical' }}
+              value={form.notes} onChange={e => set('notes', e.target.value)}
+              placeholder="Internal notes — not sent to driver…" />
           </Section>
 
           {error && <div style={{ color: T.red, fontSize: 13, marginBottom: 12, padding: '8px 12px', background: T.red + '18', borderRadius: 6 }}>{error}</div>}
