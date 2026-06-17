@@ -13,10 +13,20 @@ const EMPTY = {
   special_instructions: '', notes: '', driver_id: '', truck_id: ''
 }
 
+const EMPTY_STOP = { name: '', address: '', city: '', state: '', zip: '', date: '', time: '', phone: '', refs: '' }
+
 export default function LoadForm({ load, onClose, onSave }) {
   const { user } = useAuth()
   const isAdmin = user.role === 'dispatcher' && !user.company_id && !user.allowed_company_ids
   const [form, setForm] = useState(load ? { ...EMPTY, ...load, driver_id: load.driver_id || '', truck_id: load.truck_id || '' } : { ...EMPTY })
+  const [extraStops, setExtraStops] = useState(() => {
+    if (!load?.extra_stops) return []
+    try { return JSON.parse(load.extra_stops) } catch { return [] }
+  })
+  const [extraPickups, setExtraPickups] = useState(() => {
+    if (!load?.extra_pickups) return []
+    try { return JSON.parse(load.extra_pickups) } catch { return [] }
+  })
   const [companies, setCompanies] = useState([])
   const [drivers, setDrivers] = useState([])
   const [trucks, setTrucks] = useState([])
@@ -74,6 +84,12 @@ export default function LoadForm({ load, onClose, onSave }) {
         delivery_refs: data.delivery_refs || f.delivery_refs,
         special_instructions: data.special_instructions || f.special_instructions,
       }))
+      if (Array.isArray(data.extra_stops) && data.extra_stops.length > 0) {
+        setExtraStops(data.extra_stops)
+      }
+      if (Array.isArray(data.extra_pickups) && data.extra_pickups.length > 0) {
+        setExtraPickups(data.extra_pickups)
+      }
     } catch (err) {
       setParseError(err.message)
     } finally {
@@ -86,7 +102,7 @@ export default function LoadForm({ load, onClose, onSave }) {
     setSaving(true)
     setError('')
     try {
-      const payload = { ...form }
+      const payload = { ...form, extra_stops: extraStops, extra_pickups: extraPickups }
       if (!payload.driver_id) payload.driver_id = null
       if (!payload.truck_id) payload.truck_id = null
       if (user.role === 'company_owner') payload.company_id = user.company_id
@@ -175,7 +191,8 @@ export default function LoadForm({ load, onClose, onSave }) {
             </Row>
           </Section>
 
-          <Section title="Pickup">
+          <SectionWithAdd title="Pickup" label="+ Add Pick" onAdd={() => setExtraPickups(s => [...s, { ...EMPTY_STOP }])}>
+            {extraPickups.length > 0 && <div style={{ fontSize: 12, fontWeight: 600, color: T.text2, marginBottom: 8 }}>Pick 1</div>}
             <Row>
               <Field label="Shipper Name"><input style={inputS} value={form.pickup_name} onChange={e => set('pickup_name', e.target.value)} /></Field>
               <Field label="Address"><input style={inputS} value={form.pickup_address} onChange={e => set('pickup_address', e.target.value)} /></Field>
@@ -193,9 +210,40 @@ export default function LoadForm({ load, onClose, onSave }) {
             <Row>
               <Field label="References (PU#, PO#, etc)"><input style={inputS} value={form.pickup_refs} onChange={e => set('pickup_refs', e.target.value)} /></Field>
             </Row>
-          </Section>
 
-          <Section title="Delivery">
+            {extraPickups.map((pick, idx) => (
+              <div key={idx} style={{ marginTop: 14, paddingTop: 14, borderTop: `1px dashed ${T.sep}` }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: T.text2 }}>Pick {idx + 2}</div>
+                  <button type="button" onClick={() => setExtraPickups(s => s.filter((_, i) => i !== idx))}
+                    style={{ background: 'none', border: 'none', color: T.red, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
+                    Remove
+                  </button>
+                </div>
+                <Row>
+                  <Field label="Shipper Name"><input style={inputS} value={pick.name} onChange={e => setExtraPickups(s => s.map((x, i) => i === idx ? { ...x, name: e.target.value } : x))} /></Field>
+                  <Field label="Address"><input style={inputS} value={pick.address} onChange={e => setExtraPickups(s => s.map((x, i) => i === idx ? { ...x, address: e.target.value } : x))} /></Field>
+                </Row>
+                <Row>
+                  <Field label="City"><input style={inputS} value={pick.city} onChange={e => setExtraPickups(s => s.map((x, i) => i === idx ? { ...x, city: e.target.value } : x))} /></Field>
+                  <Field label="State"><input style={inputS} value={pick.state} onChange={e => setExtraPickups(s => s.map((x, i) => i === idx ? { ...x, state: e.target.value } : x))} /></Field>
+                  <Field label="ZIP"><input style={inputS} value={pick.zip} onChange={e => setExtraPickups(s => s.map((x, i) => i === idx ? { ...x, zip: e.target.value } : x))} /></Field>
+                </Row>
+                <Row>
+                  <Field label="Date"><input style={inputS} placeholder="YYYY-MM-DD" value={pick.date} onChange={e => setExtraPickups(s => s.map((x, i) => i === idx ? { ...x, date: e.target.value } : x))} /></Field>
+                  <Field label="Time"><input style={inputS} value={pick.time} onChange={e => setExtraPickups(s => s.map((x, i) => i === idx ? { ...x, time: e.target.value } : x))} /></Field>
+                  <Field label="Phone"><input style={inputS} value={pick.phone} onChange={e => setExtraPickups(s => s.map((x, i) => i === idx ? { ...x, phone: e.target.value } : x))} /></Field>
+                </Row>
+                <Row>
+                  <Field label="References (PU#, PO#, etc)"><input style={inputS} value={pick.refs} onChange={e => setExtraPickups(s => s.map((x, i) => i === idx ? { ...x, refs: e.target.value } : x))} /></Field>
+                </Row>
+              </div>
+            ))}
+
+          </SectionWithAdd>
+
+          <SectionWithAdd title="Delivery" label="+ Add Drop" onAdd={() => setExtraStops(s => [...s, { ...EMPTY_STOP }])}>
+            {extraStops.length > 0 && <div style={{ fontSize: 12, fontWeight: 600, color: T.text2, marginBottom: 8 }}>Drop 1</div>}
             <Row>
               <Field label="Consignee Name"><input style={inputS} value={form.delivery_name} onChange={e => set('delivery_name', e.target.value)} /></Field>
               <Field label="Address"><input style={inputS} value={form.delivery_address} onChange={e => set('delivery_address', e.target.value)} /></Field>
@@ -213,7 +261,37 @@ export default function LoadForm({ load, onClose, onSave }) {
             <Row>
               <Field label="References (PO#, AO#, etc)"><input style={inputS} value={form.delivery_refs} onChange={e => set('delivery_refs', e.target.value)} /></Field>
             </Row>
-          </Section>
+
+            {extraStops.map((stop, idx) => (
+              <div key={idx} style={{ marginTop: 14, paddingTop: 14, borderTop: `1px dashed ${T.sep}` }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: T.text2 }}>Drop {idx + 2}</div>
+                  <button type="button" onClick={() => setExtraStops(s => s.filter((_, i) => i !== idx))}
+                    style={{ background: 'none', border: 'none', color: T.red, cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
+                    Remove
+                  </button>
+                </div>
+                <Row>
+                  <Field label="Consignee Name"><input style={inputS} value={stop.name} onChange={e => setExtraStops(s => s.map((x, i) => i === idx ? { ...x, name: e.target.value } : x))} /></Field>
+                  <Field label="Address"><input style={inputS} value={stop.address} onChange={e => setExtraStops(s => s.map((x, i) => i === idx ? { ...x, address: e.target.value } : x))} /></Field>
+                </Row>
+                <Row>
+                  <Field label="City"><input style={inputS} value={stop.city} onChange={e => setExtraStops(s => s.map((x, i) => i === idx ? { ...x, city: e.target.value } : x))} /></Field>
+                  <Field label="State"><input style={inputS} value={stop.state} onChange={e => setExtraStops(s => s.map((x, i) => i === idx ? { ...x, state: e.target.value } : x))} /></Field>
+                  <Field label="ZIP"><input style={inputS} value={stop.zip} onChange={e => setExtraStops(s => s.map((x, i) => i === idx ? { ...x, zip: e.target.value } : x))} /></Field>
+                </Row>
+                <Row>
+                  <Field label="Date"><input style={inputS} placeholder="YYYY-MM-DD" value={stop.date} onChange={e => setExtraStops(s => s.map((x, i) => i === idx ? { ...x, date: e.target.value } : x))} /></Field>
+                  <Field label="Time"><input style={inputS} value={stop.time} onChange={e => setExtraStops(s => s.map((x, i) => i === idx ? { ...x, time: e.target.value } : x))} /></Field>
+                  <Field label="Phone"><input style={inputS} value={stop.phone} onChange={e => setExtraStops(s => s.map((x, i) => i === idx ? { ...x, phone: e.target.value } : x))} /></Field>
+                </Row>
+                <Row>
+                  <Field label="References (PO#, AO#, etc)"><input style={inputS} value={stop.refs} onChange={e => setExtraStops(s => s.map((x, i) => i === idx ? { ...x, refs: e.target.value } : x))} /></Field>
+                </Row>
+              </div>
+            ))}
+
+          </SectionWithAdd>
 
           <Section title="Special Instructions">
             <textarea style={{ ...inputS, width: '100%', height: 80, resize: 'vertical' }}
@@ -257,6 +335,20 @@ function Section({ title, children }) {
   return (
     <div style={{ marginBottom: 20 }}>
       <div style={{ fontSize: 11, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10, paddingBottom: 6, borderBottom: `1px solid ${T.sep}` }}>{title}</div>
+      {children}
+    </div>
+  )
+}
+
+function SectionWithAdd({ title, children, label, onAdd }) {
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, paddingBottom: 6, borderBottom: `1px solid ${T.sep}` }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 1 }}>{title}</div>
+        <button type="button" onClick={onAdd} style={{ padding: '4px 12px', background: T.blue, color: '#fff', border: 'none', borderRadius: 7, cursor: 'pointer', fontWeight: 700, fontSize: 12 }}>
+          {label}
+        </button>
+      </div>
       {children}
     </div>
   )

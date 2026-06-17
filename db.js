@@ -270,6 +270,12 @@ if (!latestLoadCols.includes('delivery_bol_sent'))      db.prepare('ALTER TABLE 
 // Internal notes field on loads
 if (!latestLoadCols.includes('notes')) db.prepare('ALTER TABLE loads ADD COLUMN notes TEXT').run();
 
+// Extra delivery stops (JSON array of stop objects)
+if (!latestLoadCols.includes('extra_stops')) db.prepare('ALTER TABLE loads ADD COLUMN extra_stops TEXT').run();
+
+// Extra pickup stops (JSON array of stop objects)
+if (!latestLoadCols.includes('extra_pickups')) db.prepare('ALTER TABLE loads ADD COLUMN extra_pickups TEXT').run();
+
 // Drive file ID columns for document tables
 const loadDocCols = db.prepare("PRAGMA table_info(load_docs)").all().map(r => r.name);
 if (!loadDocCols.includes('drive_file_id')) db.prepare('ALTER TABLE load_docs ADD COLUMN drive_file_id TEXT').run();

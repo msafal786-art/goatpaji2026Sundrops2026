@@ -269,22 +269,50 @@ ${load.company_name || 'Dispatch'}`
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr' : '1fr 1fr', gap: 14, marginBottom: 14 }}>
-        <Card title="Pickup">
-          <Field label="Shipper" value={load.pickup_name} bold />
-          <Field label="Address" value={[load.pickup_address, load.pickup_city, load.pickup_state, load.pickup_zip].filter(Boolean).join(', ')} />
-          <Field label="Date / Time" value={`${load.pickup_date || ''}${load.pickup_time ? ' @ ' + load.pickup_time : ''}`} />
-          <Field label="Phone" value={load.pickup_phone} />
-          <Field label="References" value={load.pickup_refs} />
-        </Card>
-        <Card title="Delivery">
-          <Field label="Consignee" value={load.delivery_name} bold />
-          <Field label="Address" value={[load.delivery_address, load.delivery_city, load.delivery_state, load.delivery_zip].filter(Boolean).join(', ')} />
-          <Field label="Date / Time" value={`${load.delivery_date || ''}${load.delivery_time ? ' @ ' + load.delivery_time : ''}`} />
-          <Field label="Phone" value={load.delivery_phone} />
-          <Field label="References" value={load.delivery_refs} />
-        </Card>
-      </div>
+      {(() => {
+        let extraStops = []
+        let extraPickups = []
+        try { extraStops = load.extra_stops ? JSON.parse(load.extra_stops) : [] } catch {}
+        try { extraPickups = load.extra_pickups ? JSON.parse(load.extra_pickups) : [] } catch {}
+        const totalCards = (1 + extraPickups.length) + (1 + extraStops.length)
+        const cols = mobile ? 1 : Math.min(totalCards, 3)
+        return (
+          <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 14, marginBottom: 14 }}>
+            <Card title={extraPickups.length > 0 ? 'Pick 1' : 'Pickup'}>
+              <Field label="Shipper" value={load.pickup_name} bold />
+              <Field label="Address" value={[load.pickup_address, load.pickup_city, load.pickup_state, load.pickup_zip].filter(Boolean).join(', ')} />
+              <Field label="Date / Time" value={`${load.pickup_date || ''}${load.pickup_time ? ' @ ' + load.pickup_time : ''}`} />
+              <Field label="Phone" value={load.pickup_phone} />
+              <Field label="References" value={load.pickup_refs} />
+            </Card>
+            {extraPickups.map((pick, idx) => (
+              <Card key={`pick-${idx}`} title={`Pick ${idx + 2}`}>
+                <Field label="Shipper" value={pick.name} bold />
+                <Field label="Address" value={[pick.address, pick.city, pick.state, pick.zip].filter(Boolean).join(', ')} />
+                <Field label="Date / Time" value={`${pick.date || ''}${pick.time ? ' @ ' + pick.time : ''}`} />
+                <Field label="Phone" value={pick.phone} />
+                <Field label="References" value={pick.refs} />
+              </Card>
+            ))}
+            <Card title={extraStops.length > 0 ? 'Drop 1' : 'Delivery'}>
+              <Field label="Consignee" value={load.delivery_name} bold />
+              <Field label="Address" value={[load.delivery_address, load.delivery_city, load.delivery_state, load.delivery_zip].filter(Boolean).join(', ')} />
+              <Field label="Date / Time" value={`${load.delivery_date || ''}${load.delivery_time ? ' @ ' + load.delivery_time : ''}`} />
+              <Field label="Phone" value={load.delivery_phone} />
+              <Field label="References" value={load.delivery_refs} />
+            </Card>
+            {extraStops.map((stop, idx) => (
+              <Card key={`drop-${idx}`} title={`Drop ${idx + 2}`}>
+                <Field label="Consignee" value={stop.name} bold />
+                <Field label="Address" value={[stop.address, stop.city, stop.state, stop.zip].filter(Boolean).join(', ')} />
+                <Field label="Date / Time" value={`${stop.date || ''}${stop.time ? ' @ ' + stop.time : ''}`} />
+                <Field label="Phone" value={stop.phone} />
+                <Field label="References" value={stop.refs} />
+              </Card>
+            ))}
+          </div>
+        )
+      })()}
 
       <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr' : '1fr 1fr 1fr', gap: 14, marginBottom: 14 }}>
         <Card title="Broker">

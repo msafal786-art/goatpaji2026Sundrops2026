@@ -506,8 +506,13 @@ app.post('/api/loads', auth, requireRole('dispatcher', 'company_owner'), (req, r
     pickup_date, pickup_time, pickup_phone, pickup_refs,
     delivery_name, delivery_address, delivery_city, delivery_state, delivery_zip,
     delivery_date, delivery_time, delivery_phone, delivery_refs,
-    special_instructions, notes, driver_id, truck_id
+    special_instructions, notes, driver_id, truck_id, extra_stops, extra_pickups
   } = req.body;
+
+  const extraStopsJson = Array.isArray(extra_stops) && extra_stops.length > 0
+    ? JSON.stringify(extra_stops) : null;
+  const extraPickupsJson = Array.isArray(extra_pickups) && extra_pickups.length > 0
+    ? JSON.stringify(extra_pickups) : null;
 
   const r = db.prepare(`INSERT INTO loads (
     company_id, load_number, broker_name, broker_order, broker_contact, broker_email,
@@ -517,8 +522,8 @@ app.post('/api/loads', auth, requireRole('dispatcher', 'company_owner'), (req, r
     delivery_name, delivery_address, delivery_city, delivery_state, delivery_zip,
     delivery_date, delivery_time, delivery_phone, delivery_refs,
     special_instructions, notes, driver_id, truck_id,
-    status
-  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    status, extra_stops, extra_pickups
+  ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(
     cid, load_number, broker_name, broker_order, broker_contact, broker_email,
     commodity, weight, miles, trailer_type, bol, rate,
@@ -527,7 +532,7 @@ app.post('/api/loads', auth, requireRole('dispatcher', 'company_owner'), (req, r
     delivery_name, delivery_address, delivery_city, delivery_state, delivery_zip,
     delivery_date, delivery_time, delivery_phone, delivery_refs,
     special_instructions, notes || null, driver_id || null, truck_id || null,
-    'open'
+    'open', extraStopsJson, extraPickupsJson
   );
 
   if (driver_id) {
@@ -555,7 +560,7 @@ app.put('/api/loads/:id', auth, requireRole('dispatcher', 'company_owner'), (req
     pickup_date, pickup_time, pickup_phone, pickup_refs,
     delivery_name, delivery_address, delivery_city, delivery_state, delivery_zip,
     delivery_date, delivery_time, delivery_phone, delivery_refs,
-    special_instructions, notes, driver_id, truck_id, status, company_id
+    special_instructions, notes, driver_id, truck_id, status, company_id, extra_stops, extra_pickups
   } = req.body;
 
   // Free up old driver/truck if changed
@@ -572,6 +577,11 @@ app.put('/api/loads/:id', auth, requireRole('dispatcher', 'company_owner'), (req
   const isAdminEdit = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
   const effectiveCompanyId = isAdminEdit ? (company_id || existing.company_id) : existing.company_id;
 
+  const extraStopsJson = Array.isArray(extra_stops) && extra_stops.length > 0
+    ? JSON.stringify(extra_stops) : null;
+  const extraPickupsJson = Array.isArray(extra_pickups) && extra_pickups.length > 0
+    ? JSON.stringify(extra_pickups) : null;
+
   db.prepare(`UPDATE loads SET
     company_id=?, load_number=?, broker_name=?, broker_order=?, broker_contact=?, broker_email=?,
     commodity=?, weight=?, miles=?, trailer_type=?, bol=?, rate=?,
@@ -579,7 +589,7 @@ app.put('/api/loads/:id', auth, requireRole('dispatcher', 'company_owner'), (req
     pickup_date=?, pickup_time=?, pickup_phone=?, pickup_refs=?,
     delivery_name=?, delivery_address=?, delivery_city=?, delivery_state=?, delivery_zip=?,
     delivery_date=?, delivery_time=?, delivery_phone=?, delivery_refs=?,
-    special_instructions=?, notes=?, driver_id=?, truck_id=?, status=?
+    special_instructions=?, notes=?, driver_id=?, truck_id=?, status=?, extra_stops=?, extra_pickups=?
     WHERE id=?
   `).run(
     effectiveCompanyId,
@@ -589,7 +599,7 @@ app.put('/api/loads/:id', auth, requireRole('dispatcher', 'company_owner'), (req
     pickup_date, pickup_time, pickup_phone, pickup_refs,
     delivery_name, delivery_address, delivery_city, delivery_state, delivery_zip,
     delivery_date, delivery_time, delivery_phone, delivery_refs,
-    special_instructions, notes || null, driver_id || null, truck_id || null, newStatus,
+    special_instructions, notes || null, driver_id || null, truck_id || null, newStatus, extraStopsJson, extraPickupsJson,
     req.params.id
   );
 
@@ -619,23 +629,50 @@ app.get('/api/loads/:id/dispatch-message', auth, (req, res) => {
   lines.push('')
   lines.push(`Load Number: ${load.load_number || load.id}`)
 
-  // Pickup block
+  // Pickup block(s)
+  let extraPickups = []
+  try { extraPickups = load.extra_pickups ? JSON.parse(load.extra_pickups) : [] } catch {}
+  const totalPickups = 1 + extraPickups.length
+
   lines.push('')
-  lines.push(`Pick: ${load.pickup_name || ''}`)
+  lines.push(`${totalPickups > 1 ? 'Pick 1' : 'Pick'}: ${load.pickup_name || ''}`)
   const puAddr = [load.pickup_address, load.pickup_city, load.pickup_state, load.pickup_zip].filter(Boolean).join(', ')
   if (puAddr) lines.push(`At: ${puAddr}`)
   if (load.pickup_date) lines.push(`On: ${load.pickup_date}${load.pickup_time ? ' @ ' + load.pickup_time : ''}`)
-  lines.push(`PO: ${load.pickup_refs || ''}`)
-  lines.push(`Call: ${load.pickup_phone || ''}`)
+  if (load.pickup_refs) lines.push(`PO: ${load.pickup_refs}`)
+  if (load.pickup_phone) lines.push(`Call: ${load.pickup_phone}`)
+
+  extraPickups.forEach((pick, i) => {
+    lines.push('')
+    lines.push(`Pick ${i + 2}: ${pick.name || ''}`)
+    const addr = [pick.address, pick.city, pick.state, pick.zip].filter(Boolean).join(', ')
+    if (addr) lines.push(`At: ${addr}`)
+    if (pick.date) lines.push(`On: ${pick.date}${pick.time ? ' @ ' + pick.time : ''}`)
+    if (pick.refs) lines.push(`PO: ${pick.refs}`)
+    if (pick.phone) lines.push(`Call: ${pick.phone}`)
+  })
 
   // Delivery block
   lines.push('')
-  lines.push(`Drop: ${load.delivery_name || ''}`)
+  lines.push(`Drop 1: ${load.delivery_name || ''}`)
   const delAddr = [load.delivery_address, load.delivery_city, load.delivery_state, load.delivery_zip].filter(Boolean).join(', ')
   if (delAddr) lines.push(`At: ${delAddr}`)
   if (load.delivery_date) lines.push(`On: ${load.delivery_date}${load.delivery_time ? ' @ ' + load.delivery_time : ''}`)
   lines.push(`PO: ${load.delivery_refs || ''}`)
   lines.push(`Call: ${load.delivery_phone || ''}`)
+
+  // Extra stops
+  let extraStops = []
+  try { extraStops = load.extra_stops ? JSON.parse(load.extra_stops) : [] } catch {}
+  extraStops.forEach((stop, i) => {
+    lines.push('')
+    lines.push(`Drop ${i + 2}: ${stop.name || ''}`)
+    const addr = [stop.address, stop.city, stop.state, stop.zip].filter(Boolean).join(', ')
+    if (addr) lines.push(`At: ${addr}`)
+    if (stop.date) lines.push(`On: ${stop.date}${stop.time ? ' @ ' + stop.time : ''}`)
+    if (stop.refs) lines.push(`PO: ${stop.refs}`)
+    if (stop.phone) lines.push(`Call: ${stop.phone}`)
+  })
 
   if (load.special_instructions) {
     lines.push('')
@@ -717,7 +754,7 @@ app.post('/api/parse-rate-con', auth, requireRole('dispatcher', 'company_owner')
     const base64 = fileBuffer.toString('base64');
 
     const response = await anthropic.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-sonnet-4-6',
       max_tokens: 2000,
       messages: [{
         role: 'user',
@@ -728,7 +765,8 @@ app.post('/api/parse-rate-con', auth, requireRole('dispatcher', 'company_owner')
           },
           {
             type: 'text',
-            text: `Extract all load/dispatch information from this rate confirmation PDF. Return ONLY a valid JSON object with these exact fields (use empty string if not found):
+            text: `Extract all load/dispatch information from this rate confirmation PDF. Return ONLY a valid JSON object in exactly this format:
+
 {
   "load_number": "",
   "broker_name": "",
@@ -741,39 +779,26 @@ app.post('/api/parse-rate-con', auth, requireRole('dispatcher', 'company_owner')
   "trailer_type": "",
   "bol": "",
   "rate": "",
-  "pickup_name": "",
-  "pickup_address": "",
-  "pickup_city": "",
-  "pickup_state": "",
-  "pickup_zip": "",
-  "pickup_date": "",
-  "pickup_time": "",
-  "pickup_phone": "",
-  "pickup_refs": "",
-  "delivery_name": "",
-  "delivery_address": "",
-  "delivery_city": "",
-  "delivery_state": "",
-  "delivery_zip": "",
-  "delivery_date": "",
-  "delivery_time": "",
-  "delivery_phone": "",
-  "delivery_refs": "",
   "special_instructions": "",
   "driver_name": "",
   "driver_phone": "",
   "tractor_number": "",
-  "trailer_number": ""
+  "trailer_number": "",
+  "stops": []
 }
 
-CRITICAL RULES — follow exactly:
-- pickup_refs: Find EVERY reference number associated with the pickup/shipper location. Look for any label like PU#, PU No, Pickup Ref, PO#, PO No, Purchase Order, BOL#, BOL No, Bill of Lading, AO#, CF#, SH#, SN#, SO#, REF#, Reference, Shipper Ref, Confirmation #, Load Ref, or any number printed near the pickup/shipper block. Combine ALL of them into one string, e.g. "PU #12345 PO #67890 BOL #ABC". Do NOT leave this blank if any reference numbers appear near the pickup location.
-- delivery_refs: Same as above but for delivery/consignee location. Capture every PO#, AO#, DEL#, Consignee Ref, Delivery Ref, PRO#, or any other number near the delivery block.
-- broker_order: The broker's load/order/confirmation number (often labelled "Load #", "Order #", "Confirmation #", "Pro #").
-- load_number: The carrier's own internal load number if shown separately from the broker order number.
-- rate: The total payment/rate amount (all-in or line-haul). Include only the numeric value with no $ sign.
+The "stops" field is an array. Add ONE object per stop in the order they appear in the document. Each object:
+{ "type": "pickup", "name": "", "address": "", "city": "", "state": "", "zip": "", "date": "", "time": "", "phone": "", "refs": "" }
+Use type "pickup" for shipper/pick/origin stops, and "delivery" for consignee/drop/destination stops.
+
+Rules:
+- stops: List every stop separately. If a document has Stop 1 Pick, Stop 2 Drop, Stop 3 Drop — that is 3 objects. NEVER merge two stops into one object.
+- Each stop object must contain only that one location's data. Do not put two addresses or two city names in one field.
+- refs: Capture ALL reference numbers near that stop (PO#, PU#, BOL#, AO#, REF#, etc.) as one string.
+- broker_order: The broker's load/order/confirmation number.
+- rate: Total payment amount, numeric only, no $ sign.
 - For dates use YYYY-MM-DD format. For times use HH:MM AM/PM format.
-- special_instructions: Any notes, requirements, appointments, lumper info, dock info, or instructions for the driver.`
+- special_instructions: Any driver notes, requirements, appointments, lumper/dock info.`
           }
         ]
       }]
@@ -782,8 +807,58 @@ CRITICAL RULES — follow exactly:
     const text = response.content[0].text.trim();
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error('No JSON in response');
-    const data = JSON.parse(jsonMatch[0]);
-    data._filename = req.file.originalname;
+    const raw = JSON.parse(jsonMatch[0]);
+
+    // Split the stops array into primary pickup/delivery fields + extras
+    const stops = Array.isArray(raw.stops) ? raw.stops : [];
+    const pickups = stops.filter(s => s.type === 'pickup');
+    const deliveries = stops.filter(s => s.type === 'delivery');
+
+    function stopToPickup(s) {
+      return {
+        pickup_name: s.name || '', pickup_address: s.address || '',
+        pickup_city: s.city || '', pickup_state: s.state || '', pickup_zip: s.zip || '',
+        pickup_date: s.date || '', pickup_time: s.time || '',
+        pickup_phone: s.phone || '', pickup_refs: s.refs || '',
+      };
+    }
+    function stopToDelivery(s) {
+      return {
+        delivery_name: s.name || '', delivery_address: s.address || '',
+        delivery_city: s.city || '', delivery_state: s.state || '', delivery_zip: s.zip || '',
+        delivery_date: s.date || '', delivery_time: s.time || '',
+        delivery_phone: s.phone || '', delivery_refs: s.refs || '',
+      };
+    }
+    function stopToExtra(s) {
+      return { name: s.name || '', address: s.address || '', city: s.city || '',
+               state: s.state || '', zip: s.zip || '', date: s.date || '',
+               time: s.time || '', phone: s.phone || '', refs: s.refs || '' };
+    }
+
+    const data = {
+      load_number: raw.load_number || '',
+      broker_name: raw.broker_name || '',
+      broker_order: raw.broker_order || '',
+      broker_contact: raw.broker_contact || '',
+      broker_email: raw.broker_email || '',
+      commodity: raw.commodity || '',
+      weight: raw.weight || '',
+      miles: raw.miles || '',
+      trailer_type: raw.trailer_type || '',
+      bol: raw.bol || '',
+      rate: raw.rate || '',
+      special_instructions: raw.special_instructions || '',
+      driver_name: raw.driver_name || '',
+      driver_phone: raw.driver_phone || '',
+      tractor_number: raw.tractor_number || '',
+      trailer_number: raw.trailer_number || '',
+      ...(pickups[0] ? stopToPickup(pickups[0]) : {}),
+      extra_pickups: pickups.slice(1).map(stopToExtra),
+      ...(deliveries[0] ? stopToDelivery(deliveries[0]) : {}),
+      extra_stops: deliveries.slice(1).map(stopToExtra),
+      _filename: req.file.originalname,
+    };
 
     // Clean up temp file
     fs.unlinkSync(req.file.path);
