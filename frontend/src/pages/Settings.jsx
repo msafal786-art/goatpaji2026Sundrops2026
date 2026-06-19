@@ -175,6 +175,23 @@ export default function Settings() {
           </a>
         </Row>
       </Section>
+
+      {/* Sign Out */}
+      <button
+        onClick={() => {
+          if (!window.confirm('Sign out of Dispatch Portal?')) return
+          localStorage.removeItem('token')
+          window.location.reload()
+        }}
+        style={{
+          width: '100%', padding: '14px', background: T.bg1,
+          border: `1px solid ${T.sep}`, borderRadius: 14,
+          color: '#ff453a', fontSize: 15, fontWeight: 600,
+          cursor: 'pointer', marginBottom: 32,
+        }}
+      >
+        Sign Out
+      </button>
     </div>
   )
 }

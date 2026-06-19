@@ -55,18 +55,18 @@ const NAV_LINKS = {
 
 const BOTTOM_NAV_LINKS = {
   dispatcher: [
-    { to: '/dashboard',       icon: '⊞', label: 'Dashboard' },
-    { to: '/loads',           icon: '↗',  label: 'Loads' },
-    { to: '/recommendations', icon: '◈',  label: 'Lanes' },
-    { to: '/search',          icon: '⌕',  label: 'Search' },
-    { to: '/settings',        icon: '⚙',  label: 'Settings' },
+    { to: '/dashboard', icon: '⊞', label: 'Dashboard' },
+    { to: '/loads',     icon: '↗',  label: 'Loads' },
+    { to: '/drivers',   icon: '◉',  label: 'Drivers' },
+    { to: '/search',    icon: '⌕',  label: 'Search' },
+    { to: '/settings',  icon: '⚙',  label: 'Settings' },
   ],
   company_owner: [
-    { to: '/dashboard',       icon: '⊞', label: 'Dashboard' },
-    { to: '/loads',           icon: '↗',  label: 'Loads' },
-    { to: '/recommendations', icon: '◈',  label: 'Lanes' },
-    { to: '/search',          icon: '⌕',  label: 'Search' },
-    { to: '/settings',        icon: '⚙',  label: 'Settings' },
+    { to: '/dashboard', icon: '⊞', label: 'Dashboard' },
+    { to: '/loads',     icon: '↗',  label: 'Loads' },
+    { to: '/drivers',   icon: '◉',  label: 'Drivers' },
+    { to: '/search',    icon: '⌕',  label: 'Search' },
+    { to: '/settings',  icon: '⚙',  label: 'Settings' },
   ],
 }
 
@@ -197,14 +197,6 @@ function BottomNav({ user, onLogout }) {
           </Link>
         )
       })}
-      <button onClick={onLogout} style={{
-        flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
-        padding: '10px 0 8px', background: 'none', border: 'none', gap: 3,
-        color: T.text3, cursor: 'pointer',
-      }}>
-        <span style={{ fontSize: 20, lineHeight: 1 }}>↩</span>
-        <span style={{ fontSize: 9, fontWeight: 500, letterSpacing: 0.3 }}>Sign out</span>
-      </button>
     </div>
   )
 }
