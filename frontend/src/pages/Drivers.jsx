@@ -123,6 +123,7 @@ export default function Drivers() {
   )
 
   const filtered = rows.filter(r => {
+    if (r.is_active === 0) return false
     if (selectedCompanyId && r.company_id !== selectedCompanyId) return false
     if (!search) return true
     return (
