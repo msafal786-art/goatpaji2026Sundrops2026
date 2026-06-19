@@ -49,6 +49,8 @@ export default function Drivers() {
   const [rows, setRows] = useState([])
   const [companies, setCompanies] = useState([])
   const [selectedCompanyId, setSelectedCompanyId] = useState(null) // null = All
+  const [sortAsc, setSortAsc] = useState(true)
+  const [showInactive, setShowInactive] = useState(false)
   const [show, setShow] = useState(false)
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState({ ...EMPTY })
@@ -122,17 +124,24 @@ export default function Drivers() {
     rows.some(r => r.company_id === c.id)
   )
 
-  const filtered = rows.filter(r => {
-    if (r.is_active === 0) return false
-    if (selectedCompanyId && r.company_id !== selectedCompanyId) return false
-    if (!search) return true
-    return (
-      r.full_name.toLowerCase().includes(search.toLowerCase()) ||
-      (r.company_name || '').toLowerCase().includes(search.toLowerCase()) ||
-      (r.load_number || '').includes(search) ||
-      (r.broker_name || '').toLowerCase().includes(search.toLowerCase())
-    )
-  })
+  const filtered = rows
+    .filter(r => {
+      if (!showInactive && r.is_active === 0) return false
+      if (selectedCompanyId && r.company_id !== selectedCompanyId) return false
+      if (!search) return true
+      return (
+        r.full_name.toLowerCase().includes(search.toLowerCase()) ||
+        (r.company_name || '').toLowerCase().includes(search.toLowerCase()) ||
+        (r.load_number || '').includes(search) ||
+        (r.broker_name || '').toLowerCase().includes(search.toLowerCase())
+      )
+    })
+    .sort((a, b) => {
+      // Active always before inactive
+      if (a.is_active !== b.is_active) return b.is_active - a.is_active
+      const cmp = a.full_name.localeCompare(b.full_name)
+      return sortAsc ? cmp : -cmp
+    })
 
   // Group by company (only shown when "All" is selected)
   const showGroups = !selectedCompanyId
@@ -183,11 +192,19 @@ export default function Drivers() {
         </div>
       )}
 
-      <input
-        style={{ ...inputS(), marginBottom: 14, maxWidth: 300 }}
-        placeholder="Search drivers, loads, broker…"
-        value={search} onChange={e => setSearch(e.target.value)}
-      />
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+        <input
+          style={{ ...inputS(), maxWidth: 260 }}
+          placeholder="Search drivers, loads, broker…"
+          value={search} onChange={e => setSearch(e.target.value)}
+        />
+        <button onClick={() => setSortAsc(a => !a)} style={tabBtn(false)} title="Toggle sort order">
+          A–Z {sortAsc ? '↑' : '↓'}
+        </button>
+        <button onClick={() => setShowInactive(s => !s)} style={tabBtn(showInactive)}>
+          {showInactive ? 'Hide Inactive' : 'Show Inactive'}
+        </button>
+      </div>
 
       {/* Spreadsheet table */}
       <div style={{ overflowX: 'auto', borderRadius: 12, border: `1px solid ${T.sep}`, background: T.bg1 }}>
