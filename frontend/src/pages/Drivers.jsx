@@ -48,6 +48,7 @@ export default function Drivers() {
   const navigate = useNavigate()
   const [rows, setRows] = useState([])
   const [companies, setCompanies] = useState([])
+  const [selectedCompanyId, setSelectedCompanyId] = useState(null) // null = All
   const [show, setShow] = useState(false)
   const [editing, setEditing] = useState(null)
   const [form, setForm] = useState({ ...EMPTY })
@@ -64,7 +65,8 @@ export default function Drivers() {
 
   useEffect(() => {
     load()
-    if (user.role === 'dispatcher') api.companies().then(setCompanies)
+    // All dispatchers need companies — for filter tabs AND the edit form
+    if (user.role === 'dispatcher' || user.role === 'company_owner') api.companies().then(setCompanies)
     const iv = setInterval(load, 30000)
     return () => clearInterval(iv)
   }, [load])
@@ -115,28 +117,70 @@ export default function Drivers() {
   const mobile = useIsMobile()
   const isAdmin = user.role === 'dispatcher' && !user.company_id
 
-  const filtered = rows.filter(r =>
-    !search ||
-    r.full_name.toLowerCase().includes(search.toLowerCase()) ||
-    (r.company_name || '').toLowerCase().includes(search.toLowerCase()) ||
-    (r.load_number || '').includes(search) ||
-    (r.broker_name || '').toLowerCase().includes(search.toLowerCase())
+  // Companies that actually have drivers in this data set
+  const companiesWithDrivers = companies.filter(c =>
+    rows.some(r => r.company_id === c.id)
   )
 
-  // Group by company
+  const filtered = rows.filter(r => {
+    if (selectedCompanyId && r.company_id !== selectedCompanyId) return false
+    if (!search) return true
+    return (
+      r.full_name.toLowerCase().includes(search.toLowerCase()) ||
+      (r.company_name || '').toLowerCase().includes(search.toLowerCase()) ||
+      (r.load_number || '').includes(search) ||
+      (r.broker_name || '').toLowerCase().includes(search.toLowerCase())
+    )
+  })
+
+  // Group by company (only shown when "All" is selected)
+  const showGroups = !selectedCompanyId
   const grouped = {}
   filtered.forEach(r => {
-    const key = r.company_name || 'Unknown'
+    const key = showGroups ? (r.company_name || 'Unknown') : 'all'
     if (!grouped[key]) grouped[key] = []
     grouped[key].push(r)
   })
 
+  const selectedCompanyName = selectedCompanyId
+    ? (companies.find(c => c.id === selectedCompanyId)?.name || '')
+    : null
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-        <h1 style={{ fontSize: mobile ? 18 : 22, fontWeight: 700, color: T.text, letterSpacing: -0.4, margin: 0 }}>Driver Board</h1>
+        <h1 style={{ fontSize: mobile ? 18 : 22, fontWeight: 700, color: T.text, letterSpacing: -0.4, margin: 0 }}>
+          Driver Board
+          {selectedCompanyName && (
+            <span style={{ fontSize: 14, fontWeight: 500, color: T.blue, marginLeft: 10 }}>— {selectedCompanyName}</span>
+          )}
+        </h1>
         <button style={primaryBtn()} onClick={openNew}>+ Add Driver</button>
       </div>
+
+      {/* Company filter tabs — only shown to admin dispatcher */}
+      {isAdmin && companiesWithDrivers.length > 1 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
+          <button
+            onClick={() => setSelectedCompanyId(null)}
+            style={tabBtn(selectedCompanyId === null)}
+          >
+            All Companies
+          </button>
+          {companiesWithDrivers.map(c => (
+            <button
+              key={c.id}
+              onClick={() => setSelectedCompanyId(c.id)}
+              style={tabBtn(selectedCompanyId === c.id)}
+            >
+              {c.name.replace(/ INC$| LLC$| LTD$/i, '')}
+              <span style={{ marginLeft: 5, fontSize: 10, opacity: 0.7 }}>
+                {rows.filter(r => r.company_id === c.id).length}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
 
       <input
         style={{ ...inputS(), marginBottom: 14, maxWidth: 300 }}
@@ -163,12 +207,14 @@ export default function Drivers() {
           <tbody>
             {Object.entries(grouped).map(([company, drivers]) => (
               <React.Fragment key={company}>
-                {/* Company group header */}
-                <tr style={{ background: T.blue + '12' }}>
-                  <td colSpan={9} style={{ padding: '6px 14px', fontSize: 11, fontWeight: 700, color: T.blue, letterSpacing: 0.5 }}>
-                    {company}
-                  </td>
-                </tr>
+                {/* Company group header — only when showing all */}
+                {showGroups && (
+                  <tr style={{ background: T.blue + '12' }}>
+                    <td colSpan={9} style={{ padding: '6px 14px', fontSize: 11, fontWeight: 700, color: T.blue, letterSpacing: 0.5 }}>
+                      {company}
+                    </td>
+                  </tr>
+                )}
                 {drivers.map((r, idx) => {
                   const isDisabled = r.is_active === 0
                   const sc = STATUS[r.status] || STATUS.available
@@ -376,11 +422,13 @@ export default function Drivers() {
               <Section label="Employment">
                 <Row>
                   {user.role === 'dispatcher' && (
-                    <FField label="Company">
-                      <select style={inputS()} value={form.company_id} onChange={e => set('company_id', e.target.value)}>
-                        <option value="">Select…</option>
-                        {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    <FField label="Company *">
+                      <select style={{ ...inputS(), borderColor: !form.company_id ? T.orange : T.sep }} value={form.company_id} onChange={e => set('company_id', e.target.value)}>
+                        <option value="">— Select Company —</option>
+                        {companies.filter(c => c.id !== 26).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                        {companies.filter(c => c.id === 26).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
                       </select>
+                      {!form.company_id && <div style={{ fontSize: 10, color: T.orange, marginTop: 3 }}>Please assign to a company</div>}
                     </FField>
                   )}
                   <FField label="Hire Date"><input style={inputS()} type="date" value={form.hire_date} onChange={e => set('hire_date', e.target.value)} /></FField>
@@ -506,6 +554,12 @@ function FField({ label, children, style: extraStyle }) {
   )
 }
 
+const tabBtn    = (active) => ({
+  padding: '6px 14px', border: `1px solid ${active ? T.blue : T.sep}`,
+  borderRadius: 20, cursor: 'pointer', fontSize: 12, fontWeight: active ? 700 : 500,
+  background: active ? T.blue : T.bg2, color: active ? '#fff' : T.text2,
+  transition: 'all 0.15s',
+})
 const primaryBtn = () => ({ padding: '10px 20px', background: T.blue, color: '#fff', border: 'none', borderRadius: 9, cursor: 'pointer', fontWeight: 600, fontSize: 13 })
 const secBtn    = () => ({ padding: '10px 16px', background: T.bg2, color: T.text2, border: `1px solid ${T.sep}`, borderRadius: 9, cursor: 'pointer', fontWeight: 600, fontSize: 13 })
 const smBtn     = (color) => ({ padding: '4px 10px', background: color ? color + '15' : T.bg2, color: color || T.text2, border: `1px solid ${color ? color + '40' : T.sep}`, borderRadius: 6, cursor: 'pointer', fontSize: 11.5, fontWeight: 600 })
