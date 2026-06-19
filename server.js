@@ -375,17 +375,28 @@ app.put('/api/drivers/:id', auth, requireRole('dispatcher', 'company_owner'), (r
     hire_date, date_of_birth, address, cdl_class, license_state,
     drug_test_date, drug_test_expiry, background_check_date, emergency_contact_name, emergency_contact_phone
   } = req.body;
+  const cid = req.user.role === 'company_owner' ? req.user.company_id : (req.body.company_id || null);
   db.prepare(`UPDATE drivers SET
     full_name=?,phone=?,email=?,license_number=?,license_expiry=?,medical_card_expiry=?,notes=?,status=?,pay_percentage=?,
     hire_date=?,date_of_birth=?,address=?,cdl_class=?,license_state=?,drug_test_date=?,drug_test_expiry=?,background_check_date=?,
-    emergency_contact_name=?,emergency_contact_phone=?
+    emergency_contact_name=?,emergency_contact_phone=?,company_id=?
     WHERE id=?`).run(
     full_name, phone, email, license_number, license_expiry, medical_card_expiry, notes, status, pay_percentage ?? 70,
     hire_date||null, date_of_birth||null, address||null, cdl_class||null, license_state||null,
     drug_test_date||null, drug_test_expiry||null, background_check_date||null, emergency_contact_name||null, emergency_contact_phone||null,
-    req.params.id
+    cid, req.params.id
   );
   res.json(db.prepare('SELECT d.*, c.name as company_name FROM drivers d LEFT JOIN companies c ON d.company_id = c.id WHERE d.id = ?').get(req.params.id));
+});
+
+// Bulk reassign drivers to a company: { driver_ids: [1,2,3], company_id: 6 }
+app.post('/api/drivers/bulk-assign-company', auth, requireRole('dispatcher'), (req, res) => {
+  const { driver_ids, company_id } = req.body;
+  if (!Array.isArray(driver_ids) || !company_id) return res.status(400).json({ error: 'driver_ids and company_id required' });
+  const update = db.prepare('UPDATE drivers SET company_id=? WHERE id=?');
+  const tx = db.transaction(() => driver_ids.forEach(id => update.run(company_id, id)));
+  tx();
+  res.json({ updated: driver_ids.length });
 });
 
 app.delete('/api/drivers/:id', auth, requireRole('dispatcher'), (req, res) => {
