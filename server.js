@@ -308,6 +308,34 @@ app.get('/api/drivers', auth, (req, res) => {
   res.json(db.prepare(query).all(...params));
 });
 
+app.get('/api/drivers/board', auth, (req, res) => {
+  let where = '';
+  const params = [];
+  if (req.user.role === 'company_owner') {
+    where = 'WHERE d.company_id = ?'; params.push(req.user.company_id);
+  } else if (req.user.allowed_company_ids) {
+    const ids = JSON.parse(req.user.allowed_company_ids);
+    if (ids.length > 0) { where = `WHERE d.company_id IN (${ids.map(() => '?').join(',')})`; params.push(...ids); }
+  } else if (req.user.company_id) {
+    where = 'WHERE d.company_id = ?'; params.push(req.user.company_id);
+  }
+  const rows = db.prepare(`
+    SELECT d.id, d.full_name, d.phone, d.status, d.is_active, d.company_id,
+           c.name as company_name,
+           l.id as load_id, l.load_number, l.broker_name, l.status as load_status,
+           l.pickup_name, l.pickup_city, l.pickup_state, l.pickup_date, l.pickup_time,
+           l.delivery_name, l.delivery_city, l.delivery_state, l.delivery_date, l.delivery_time,
+           l.extra_stops, l.rate, l.commodity, l.miles
+    FROM drivers d
+    LEFT JOIN companies c ON d.company_id = c.id
+    LEFT JOIN loads l ON l.driver_id = d.id
+      AND l.status NOT IN ('delivered','completed')
+      AND l.id = (SELECT MAX(id) FROM loads WHERE driver_id = d.id AND status NOT IN ('delivered','completed'))
+    ${where}
+    ORDER BY c.name, d.full_name
+  `).all(...params);
+  res.json(rows);
+});
 
 app.post('/api/drivers', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
   const {

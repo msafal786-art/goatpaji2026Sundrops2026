@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, useCallback } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { api } from '../api.js'
 import { useAuth } from '../AuthContext.jsx'
 import { T, STATUS } from '../theme.js'
@@ -13,26 +14,39 @@ const EMPTY = {
   notes: '', username: '', password: '',
 }
 
+const LOAD_STATUSES = {
+  open: { label: 'Open', color: T.text3 },
+  covered: { label: 'Covered', color: '#5ac8fa' },
+  dispatched: { label: 'Dispatched', color: T.blue },
+  loading: { label: 'Loading', color: T.orange },
+  on_route: { label: 'On Route', color: '#30d158' },
+  unloading: { label: 'Unloading', color: T.orange },
+  in_yard: { label: 'In Yard', color: '#bf5af2' },
+  delivered: { label: 'Delivered', color: T.green },
+  completed: { label: 'Completed', color: T.green },
+}
+
 function daysUntil(dateStr) {
   if (!dateStr) return null
   return Math.ceil((new Date(dateStr + 'T00:00') - new Date()) / 864e5)
 }
 
-function ExpiryBadge({ date }) {
-  if (!date) return null
-  const days = daysUntil(date)
-  const color = days < 0 ? T.red : days <= 30 ? T.orange : days <= 90 ? '#ff9f0a' : T.green
-  const label = days < 0 ? `Expired ${Math.abs(days)}d ago` : days === 0 ? 'Expires today' : `${days}d left`
-  return (
-    <span style={{ fontSize: 10, fontWeight: 700, color, background: color + '15', padding: '2px 6px', borderRadius: 4, marginLeft: 6 }}>
-      {label}
-    </span>
-  )
+function fmt(city, state) {
+  if (city && state) return `${city}, ${state}`
+  return city || state || ''
+}
+
+function fmtDate(d) {
+  if (!d) return ''
+  const parts = d.split('-')
+  if (parts.length === 3) return `${parts[1]}/${parts[2]}`
+  return d
 }
 
 export default function Drivers() {
   const { user } = useAuth()
-  const [drivers, setDrivers] = useState([])
+  const navigate = useNavigate()
+  const [rows, setRows] = useState([])
   const [companies, setCompanies] = useState([])
   const [show, setShow] = useState(false)
   const [editing, setEditing] = useState(null)
@@ -40,17 +54,20 @@ export default function Drivers() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
-  const [loginMsg, setLoginMsg] = useState(null)   // { name, username, password? }
+  const [loginMsg, setLoginMsg] = useState(null)
   const [copied, setCopied] = useState(false)
+
+  const load = useCallback(async () => {
+    const data = await api.driversBoard()
+    setRows(data)
+  }, [])
 
   useEffect(() => {
     load()
     if (user.role === 'dispatcher') api.companies().then(setCompanies)
-    const interval = setInterval(load, 30000)
-    return () => clearInterval(interval)
-  }, [])
-
-  async function load() { setDrivers(await api.drivers()) }
+    const iv = setInterval(load, 30000)
+    return () => clearInterval(iv)
+  }, [load])
 
   function openNew() { setForm({ ...EMPTY }); setEditing(null); setShow(true); setError('') }
   function openEdit(d) {
@@ -63,7 +80,6 @@ export default function Drivers() {
     setSaving(true); setError('')
     try {
       if (editing) {
-        // If password filled in: create or reset login
         if (form.password) {
           if (!editing.user_id) {
             if (!form.username) { setError('Username required to create login'); setSaving(false); return }
@@ -71,16 +87,14 @@ export default function Drivers() {
           } else {
             await api.resetDriverPassword(editing.id, form.password)
           }
-          // Show copyable login message right after setting password
           setLoginMsg({ name: editing.full_name || form.full_name, username: form.username || editing.username, password: form.password })
         }
-        const updated = await api.updateDriver(editing.id, form)
-        setDrivers(ds => ds.map(d => d.id === editing.id ? { ...updated, user_id: form.password && !editing.user_id ? 1 : d.user_id } : d))
+        await api.updateDriver(editing.id, form)
       } else {
-        const created = await api.createDriver(form)
-        setDrivers(ds => [created, ...ds])
+        await api.createDriver(form)
       }
       setShow(false)
+      load()
     } catch (err) { setError(err.message) }
     finally { setSaving(false) }
   }
@@ -88,12 +102,12 @@ export default function Drivers() {
   async function handleDelete(id) {
     if (!confirm('Remove this driver?')) return
     await api.deleteDriver(id)
-    setDrivers(ds => ds.filter(d => d.id !== id))
+    setRows(rs => rs.filter(r => r.id !== id))
   }
 
   async function handleToggleActive(id) {
     const res = await api.toggleDriverActive(id)
-    setDrivers(ds => ds.map(d => d.id === id ? { ...d, is_active: res.is_active } : d))
+    setRows(rs => rs.map(r => r.id === id ? { ...r, is_active: res.is_active } : r))
   }
 
   function set(k, v) { setForm(f => ({ ...f, [k]: v })) }
@@ -101,95 +115,200 @@ export default function Drivers() {
   const mobile = useIsMobile()
   const isAdmin = user.role === 'dispatcher' && !user.company_id
 
-  const filtered = drivers.filter(d =>
-    !search || d.full_name.toLowerCase().includes(search.toLowerCase()) ||
-    (d.company_name || '').toLowerCase().includes(search.toLowerCase())
+  const filtered = rows.filter(r =>
+    !search ||
+    r.full_name.toLowerCase().includes(search.toLowerCase()) ||
+    (r.company_name || '').toLowerCase().includes(search.toLowerCase()) ||
+    (r.load_number || '').includes(search) ||
+    (r.broker_name || '').toLowerCase().includes(search.toLowerCase())
   )
+
+  // Group by company
+  const grouped = {}
+  filtered.forEach(r => {
+    const key = r.company_name || 'Unknown'
+    if (!grouped[key]) grouped[key] = []
+    grouped[key].push(r)
+  })
 
   return (
     <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <h1 style={{ fontSize: mobile ? 20 : 24, fontWeight: 700, color: T.text, letterSpacing: -0.4 }}>Drivers</h1>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+        <h1 style={{ fontSize: mobile ? 18 : 22, fontWeight: 700, color: T.text, letterSpacing: -0.4, margin: 0 }}>Driver Board</h1>
         <button style={primaryBtn()} onClick={openNew}>+ Add Driver</button>
       </div>
 
       <input
-        style={{ ...inputS(), marginBottom: 14, maxWidth: 320 }}
-        placeholder="Search by name or company…"
+        style={{ ...inputS(), marginBottom: 14, maxWidth: 300 }}
+        placeholder="Search drivers, loads, broker…"
         value={search} onChange={e => setSearch(e.target.value)}
       />
 
-      <div style={{ display: 'grid', gridTemplateColumns: mobile ? '1fr' : 'repeat(auto-fill, minmax(320px, 1fr))', gap: 10 }}>
-        {filtered.map(d => {
-          const sc = STATUS[d.status] || STATUS.available
-          const isDisabled = d.is_active === 0
-          const licDays = daysUntil(d.license_expiry)
-          const medDays = daysUntil(d.medical_card_expiry)
-          const hasAlert = (licDays !== null && licDays <= 60) || (medDays !== null && medDays <= 60)
-          return (
-            <div key={d.id} style={{
-              background: T.bg1, borderRadius: 14, padding: '15px 18px',
-              border: `1px solid ${hasAlert && !isDisabled ? T.orange + '60' : T.sep}`,
-              opacity: isDisabled ? 0.55 : 1,
-            }}>
-              {/* Header */}
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
-                <div>
-                  <div style={{ fontWeight: 700, fontSize: 15, color: T.text, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                    {d.full_name}
-                    {isDisabled && <span style={{ fontSize: 10, fontWeight: 700, color: T.orange, background: T.orange + '20', padding: '2px 8px', borderRadius: 20 }}>DISABLED</span>}
-                    {d.user_id && <span style={{ fontSize: 10, fontWeight: 700, color: T.green, background: T.green + '15', padding: '2px 7px', borderRadius: 20 }}>Portal</span>}
-                  </div>
-                  <div style={{ fontSize: 12, color: T.text3, marginTop: 2 }}>{d.company_name}</div>
-                </div>
-                {!isDisabled && (
-                  <span style={{ fontSize: 10, fontWeight: 700, color: sc.color, background: sc.color + '20', padding: '3px 9px', borderRadius: 20, flexShrink: 0 }}>
-                    {sc.label}
-                  </span>
-                )}
-              </div>
+      {/* Spreadsheet table */}
+      <div style={{ overflowX: 'auto', borderRadius: 12, border: `1px solid ${T.sep}`, background: T.bg1 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, minWidth: 900 }}>
+          <thead>
+            <tr style={{ background: T.bg2, borderBottom: `2px solid ${T.sep}` }}>
+              {['Driver', 'Status', 'Phone', 'Load #', 'Broker', 'Pickup', 'Drop(s)', 'Rate', ''].map((h, i) => (
+                <th key={i} style={{
+                  padding: '10px 12px', textAlign: 'left', fontSize: 10.5, fontWeight: 700,
+                  color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8,
+                  whiteSpace: 'nowrap', position: 'sticky', top: 0, background: T.bg2,
+                }}>
+                  {h}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {Object.entries(grouped).map(([company, drivers]) => (
+              <React.Fragment key={company}>
+                {/* Company group header */}
+                <tr style={{ background: T.blue + '12' }}>
+                  <td colSpan={9} style={{ padding: '6px 14px', fontSize: 11, fontWeight: 700, color: T.blue, letterSpacing: 0.5 }}>
+                    {company}
+                  </td>
+                </tr>
+                {drivers.map((r, idx) => {
+                  const isDisabled = r.is_active === 0
+                  const sc = STATUS[r.status] || STATUS.available
+                  const ls = r.load_status ? (LOAD_STATUSES[r.load_status] || {}) : null
+                  const hasLoad = !!r.load_id
+                  const noLoadRow = !hasLoad && !isDisabled
 
-              {/* Info */}
-              <div style={{ fontSize: 12, color: T.text2, display: 'flex', flexDirection: 'column', gap: 3, marginBottom: 12 }}>
-                {d.phone && <span>{d.phone}</span>}
-                {d.email && <span style={{ color: T.text3 }}>{d.email}</span>}
-                {d.hire_date && <span style={{ color: T.text3 }}>Hired {d.hire_date}</span>}
-                {d.cdl_class && <span>CDL Class {d.cdl_class}{d.license_state ? ` · ${d.license_state}` : ''}</span>}
-                {d.license_number && (
-                  <span>
-                    Lic: {d.license_number}
-                    {d.license_expiry && <><span style={{ color: T.text3 }}> · exp {d.license_expiry}</span><ExpiryBadge date={d.license_expiry} /></>}
-                  </span>
-                )}
-                {d.medical_card_expiry && (
-                  <span>
-                    Med Card exp {d.medical_card_expiry}<ExpiryBadge date={d.medical_card_expiry} />
-                  </span>
-                )}
-                {d.drug_test_date && <span style={{ color: T.text3 }}>Drug test {d.drug_test_date}</span>}
-                {d.emergency_contact_name && <span style={{ color: T.text3 }}>Emergency: {d.emergency_contact_name} {d.emergency_contact_phone}</span>}
-              </div>
+                  let extraStops = []
+                  try { extraStops = r.extra_stops ? JSON.parse(r.extra_stops) : [] } catch {}
 
-              {/* Actions */}
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                {!isDisabled && <button style={smBtn()} onClick={() => openEdit(d)}>Edit</button>}
-                {d.user_id && d.username && (
-                  <button style={smBtn(T.blue)} onClick={() => setLoginMsg({ name: d.full_name, username: d.username })}>
-                    Copy Login
-                  </button>
-                )}
-                <button style={smBtn(isDisabled ? T.green : T.red)} onClick={() => handleToggleActive(d.id)}>
-                  {isDisabled ? 'Enable' : 'Disable'}
-                </button>
-                {isAdmin && <button style={smBtn(T.red)} onClick={() => handleDelete(d.id)}>Remove</button>}
-              </div>
-            </div>
-          )
-        })}
-        {filtered.length === 0 && <div style={{ color: T.text3, padding: 20 }}>No drivers found.</div>}
+                  return (
+                    <tr key={r.id} style={{
+                      background: isDisabled ? T.bg2 : idx % 2 === 0 ? T.bg1 : T.bg2 + 'aa',
+                      opacity: isDisabled ? 0.5 : 1,
+                      borderBottom: `1px solid ${T.sep}`,
+                    }}>
+                      {/* Driver name */}
+                      <td style={{ padding: '10px 12px', minWidth: 140 }}>
+                        <div style={{ fontWeight: 600, color: T.text, fontSize: 13 }}>{r.full_name}</div>
+                        {isDisabled && <span style={{ fontSize: 9, fontWeight: 700, color: T.orange, background: T.orange + '20', padding: '1px 5px', borderRadius: 4 }}>DISABLED</span>}
+                      </td>
+
+                      {/* Driver status */}
+                      <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
+                        <span style={{ fontSize: 10, fontWeight: 700, color: sc.color, background: sc.color + '20', padding: '2px 8px', borderRadius: 10 }}>
+                          {sc.label}
+                        </span>
+                      </td>
+
+                      {/* Phone */}
+                      <td style={{ padding: '10px 12px', color: T.text2, whiteSpace: 'nowrap' }}>
+                        {r.phone || <span style={{ color: T.text3 }}>—</span>}
+                      </td>
+
+                      {/* Load # */}
+                      <td style={{ padding: '10px 12px', minWidth: 90 }}>
+                        {hasLoad ? (
+                          <div>
+                            <button
+                              onClick={() => navigate(`/loads/${r.load_id}`)}
+                              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: T.blue, fontWeight: 700, fontSize: 12.5, textDecoration: 'underline' }}
+                            >
+                              #{r.load_number}
+                            </button>
+                            {ls && (
+                              <div style={{ fontSize: 10, color: ls.color, fontWeight: 600, marginTop: 2 }}>{ls.label}</div>
+                            )}
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => navigate('/loads/new')}
+                            style={{ background: 'none', border: `1px dashed ${T.sep}`, padding: '3px 8px', cursor: 'pointer', color: T.text3, fontSize: 11, borderRadius: 6 }}
+                          >
+                            + Assign
+                          </button>
+                        )}
+                      </td>
+
+                      {/* Broker */}
+                      <td style={{ padding: '10px 12px', color: T.text2, maxWidth: 130 }}>
+                        {hasLoad ? (
+                          <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {r.broker_name || <span style={{ color: T.text3 }}>—</span>}
+                          </div>
+                        ) : <span style={{ color: T.text3 }}>—</span>}
+                      </td>
+
+                      {/* Pickup */}
+                      <td style={{ padding: '10px 12px', minWidth: 160 }}>
+                        {hasLoad ? (
+                          <div>
+                            <div style={{ fontWeight: 600, color: T.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 160 }}>
+                              {r.pickup_name || <span style={{ color: T.text3, fontWeight: 400 }}>—</span>}
+                            </div>
+                            <div style={{ color: T.text3, fontSize: 11, marginTop: 1 }}>
+                              {fmt(r.pickup_city, r.pickup_state)}
+                              {r.pickup_date && <span style={{ marginLeft: 4, color: T.blue }}>{fmtDate(r.pickup_date)}</span>}
+                            </div>
+                          </div>
+                        ) : <span style={{ color: T.text3 }}>—</span>}
+                      </td>
+
+                      {/* Drop(s) */}
+                      <td style={{ padding: '10px 12px', minWidth: 200 }}>
+                        {hasLoad ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                            {/* Primary delivery */}
+                            <DropLine
+                              label={extraStops.length > 0 ? 'Drop 1' : null}
+                              name={r.delivery_name}
+                              location={fmt(r.delivery_city, r.delivery_state)}
+                              date={r.delivery_date}
+                            />
+                            {/* Extra drops */}
+                            {extraStops.map((s, i) => (
+                              <DropLine
+                                key={i}
+                                label={`Drop ${i + 2}`}
+                                name={s.name}
+                                location={fmt(s.city, s.state)}
+                                date={s.date}
+                              />
+                            ))}
+                          </div>
+                        ) : <span style={{ color: T.text3 }}>—</span>}
+                      </td>
+
+                      {/* Rate */}
+                      <td style={{ padding: '10px 12px', whiteSpace: 'nowrap', fontWeight: 600, color: T.green }}>
+                        {hasLoad && r.rate
+                          ? `$${Number(r.rate).toLocaleString()}`
+                          : <span style={{ color: T.text3, fontWeight: 400 }}>—</span>}
+                      </td>
+
+                      {/* Actions */}
+                      <td style={{ padding: '10px 10px', whiteSpace: 'nowrap' }}>
+                        <div style={{ display: 'flex', gap: 5 }}>
+                          {!isDisabled && <button style={smBtn()} onClick={() => openEdit(r)}>Edit</button>}
+                          {hasLoad && (
+                            <button style={smBtn(T.blue)} onClick={() => navigate(`/loads/${r.load_id}`)}>Load</button>
+                          )}
+                          <button style={smBtn(isDisabled ? T.green : T.orange)} onClick={() => handleToggleActive(r.id)}>
+                            {isDisabled ? 'Enable' : 'Disable'}
+                          </button>
+                          {isAdmin && <button style={smBtn(T.red)} onClick={() => handleDelete(r.id)}>✕</button>}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </React.Fragment>
+            ))}
+            {filtered.length === 0 && (
+              <tr><td colSpan={9} style={{ padding: 30, color: T.text3, textAlign: 'center' }}>No drivers found.</td></tr>
+            )}
+          </tbody>
+        </table>
       </div>
 
-      {/* Driver login info copy modal */}
+      {/* Driver login copy modal */}
       {loginMsg && (() => {
         const msg = [
           `Hi ${loginMsg.name},`,
@@ -221,16 +340,8 @@ export default function Drivers() {
                 Copy this and send it to the driver via text or WhatsApp.
                 {loginMsg.password && <span style={{ color: T.orange }}> Password will not be shown again once you close this.</span>}
               </div>
-              <pre style={{
-                background: T.bg2, border: `1px solid ${T.sep}`, borderRadius: 10,
-                padding: '14px 16px', fontSize: 13, color: T.text, lineHeight: 1.7,
-                whiteSpace: 'pre-wrap', fontFamily: 'inherit', margin: 0,
-              }}>{msg}</pre>
-              <button onClick={copyMsg} style={{
-                marginTop: 14, width: '100%', padding: '12px',
-                background: copied ? T.green : T.blue, color: '#fff',
-                border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 700, cursor: 'pointer',
-              }}>
+              <pre style={{ background: T.bg2, border: `1px solid ${T.sep}`, borderRadius: 10, padding: '14px 16px', fontSize: 13, color: T.text, lineHeight: 1.7, whiteSpace: 'pre-wrap', fontFamily: 'inherit', margin: 0 }}>{msg}</pre>
+              <button onClick={copyMsg} style={{ marginTop: 14, width: '100%', padding: '12px', background: copied ? T.green : T.blue, color: '#fff', border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
                 {copied ? '✓ Copied!' : 'Copy to Clipboard'}
               </button>
             </div>
@@ -238,7 +349,7 @@ export default function Drivers() {
         )
       })()}
 
-      {/* Add / Edit form */}
+      {/* Add / Edit modal */}
       {show && (
         <div style={modalBg()} onClick={() => setShow(false)}>
           <div style={modalBox()} onClick={e => e.stopPropagation()}>
@@ -248,7 +359,6 @@ export default function Drivers() {
             </div>
             <form onSubmit={handleSubmit}>
 
-              {/* ── Personal ── */}
               <Section label="Personal Info">
                 <Row>
                   <FField label="Full Name *"><input style={inputS()} required value={form.full_name} onChange={e => set('full_name', e.target.value)} /></FField>
@@ -263,7 +373,6 @@ export default function Drivers() {
                 </FField>
               </Section>
 
-              {/* ── Employment ── */}
               <Section label="Employment">
                 <Row>
                   {user.role === 'dispatcher' && (
@@ -287,7 +396,6 @@ export default function Drivers() {
                 </Row>
               </Section>
 
-              {/* ── Compliance / Licensing ── */}
               <Section label="Licensing & Compliance">
                 <Row>
                   <FField label="CDL Class">
@@ -312,7 +420,6 @@ export default function Drivers() {
                 </Row>
               </Section>
 
-              {/* ── Emergency Contact ── */}
               <Section label="Emergency Contact">
                 <Row>
                   <FField label="Name"><input style={inputS()} value={form.emergency_contact_name} onChange={e => set('emergency_contact_name', e.target.value)} /></FField>
@@ -320,7 +427,6 @@ export default function Drivers() {
                 </Row>
               </Section>
 
-              {/* ── Portal Login ── */}
               <Section label={editing?.user_id ? 'Portal Login (Reset Password)' : 'Portal Login'}>
                 <div style={{ fontSize: 12, color: T.text3, marginBottom: 10 }}>
                   {editing?.user_id
@@ -330,8 +436,7 @@ export default function Drivers() {
                 <Row>
                   {!editing?.user_id && (
                     <FField label="Username">
-                      <input style={inputS()} value={form.username} onChange={e => set('username', e.target.value)}
-                        placeholder="e.g. rahul.bhatia" autoComplete="off" />
+                      <input style={inputS()} value={form.username} onChange={e => set('username', e.target.value)} placeholder="e.g. rahul.bhatia" autoComplete="off" />
                     </FField>
                   )}
                   {editing?.user_id && (
@@ -346,7 +451,6 @@ export default function Drivers() {
                 </Row>
               </Section>
 
-              {/* ── Notes ── */}
               <FField label="Notes">
                 <textarea style={{ ...inputS(), height: 64, resize: 'vertical' }} value={form.notes} onChange={e => set('notes', e.target.value)} />
               </FField>
@@ -361,6 +465,23 @@ export default function Drivers() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function DropLine({ label, name, location, date }) {
+  return (
+    <div style={{ display: 'flex', gap: 4, alignItems: 'baseline' }}>
+      {label && <span style={{ fontSize: 9.5, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.5, flexShrink: 0 }}>{label}:</span>}
+      <div>
+        <div style={{ fontWeight: 600, color: T.text, fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: 180 }}>
+          {name || <span style={{ color: T.text3, fontWeight: 400 }}>—</span>}
+        </div>
+        <div style={{ color: T.text3, fontSize: 11 }}>
+          {location}
+          {date && <span style={{ marginLeft: 4, color: T.orange }}>{fmtDate(date)}</span>}
+        </div>
+      </div>
     </div>
   )
 }
@@ -387,7 +508,7 @@ function FField({ label, children, style: extraStyle }) {
 
 const primaryBtn = () => ({ padding: '10px 20px', background: T.blue, color: '#fff', border: 'none', borderRadius: 9, cursor: 'pointer', fontWeight: 600, fontSize: 13 })
 const secBtn    = () => ({ padding: '10px 16px', background: T.bg2, color: T.text2, border: `1px solid ${T.sep}`, borderRadius: 9, cursor: 'pointer', fontWeight: 600, fontSize: 13 })
-const smBtn     = (color) => ({ padding: '6px 12px', background: color ? color + '15' : T.bg2, color: color || T.text2, border: `1px solid ${color ? color + '40' : T.sep}`, borderRadius: 7, cursor: 'pointer', fontSize: 12, fontWeight: 600 })
+const smBtn     = (color) => ({ padding: '4px 10px', background: color ? color + '15' : T.bg2, color: color || T.text2, border: `1px solid ${color ? color + '40' : T.sep}`, borderRadius: 6, cursor: 'pointer', fontSize: 11.5, fontWeight: 600 })
 const inputS    = () => ({ width: '100%', padding: '9px 11px', border: `1px solid ${T.sep}`, borderRadius: 8, fontSize: 13, background: T.bg2, color: T.text, outline: 'none', boxSizing: 'border-box' })
 const modalBg   = () => ({ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 1000, overflowY: 'auto', padding: '20px 0 0' })
 const modalBox  = () => ({ background: T.bg1, borderRadius: '18px 18px 0 0', padding: '24px 24px 32px', width: '100%', maxWidth: 620, border: `1px solid ${T.sep}`, maxHeight: '94vh', overflowY: 'auto' })

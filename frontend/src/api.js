@@ -60,6 +60,7 @@ export const api = {
   dashboardStats: () => req('GET', '/dashboard-stats'),
 
   drivers: () => req('GET', '/drivers'),
+  driversBoard: () => req('GET', '/drivers/board'),
   createDriver: (d) => req('POST', '/drivers', d),
   updateDriver: (id, d) => req('PUT', `/drivers/${id}`, d),
   deleteDriver: (id) => req('DELETE', `/drivers/${id}`),
