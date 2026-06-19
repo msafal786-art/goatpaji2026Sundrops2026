@@ -206,7 +206,93 @@ export default function Drivers() {
         </button>
       </div>
 
-      {/* Spreadsheet table */}
+      {/* Mobile card view */}
+      {mobile ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {Object.entries(grouped).map(([company, drivers]) => (
+            <React.Fragment key={company}>
+              {showGroups && (
+                <div style={{ fontSize: 11, fontWeight: 700, color: T.blue, letterSpacing: 0.5, padding: '6px 4px 2px', textTransform: 'uppercase' }}>
+                  {company}
+                </div>
+              )}
+              {drivers.map(r => {
+                const isDisabled = r.is_active === 0
+                const sc = STATUS[r.status] || STATUS.available
+                const ls = r.load_status ? (LOAD_STATUSES[r.load_status] || {}) : null
+                const hasLoad = !!r.load_id
+                let extraStops = []
+                try { extraStops = r.extra_stops ? JSON.parse(r.extra_stops) : [] } catch {}
+                return (
+                  <div key={r.id} style={{ background: T.bg1, border: `1px solid ${T.sep}`, borderRadius: 12, padding: '12px 14px', opacity: isDisabled ? 0.55 : 1 }}>
+                    {/* Top row: name + status + actions */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 8 }}>
+                      <div>
+                        <div style={{ fontWeight: 700, fontSize: 15, color: T.text }}>{r.full_name}</div>
+                        <div style={{ display: 'flex', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: sc.color, background: sc.color + '20', padding: '2px 8px', borderRadius: 10 }}>{sc.label}</span>
+                          {r.phone && (
+                            <a href={`tel:${r.phone}`} style={{ fontSize: 12, color: T.blue, textDecoration: 'none' }}>{r.phone}</a>
+                          )}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
+                        {!isDisabled && <button style={smBtn()} onClick={() => openEdit(r)}>Edit</button>}
+                        <button style={smBtn(isDisabled ? T.green : T.orange)} onClick={() => handleToggleActive(r.id)}>
+                          {isDisabled ? 'On' : 'Off'}
+                        </button>
+                      </div>
+                    </div>
+                    {/* Load info */}
+                    {hasLoad ? (
+                      <div style={{ background: T.bg2, borderRadius: 8, padding: '8px 10px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                          <button
+                            onClick={() => navigate(`/loads/${r.load_id}`)}
+                            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: T.blue, fontWeight: 700, fontSize: 13 }}
+                          >
+                            #{r.load_number}
+                          </button>
+                          <span style={{ fontSize: 13, fontWeight: 700, color: T.green }}>${Number(r.rate || 0).toLocaleString()}</span>
+                        </div>
+                        {ls && <div style={{ fontSize: 10, color: ls.color, fontWeight: 600, marginBottom: 4 }}>{ls.label}</div>}
+                        <div style={{ fontSize: 11, color: T.text2, marginBottom: 2 }}>
+                          <span style={{ color: T.text3 }}>PU </span>
+                          {fmt(r.pickup_city, r.pickup_state)}
+                          {r.pickup_date && <span style={{ color: T.blue, marginLeft: 4 }}>{fmtDate(r.pickup_date)}</span>}
+                        </div>
+                        <div style={{ fontSize: 11, color: T.text2 }}>
+                          <span style={{ color: T.text3 }}>DR </span>
+                          {fmt(r.delivery_city, r.delivery_state)}
+                          {r.delivery_date && <span style={{ color: T.orange, marginLeft: 4 }}>{fmtDate(r.delivery_date)}</span>}
+                        </div>
+                        {extraStops.map((s, i) => (
+                          <div key={i} style={{ fontSize: 11, color: T.text2 }}>
+                            <span style={{ color: T.text3 }}>DR{i + 2} </span>
+                            {fmt(s.city, s.state)}
+                            {s.date && <span style={{ color: T.orange, marginLeft: 4 }}>{fmtDate(s.date)}</span>}
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      !isDisabled && (
+                        <button
+                          onClick={() => navigate('/loads/new')}
+                          style={{ width: '100%', padding: '7px', background: 'none', border: `1px dashed ${T.sep}`, color: T.text3, borderRadius: 8, fontSize: 12, cursor: 'pointer', marginTop: 4 }}
+                        >
+                          + Assign Load
+                        </button>
+                      )
+                    )}
+                  </div>
+                )
+              })}
+            </React.Fragment>
+          ))}
+          {filtered.length === 0 && <div style={{ padding: 30, color: T.text3, textAlign: 'center' }}>No drivers found.</div>}
+        </div>
+      ) : (
+      /* Desktop spreadsheet table */
       <div style={{ overflowX: 'auto', borderRadius: 12, border: `1px solid ${T.sep}`, background: T.bg1 }}>
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, minWidth: 900 }}>
           <thead>
@@ -225,7 +311,6 @@ export default function Drivers() {
           <tbody>
             {Object.entries(grouped).map(([company, drivers]) => (
               <React.Fragment key={company}>
-                {/* Company group header — only when showing all */}
                 {showGroups && (
                   <tr style={{ background: T.blue + '12' }}>
                     <td colSpan={9} style={{ padding: '6px 14px', fontSize: 11, fontWeight: 700, color: T.blue, letterSpacing: 0.5 }}>
@@ -238,7 +323,6 @@ export default function Drivers() {
                   const sc = STATUS[r.status] || STATUS.available
                   const ls = r.load_status ? (LOAD_STATUSES[r.load_status] || {}) : null
                   const hasLoad = !!r.load_id
-                  const noLoadRow = !hasLoad && !isDisabled
 
                   let extraStops = []
                   try { extraStops = r.extra_stops ? JSON.parse(r.extra_stops) : [] } catch {}
@@ -249,58 +333,37 @@ export default function Drivers() {
                       opacity: isDisabled ? 0.5 : 1,
                       borderBottom: `1px solid ${T.sep}`,
                     }}>
-                      {/* Driver name */}
                       <td style={{ padding: '10px 12px', minWidth: 140 }}>
                         <div style={{ fontWeight: 600, color: T.text, fontSize: 13 }}>{r.full_name}</div>
                         {isDisabled && <span style={{ fontSize: 9, fontWeight: 700, color: T.orange, background: T.orange + '20', padding: '1px 5px', borderRadius: 4 }}>DISABLED</span>}
                       </td>
-
-                      {/* Driver status */}
                       <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
                         <span style={{ fontSize: 10, fontWeight: 700, color: sc.color, background: sc.color + '20', padding: '2px 8px', borderRadius: 10 }}>
                           {sc.label}
                         </span>
                       </td>
-
-                      {/* Phone */}
                       <td style={{ padding: '10px 12px', color: T.text2, whiteSpace: 'nowrap' }}>
                         {r.phone || <span style={{ color: T.text3 }}>—</span>}
                       </td>
-
-                      {/* Load # */}
                       <td style={{ padding: '10px 12px', minWidth: 90 }}>
                         {hasLoad ? (
                           <div>
-                            <button
-                              onClick={() => navigate(`/loads/${r.load_id}`)}
-                              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: T.blue, fontWeight: 700, fontSize: 12.5, textDecoration: 'underline' }}
-                            >
+                            <button onClick={() => navigate(`/loads/${r.load_id}`)} style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: T.blue, fontWeight: 700, fontSize: 12.5, textDecoration: 'underline' }}>
                               #{r.load_number}
                             </button>
-                            {ls && (
-                              <div style={{ fontSize: 10, color: ls.color, fontWeight: 600, marginTop: 2 }}>{ls.label}</div>
-                            )}
+                            {ls && <div style={{ fontSize: 10, color: ls.color, fontWeight: 600, marginTop: 2 }}>{ls.label}</div>}
                           </div>
                         ) : (
-                          <button
-                            onClick={() => navigate('/loads/new')}
-                            style={{ background: 'none', border: `1px dashed ${T.sep}`, padding: '3px 8px', cursor: 'pointer', color: T.text3, fontSize: 11, borderRadius: 6 }}
-                          >
+                          <button onClick={() => navigate('/loads/new')} style={{ background: 'none', border: `1px dashed ${T.sep}`, padding: '3px 8px', cursor: 'pointer', color: T.text3, fontSize: 11, borderRadius: 6 }}>
                             + Assign
                           </button>
                         )}
                       </td>
-
-                      {/* Broker */}
                       <td style={{ padding: '10px 12px', color: T.text2, maxWidth: 130 }}>
-                        {hasLoad ? (
-                          <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {r.broker_name || <span style={{ color: T.text3 }}>—</span>}
-                          </div>
-                        ) : <span style={{ color: T.text3 }}>—</span>}
+                        <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {hasLoad ? (r.broker_name || <span style={{ color: T.text3 }}>—</span>) : <span style={{ color: T.text3 }}>—</span>}
+                        </div>
                       </td>
-
-                      {/* Pickup */}
                       <td style={{ padding: '10px 12px', minWidth: 160 }}>
                         {hasLoad ? (
                           <div>
@@ -314,46 +377,23 @@ export default function Drivers() {
                           </div>
                         ) : <span style={{ color: T.text3 }}>—</span>}
                       </td>
-
-                      {/* Drop(s) */}
                       <td style={{ padding: '10px 12px', minWidth: 200 }}>
                         {hasLoad ? (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
-                            {/* Primary delivery */}
-                            <DropLine
-                              label={extraStops.length > 0 ? 'Drop 1' : null}
-                              name={r.delivery_name}
-                              location={fmt(r.delivery_city, r.delivery_state)}
-                              date={r.delivery_date}
-                            />
-                            {/* Extra drops */}
+                            <DropLine label={extraStops.length > 0 ? 'Drop 1' : null} name={r.delivery_name} location={fmt(r.delivery_city, r.delivery_state)} date={r.delivery_date} />
                             {extraStops.map((s, i) => (
-                              <DropLine
-                                key={i}
-                                label={`Drop ${i + 2}`}
-                                name={s.name}
-                                location={fmt(s.city, s.state)}
-                                date={s.date}
-                              />
+                              <DropLine key={i} label={`Drop ${i + 2}`} name={s.name} location={fmt(s.city, s.state)} date={s.date} />
                             ))}
                           </div>
                         ) : <span style={{ color: T.text3 }}>—</span>}
                       </td>
-
-                      {/* Rate */}
                       <td style={{ padding: '10px 12px', whiteSpace: 'nowrap', fontWeight: 600, color: T.green }}>
-                        {hasLoad && r.rate
-                          ? `$${Number(r.rate).toLocaleString()}`
-                          : <span style={{ color: T.text3, fontWeight: 400 }}>—</span>}
+                        {hasLoad && r.rate ? `$${Number(r.rate).toLocaleString()}` : <span style={{ color: T.text3, fontWeight: 400 }}>—</span>}
                       </td>
-
-                      {/* Actions */}
                       <td style={{ padding: '10px 10px', whiteSpace: 'nowrap' }}>
                         <div style={{ display: 'flex', gap: 5 }}>
                           {!isDisabled && <button style={smBtn()} onClick={() => openEdit(r)}>Edit</button>}
-                          {hasLoad && (
-                            <button style={smBtn(T.blue)} onClick={() => navigate(`/loads/${r.load_id}`)}>Load</button>
-                          )}
+                          {hasLoad && <button style={smBtn(T.blue)} onClick={() => navigate(`/loads/${r.load_id}`)}>Load</button>}
                           <button style={smBtn(isDisabled ? T.green : T.orange)} onClick={() => handleToggleActive(r.id)}>
                             {isDisabled ? 'Enable' : 'Disable'}
                           </button>
@@ -371,6 +411,7 @@ export default function Drivers() {
           </tbody>
         </table>
       </div>
+      )}
 
       {/* Driver login copy modal */}
       {loginMsg && (() => {
