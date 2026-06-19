@@ -78,6 +78,7 @@ export const api = {
     return req('GET', `/loads${q ? '?' + q : ''}`)
   },
   load: (id) => req('GET', `/loads/${id}`),
+  checkDuplicateLoad: (load_number) => req('GET', `/loads/check-duplicate?load_number=${encodeURIComponent(load_number)}`),
   createLoad: (d) => req('POST', '/loads', d),
   updateLoad: (id, d) => req('PUT', `/loads/${id}`, d),
   deleteLoad: (id) => req('DELETE', `/loads/${id}`),

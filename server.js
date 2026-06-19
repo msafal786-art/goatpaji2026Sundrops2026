@@ -532,6 +532,19 @@ app.get('/api/loads/:id', auth, (req, res) => {
   res.json(load);
 });
 
+// Check for duplicate load number before creating
+app.get('/api/loads/check-duplicate', auth, (req, res) => {
+  const num = (req.query.load_number || '').trim();
+  if (!num) return res.json({ duplicate: false });
+  const existing = db.prepare(`
+    SELECT l.id, l.load_number, l.broker_name, l.created_at, c.name as company_name
+    FROM loads l LEFT JOIN companies c ON l.company_id = c.id
+    WHERE TRIM(l.load_number) = ? OR TRIM(l.broker_order) = ?
+    ORDER BY l.id DESC LIMIT 1
+  `).get(num, num);
+  res.json({ duplicate: !!existing, load: existing || null });
+});
+
 app.post('/api/loads', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
   // company_owner → their company; scoped dispatcher (has company_id) → their company; admin dispatcher → body value
   const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
@@ -547,6 +560,14 @@ app.post('/api/loads', auth, requireRole('dispatcher', 'company_owner'), (req, r
     delivery_date, delivery_time, delivery_phone, delivery_refs,
     special_instructions, notes, driver_id, truck_id, extra_stops, extra_pickups
   } = req.body;
+
+  // Reject duplicate load numbers
+  if (load_number && load_number.trim()) {
+    const dup = db.prepare(
+      `SELECT id FROM loads WHERE TRIM(load_number) = ? OR TRIM(broker_order) = ? LIMIT 1`
+    ).get(load_number.trim(), load_number.trim());
+    if (dup) return res.status(409).json({ error: `Load #${load_number} already exists (ID ${dup.id})` });
+  }
 
   const extraStopsJson = Array.isArray(extra_stops) && extra_stops.length > 0
     ? JSON.stringify(extra_stops) : null;

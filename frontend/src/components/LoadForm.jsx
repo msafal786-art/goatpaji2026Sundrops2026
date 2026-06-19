@@ -34,7 +34,9 @@ export default function LoadForm({ load, onClose, onSave }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [parseError, setParseError] = useState('')
+  const [dupWarning, setDupWarning] = useState(null) // { id, load_number, broker_name, created_at }
   const fileRef = useRef()
+  const dupTimerRef = useRef()
 
   useEffect(() => {
     if (user.role === 'dispatcher') api.companies().then(setCompanies)
@@ -42,7 +44,20 @@ export default function LoadForm({ load, onClose, onSave }) {
     api.trucks().then(setTrucks)
   }, [])
 
-  function set(k, v) { setForm(f => ({ ...f, [k]: v })) }
+  function set(k, v) {
+    setForm(f => ({ ...f, [k]: v }))
+    // Real-time duplicate check on load_number field
+    if (k === 'load_number' && !load) {
+      clearTimeout(dupTimerRef.current)
+      setDupWarning(null)
+      if (v.trim().length > 2) {
+        dupTimerRef.current = setTimeout(async () => {
+          const res = await api.checkDuplicateLoad(v.trim())
+          if (res.duplicate) setDupWarning(res.load)
+        }, 600)
+      }
+    }
+  }
 
   async function handleFileParse(e) {
     const file = e.target.files[0]
@@ -170,8 +185,38 @@ export default function LoadForm({ load, onClose, onSave }) {
           )}
 
           <Section title="Broker / Load Info">
+            {dupWarning && (
+              <div style={{
+                margin: '0 0 12px', padding: '10px 14px', borderRadius: 10,
+                background: '#ff9f0a22', border: '1px solid #ff9f0a66',
+                display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10,
+              }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#ff9f0a' }}>
+                    ⚠ Load #{dupWarning.load_number} already exists
+                  </div>
+                  <div style={{ fontSize: 11, color: T.text2, marginTop: 2 }}>
+                    {dupWarning.broker_name} · Built {dupWarning.created_at ? new Date(dupWarning.created_at).toLocaleDateString() : ''}
+                  </div>
+                </div>
+                <a
+                  href={`/loads/${dupWarning.id}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={{ fontSize: 12, fontWeight: 700, color: '#ff9f0a', whiteSpace: 'nowrap', textDecoration: 'underline' }}
+                >
+                  View Load →
+                </a>
+              </div>
+            )}
             <Row>
-              <Field label="Load Number"><input style={inputS} value={form.load_number} onChange={e => set('load_number', e.target.value)} /></Field>
+              <Field label="Load Number">
+                <input
+                  style={{ ...inputS, borderColor: dupWarning ? '#ff9f0a' : undefined }}
+                  value={form.load_number}
+                  onChange={e => set('load_number', e.target.value)}
+                />
+              </Field>
               <Field label="Broker Name"><input style={inputS} value={form.broker_name} onChange={e => set('broker_name', e.target.value)} /></Field>
               <Field label="Order #"><input style={inputS} value={form.broker_order} onChange={e => set('broker_order', e.target.value)} /></Field>
             </Row>
