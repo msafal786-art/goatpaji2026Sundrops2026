@@ -925,12 +925,19 @@ Rules:
 
     res.json(data);
   } catch (err) {
-    console.error('Parse error:', err.message);
+    console.error('Parse error:', err.message, err.status, err.error);
     try { fs.unlinkSync(req.file.path); } catch {}
-    const msg = err.message?.includes('credit balance')
-      ? 'PDF parsing is temporarily unavailable (API credits exhausted). Enter load details manually.'
-      : 'Failed to parse PDF';
-    res.status(500).json({ error: msg });
+    let msg = 'Failed to parse PDF';
+    if (err.message?.includes('credit balance') || err.message?.includes('credit')) {
+      msg = 'PDF parsing unavailable — API credits exhausted. Enter load details manually.';
+    } else if (err.status === 401 || err.message?.includes('401') || err.message?.includes('auth') || err.message?.includes('API key')) {
+      msg = 'PDF parsing unavailable — API key not configured. Contact admin.';
+    } else if (err.status === 529 || err.message?.includes('overloaded')) {
+      msg = 'Anthropic API is overloaded — try again in a moment.';
+    } else if (err.message?.includes('No JSON')) {
+      msg = 'Could not extract load data from PDF — try entering manually.';
+    }
+    res.status(500).json({ error: msg, detail: err.message });
   }
 });
 

@@ -38,7 +38,8 @@ async function req(method, path, body, isForm = false) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(err.error || 'Request failed')
+    const msg = err.error || 'Request failed'
+    throw new Error(err.detail ? `${msg} — ${err.detail}` : msg)
   }
   return res.json()
 }
