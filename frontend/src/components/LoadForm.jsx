@@ -105,6 +105,11 @@ export default function LoadForm({ load, onClose, onSave }) {
       if (Array.isArray(data.extra_pickups) && data.extra_pickups.length > 0) {
         setExtraPickups(data.extra_pickups)
       }
+      // After parse, check if this load number already exists
+      if (data.load_number && !load) {
+        const dup = await api.checkDuplicateLoad(data.load_number.trim())
+        if (dup.duplicate) setDupWarning(dup.load)
+      }
     } catch (err) {
       setParseError(err.message)
     } finally {
