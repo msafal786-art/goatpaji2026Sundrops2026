@@ -277,8 +277,9 @@ export default function App() {
       <BrowserRouter>
         {!user ? (
           <Routes>
+            <Route path="/" element={<Landing />} />
             <Route path="/login" element={<Login onLogin={handleLogin} />} />
-            <Route path="*" element={<Navigate to="/login" />} />
+            <Route path="*" element={<Navigate to="/" />} />
           </Routes>
         ) : user.role === 'driver' ? (
           <Routes><Route path="*" element={<DriverView user={user} onLogout={handleLogout} />} /></Routes>
