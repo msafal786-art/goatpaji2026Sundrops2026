@@ -158,7 +158,15 @@ export default function LoadForm({ load, onClose, onSave }) {
           <Section title="Assign Driver & Truck">
             <Row>
               <Field label="Driver">
-                <select style={inputS} value={form.driver_id} onChange={e => set('driver_id', e.target.value)}>
+                <select style={inputS} value={form.driver_id} onChange={e => {
+                  const dId = e.target.value
+                  const driver = drivers.find(d => String(d.id) === dId)
+                  setForm(f => ({
+                    ...f,
+                    driver_id: dId,
+                    company_id: driver?.company_id ? String(driver.company_id) : f.company_id,
+                  }))
+                }}>
                   <option value="">Unassigned</option>
                   {drivers.map(d => (
                     <option key={d.id} value={d.id}>{d.full_name} — {d.company_name}{d.status !== 'available' ? ` (${d.status})` : ''}</option>
