@@ -703,32 +703,48 @@ export default function Loads() {
         </div>
       )}
 
-      {/* Status tabs */}
-      <div style={{ display: 'flex', gap: 3, marginBottom: 14, overflowX: 'auto', paddingBottom: 2 }}>
-        {STATUS_TABS.map(t => {
-          const count = countTab(t.key)
-          const active = activeTab === t.key
-          const lateTab = t.key === 'late'
-          const tabColor = lateTab ? T.red : T.blue
-          return (
-            <button key={t.key} onClick={() => setActiveTab(t.key)} style={{
-              padding: '6px 12px', borderRadius: 8, fontSize: 11, fontWeight: 600,
-              border: `1px solid ${active ? tabColor : T.sep}`,
-              background: active ? tabColor + '22' : 'transparent',
-              color: active ? tabColor : (lateTab && count > 0 ? T.red : T.text2),
-              cursor: 'pointer', whiteSpace: 'nowrap',
-            }}>
-              {t.label}
-              {count > 0 && (
-                <span style={{
-                  marginLeft: 5, fontSize: 10, padding: '0px 5px', borderRadius: 8,
-                  background: active ? tabColor + '40' : T.bg2,
-                  color: active ? tabColor : T.text3,
-                }}>{count}</span>
-              )}
-            </button>
-          )
-        })}
+      {/* Status tabs + density toggle */}
+      <div style={{ display: 'flex', gap: 3, marginBottom: 14, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 3, flex: 1, overflowX: 'auto', paddingBottom: 2 }}>
+          {STATUS_TABS.map(t => {
+            const count = countTab(t.key)
+            const active = activeTab === t.key
+            const lateTab = t.key === 'late'
+            const tabColor = lateTab ? T.red : T.blue
+            return (
+              <button key={t.key} onClick={() => setActiveTab(t.key)} style={{
+                padding: '6px 12px', borderRadius: 8, fontSize: 11, fontWeight: 600,
+                border: `1px solid ${active ? tabColor : T.sep}`,
+                background: active ? tabColor + '22' : 'transparent',
+                color: active ? tabColor : (lateTab && count > 0 ? T.red : T.text2),
+                cursor: 'pointer', whiteSpace: 'nowrap',
+              }}>
+                {t.label}
+                {count > 0 && (
+                  <span style={{
+                    marginLeft: 5, fontSize: 10, padding: '0px 5px', borderRadius: 8,
+                    background: active ? tabColor + '40' : T.bg2,
+                    color: active ? tabColor : T.text3,
+                  }}>{count}</span>
+                )}
+              </button>
+            )
+          })}
+        </div>
+        {/* Density toggle */}
+        <div style={{ display: 'flex', border: `1px solid ${T.sep}`, borderRadius: 8, overflow: 'hidden', flexShrink: 0, marginLeft: 6 }}>
+          {['comfortable', 'compact'].map(d => (
+            <button key={d} onClick={() => {
+              localStorage.setItem('density', d)
+              window.dispatchEvent(new Event('densitychange'))
+            }} style={{
+              padding: '5px 10px', fontSize: 10, fontWeight: 600, cursor: 'pointer', border: 'none',
+              background: density === d ? T.blue + '22' : 'transparent',
+              color: density === d ? T.blue : T.text3,
+              textTransform: 'capitalize',
+            }}>{d === 'comfortable' ? 'Comfortable' : 'Compact'}</button>
+          ))}
+        </div>
       </div>
 
       {/* Load table */}

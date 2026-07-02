@@ -52,11 +52,14 @@ function DropItem({ to, label, onClick }) {
 }
 
 // ── Top nav item (with optional dropdown) ─────────────────────────────────────
-function NavItem({ label, to, children, user: _user }) {
+function NavItem({ label, to, mainTo, children }) {
   const loc = useLocation()
+  const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const ref = useRef()
-  const active = to ? loc.pathname.startsWith(to) : (children || []).some(c => loc.pathname.startsWith(c.to))
+  const active = to ? loc.pathname.startsWith(to)
+    : mainTo ? loc.pathname.startsWith(mainTo)
+    : (children || []).some(c => loc.pathname.startsWith(c.to))
 
   useEffect(() => {
     function handle(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
@@ -64,33 +67,38 @@ function NavItem({ label, to, children, user: _user }) {
     return () => document.removeEventListener('mousedown', handle)
   }, [])
 
-  const baseStyle = {
+  const linkStyle = {
     padding: '0 14px', height: NAV_H, display: 'flex', alignItems: 'center',
     fontSize: 13, fontWeight: active ? 700 : 500, cursor: 'pointer',
     color: active ? T.blue : T.text2,
     borderBottom: active ? `2px solid ${T.blue}` : '2px solid transparent',
-    background: 'none', border: 'none', position: 'relative',
-    textDecoration: 'none', userSelect: 'none', gap: 4,
-    borderBottom: active ? `2px solid ${T.blue}` : '2px solid transparent',
+    textDecoration: 'none', userSelect: 'none',
   }
 
-  if (to) {
-    return <Link to={to} style={baseStyle}>{label}</Link>
-  }
+  // Simple link with no dropdown
+  if (to) return <Link to={to} style={linkStyle}>{label}</Link>
 
+  // Split: label navigates to mainTo, ▼ opens dropdown
   return (
-    <div ref={ref} style={{ position: 'relative' }}>
+    <div ref={ref} style={{ position: 'relative', display: 'flex', alignItems: 'stretch' }}>
+      {mainTo ? (
+        <Link to={mainTo} style={{ ...linkStyle, paddingRight: 4 }}>{label}</Link>
+      ) : (
+        <span style={{ ...linkStyle, paddingRight: 4 }}>{label}</span>
+      )}
       <button
-        style={{ ...baseStyle, border: 'none', background: 'none' }}
+        style={{
+          height: NAV_H, padding: '0 8px', background: 'none', border: 'none',
+          cursor: 'pointer', color: active ? T.blue : T.text3, fontSize: 9,
+          borderBottom: active ? `2px solid ${T.blue}` : '2px solid transparent',
+        }}
         onClick={() => setOpen(o => !o)}
-      >
-        {label} <span style={{ fontSize: 9, opacity: 0.7 }}>▼</span>
-      </button>
+      >▼</button>
       {open && (
         <div style={{
           position: 'absolute', top: NAV_H, left: 0, zIndex: 1000,
           background: T.bg1, border: `1px solid ${T.sep}`,
-          borderRadius: 10, overflow: 'hidden', minWidth: 160,
+          borderRadius: 10, overflow: 'hidden', minWidth: 180,
           boxShadow: '0 8px 32px rgba(0,0,0,0.22)',
         }}>
           {children.map(c => <DropItem key={c.to} {...c} onClick={() => setOpen(false)} />)}
@@ -156,11 +164,11 @@ function TopNav({ user, onLogout }) {
       {/* Nav items */}
       <nav style={{ display: 'flex', alignItems: 'stretch', flex: 1, overflow: 'hidden' }}>
         <NavItem label="Dispatch" to="/loads" />
-        <NavItem label="Drivers" children={[
+        <NavItem label="Drivers" mainTo="/drivers" children={[
           { to: '/drivers', label: 'Driver List' },
           { to: '/payroll', label: 'Payroll' },
         ]} />
-        <NavItem label="Equipment" children={[
+        <NavItem label="Equipment" mainTo="/trucks" children={[
           { to: '/trucks', label: 'Trucks & Trailers' },
         ]} />
         <NavItem label="More" children={moreItems} />
