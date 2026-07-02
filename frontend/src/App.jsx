@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react'
-import { BrowserRouter, Routes, Route, Navigate, Link, useLocation } from 'react-router-dom'
+import React, { useState, useEffect, useRef } from 'react'
+import { BrowserRouter, Routes, Route, Navigate, Link, useLocation, useNavigate } from 'react-router-dom'
 import { api, maybeRefreshToken } from './api.js'
 import { T, applyTheme } from './theme.js'
 import { ThemeProvider } from './ThemeContext.jsx'
@@ -23,52 +23,7 @@ import ChangePassword from './pages/ChangePassword.jsx'
 import Compliance from './pages/Compliance.jsx'
 import Calendar from './pages/Calendar.jsx'
 
-
-const NAV_LINKS = {
-  dispatcher: [
-    { to: '/dashboard',       icon: '⊞', label: 'Dashboard' },
-    { to: '/loads',           icon: '↗',  label: 'Loads' },
-    { to: '/calendar',        icon: '▦',  label: 'Calendar' },
-    { to: '/recommendations', icon: '◈',  label: 'Lanes' },
-    { to: '/search',          icon: '⌕',  label: 'Search' },
-    { to: '/compliance',      icon: '⚑',  label: 'Compliance' },
-    { to: '/drivers',         icon: '◉',  label: 'Drivers' },
-    { to: '/trucks',          icon: '▣',  label: 'Trucks' },
-    { to: '/payroll',         icon: '💵', label: 'Payroll' },
-    { to: '/companies',       icon: '⬡',  label: 'Companies' },
-    { to: '/users',           icon: '👥', label: 'Users' },
-    { to: '/settings',        icon: '⚙',  label: 'Settings' },
-  ],
-  company_owner: [
-    { to: '/dashboard',       icon: '⊞', label: 'Dashboard' },
-    { to: '/loads',           icon: '↗',  label: 'Loads' },
-    { to: '/calendar',        icon: '▦',  label: 'Calendar' },
-    { to: '/recommendations', icon: '◈',  label: 'Lanes' },
-    { to: '/search',          icon: '⌕',  label: 'Search' },
-    { to: '/compliance',      icon: '⚑',  label: 'Compliance' },
-    { to: '/drivers',         icon: '◉',  label: 'Drivers' },
-    { to: '/trucks',          icon: '▣',  label: 'Trucks' },
-    { to: '/payroll',         icon: '💵', label: 'Payroll' },
-    { to: '/settings',        icon: '⚙',  label: 'Settings' },
-  ],
-}
-
-const BOTTOM_NAV_LINKS = {
-  dispatcher: [
-    { to: '/dashboard', icon: '⊞', label: 'Dashboard' },
-    { to: '/loads',     icon: '↗',  label: 'Loads' },
-    { to: '/drivers',   icon: '◉',  label: 'Drivers' },
-    { to: '/search',    icon: '⌕',  label: 'Search' },
-    { to: '/settings',  icon: '⚙',  label: 'Settings' },
-  ],
-  company_owner: [
-    { to: '/dashboard', icon: '⊞', label: 'Dashboard' },
-    { to: '/loads',     icon: '↗',  label: 'Loads' },
-    { to: '/drivers',   icon: '◉',  label: 'Drivers' },
-    { to: '/search',    icon: '⌕',  label: 'Search' },
-    { to: '/settings',  icon: '⚙',  label: 'Settings' },
-  ],
-}
+const NAV_H = 44
 
 function timeAgo(isoStr) {
   if (!isoStr) return ''
@@ -78,113 +33,221 @@ function timeAgo(isoStr) {
   return `${Math.floor(secs / 3600)}h ago`
 }
 
-// ── Desktop sidebar ────────────────────────────────────────────────────────────
-function Sidebar({ user, onLogout }) {
+// ── Dropdown menu item ─────────────────────────────────────────────────────────
+function DropItem({ to, label, onClick }) {
   const loc = useLocation()
-  const links = NAV_LINKS[user.role] || []
+  const active = loc.pathname.startsWith(to)
+  return (
+    <Link to={to} onClick={onClick} style={{
+      display: 'block', padding: '9px 18px', textDecoration: 'none',
+      fontSize: 13, fontWeight: active ? 700 : 500,
+      color: active ? T.blue : T.text,
+      background: active ? T.blue + '12' : 'transparent',
+      whiteSpace: 'nowrap',
+    }}
+      onMouseEnter={e => { if (!active) e.currentTarget.style.background = T.bg2 }}
+      onMouseLeave={e => { if (!active) e.currentTarget.style.background = 'transparent' }}
+    >{label}</Link>
+  )
+}
+
+// ── Top nav item (with optional dropdown) ─────────────────────────────────────
+function NavItem({ label, to, children, user: _user }) {
+  const loc = useLocation()
+  const [open, setOpen] = useState(false)
+  const ref = useRef()
+  const active = to ? loc.pathname.startsWith(to) : (children || []).some(c => loc.pathname.startsWith(c.to))
+
+  useEffect(() => {
+    function handle(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handle)
+    return () => document.removeEventListener('mousedown', handle)
+  }, [])
+
+  const baseStyle = {
+    padding: '0 14px', height: NAV_H, display: 'flex', alignItems: 'center',
+    fontSize: 13, fontWeight: active ? 700 : 500, cursor: 'pointer',
+    color: active ? T.blue : T.text2,
+    borderBottom: active ? `2px solid ${T.blue}` : '2px solid transparent',
+    background: 'none', border: 'none', position: 'relative',
+    textDecoration: 'none', userSelect: 'none', gap: 4,
+    borderBottom: active ? `2px solid ${T.blue}` : '2px solid transparent',
+  }
+
+  if (to) {
+    return <Link to={to} style={baseStyle}>{label}</Link>
+  }
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button
+        style={{ ...baseStyle, border: 'none', background: 'none' }}
+        onClick={() => setOpen(o => !o)}
+      >
+        {label} <span style={{ fontSize: 9, opacity: 0.7 }}>▼</span>
+      </button>
+      {open && (
+        <div style={{
+          position: 'absolute', top: NAV_H, left: 0, zIndex: 1000,
+          background: T.bg1, border: `1px solid ${T.sep}`,
+          borderRadius: 10, overflow: 'hidden', minWidth: 160,
+          boxShadow: '0 8px 32px rgba(0,0,0,0.22)',
+        }}>
+          {children.map(c => <DropItem key={c.to} {...c} onClick={() => setOpen(false)} />)}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Desktop top nav ────────────────────────────────────────────────────────────
+function TopNav({ user, onLogout }) {
+  const loc = useLocation()
   const isAdmin = user.role === 'dispatcher' && !user.company_id && !user.allowed_company_ids
   const [onlineUsers, setOnlineUsers] = useState([])
+  const [onlineOpen, setOnlineOpen] = useState(false)
+  const onlineRef = useRef()
 
   useEffect(() => {
     if (!isAdmin) return
-    function fetchOnline() {
-      api.activeUsers().then(setOnlineUsers).catch(() => {})
-    }
-    fetchOnline()
-    const iv = setInterval(fetchOnline, 30000)
+    function fetch() { api.activeUsers().then(setOnlineUsers).catch(() => {}) }
+    fetch()
+    const iv = setInterval(fetch, 30000)
     return () => clearInterval(iv)
   }, [isAdmin])
 
+  useEffect(() => {
+    function handle(e) { if (onlineRef.current && !onlineRef.current.contains(e.target)) setOnlineOpen(false) }
+    document.addEventListener('mousedown', handle)
+    return () => document.removeEventListener('mousedown', handle)
+  }, [])
+
+  const moreItems = [
+    { to: '/dashboard',       label: 'Dashboard' },
+    { to: '/search',          label: 'Search' },
+    { to: '/compliance',      label: 'Compliance' },
+    { to: '/calendar',        label: 'Calendar' },
+    { to: '/recommendations', label: 'Lanes' },
+    ...(isAdmin ? [{ to: '/companies', label: 'Companies' }, { to: '/users', label: 'Users' }] : []),
+    { to: '/settings',        label: 'Settings' },
+  ]
+
   return (
     <div style={{
-      width: 220, background: T.bg1, display: 'flex', flexDirection: 'column',
-      position: 'fixed', top: 0, left: 0, height: '100vh', zIndex: 100,
-      borderRight: `1px solid ${T.sep}`,
+      position: 'fixed', top: 0, left: 0, right: 0, height: NAV_H, zIndex: 200,
+      background: T.bg1, borderBottom: `1px solid ${T.sep}`,
+      display: 'flex', alignItems: 'stretch',
     }}>
-      <div style={{ padding: '20px 16px 16px', borderBottom: `1px solid ${T.sep}` }}>
-        <div style={{ fontSize: 13, fontWeight: 800, color: T.text, letterSpacing: 0.5, textTransform: 'uppercase', lineHeight: 1.3 }}>
-          {user.company_name || (isAdmin ? 'Goat Inc' : 'Dispatch Portal')}
-        </div>
-        <div style={{ fontSize: 11, color: T.text3, marginTop: 2 }}>
-          {isAdmin ? (user.full_name || 'Safal Madaan') : 'Freight Management'}
+      {/* Logo / company */}
+      <div style={{
+        padding: '0 20px', display: 'flex', alignItems: 'center', gap: 8,
+        borderRight: `1px solid ${T.sep}`, flexShrink: 0,
+      }}>
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 800, color: T.text, letterSpacing: 0.5, textTransform: 'uppercase', lineHeight: 1.2 }}>
+            {user.company_name || (isAdmin ? 'Goat Inc' : 'Dispatch Portal')}
+          </div>
+          <div style={{ fontSize: 10, color: T.text3, lineHeight: 1 }}>
+            {isAdmin ? (user.full_name || 'Safal Madaan') : 'Freight Mgmt'}
+          </div>
         </div>
       </div>
-      <nav style={{ flex: 1, padding: '8px 0', overflowY: 'auto' }}>
-        {links.map(l => {
-          const active = loc.pathname.startsWith(l.to)
-          return (
-            <Link key={l.to} to={l.to} style={{
-              display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px',
-              borderRadius: 10, margin: '1px 8px', textDecoration: 'none', fontSize: 14,
-              fontWeight: active ? 600 : 400,
-              color: active ? T.text : T.text2,
-              background: active ? T.bg2 : 'transparent',
-            }}>
-              <span style={{ fontSize: 16, width: 22, textAlign: 'center' }}>{l.icon}</span>
-              {l.label}
-            </Link>
-          )
-        })}
+
+      {/* Nav items */}
+      <nav style={{ display: 'flex', alignItems: 'stretch', flex: 1, overflow: 'hidden' }}>
+        <NavItem label="Dispatch" to="/loads" />
+        <NavItem label="Drivers" children={[
+          { to: '/drivers', label: 'Driver List' },
+          { to: '/payroll', label: 'Payroll' },
+        ]} />
+        <NavItem label="Equipment" children={[
+          { to: '/trucks', label: 'Trucks & Trailers' },
+        ]} />
+        <NavItem label="More" children={moreItems} />
       </nav>
 
-      {/* Who's Online — admin only */}
-      {isAdmin && onlineUsers.length > 0 && (
-        <div style={{ padding: '10px 14px', borderTop: `1px solid ${T.sep}` }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 }}>
-            Online ({onlineUsers.length})
-          </div>
-          {onlineUsers.map(u => {
-            const ago = timeAgo(u.last_seen_at)
-            const isNow = ago === 'now'
-            return (
-              <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 7 }}>
-                <span style={{
-                  width: 7, height: 7, borderRadius: '50%', flexShrink: 0,
-                  background: isNow ? T.green : T.text3,
-                }} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 11, fontWeight: 600, color: T.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {u.full_name || u.username}
-                  </div>
-                  <div style={{ fontSize: 10, color: T.text3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {u.company_name || (u.role === 'dispatcher' ? 'Admin' : u.role.replace('_', ' '))}
-                  </div>
-                </div>
-                <span style={{ fontSize: 10, color: isNow ? T.green : T.text3, flexShrink: 0 }}>{ago}</span>
-              </div>
-            )
-          })}
-        </div>
-      )}
+      {/* Right: online indicator + user */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 0, borderLeft: `1px solid ${T.sep}`, flexShrink: 0 }}>
 
-      <div style={{ padding: '12px 16px', borderTop: `1px solid ${T.sep}` }}>
-        <div style={{ fontSize: 13, fontWeight: 600, color: T.text2, marginBottom: 2 }}>{user.full_name || user.username}</div>
-        <div style={{ fontSize: 11, color: T.text3, marginBottom: 10 }}>{user.role.replace('_', ' ')}</div>
-        <button onClick={onLogout} style={{
-          width: '100%', padding: '8px 12px', background: T.bg2, border: 'none',
-          borderRadius: 8, color: T.text2, fontSize: 12, cursor: 'pointer', textAlign: 'left',
-        }}>Sign out</button>
+        {/* Who's Online — admin */}
+        {isAdmin && onlineUsers.length > 0 && (
+          <div ref={onlineRef} style={{ position: 'relative' }}>
+            <button onClick={() => setOnlineOpen(o => !o)} style={{
+              padding: '0 14px', height: NAV_H, background: 'none', border: 'none',
+              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6,
+            }}>
+              <span style={{ width: 7, height: 7, borderRadius: '50%', background: T.green, display: 'inline-block' }} />
+              <span style={{ fontSize: 12, color: T.text3, fontWeight: 600 }}>{onlineUsers.length} online</span>
+            </button>
+            {onlineOpen && (
+              <div style={{
+                position: 'absolute', top: NAV_H, right: 0, zIndex: 1000,
+                background: T.bg1, border: `1px solid ${T.sep}`,
+                borderRadius: 10, padding: '10px 14px', minWidth: 200,
+                boxShadow: '0 8px 32px rgba(0,0,0,0.22)',
+              }}>
+                <div style={{ fontSize: 10, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8 }}>
+                  Online ({onlineUsers.length})
+                </div>
+                {onlineUsers.map(u => {
+                  const ago = timeAgo(u.last_seen_at)
+                  const isNow = ago === 'now'
+                  return (
+                    <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 8 }}>
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: isNow ? T.green : T.text3, flexShrink: 0 }} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: T.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {u.full_name || u.username}
+                        </div>
+                        <div style={{ fontSize: 10, color: T.text3 }}>
+                          {u.company_name || (u.role === 'dispatcher' ? 'Admin' : u.role.replace('_', ' '))}
+                        </div>
+                      </div>
+                      <span style={{ fontSize: 10, color: isNow ? T.green : T.text3, flexShrink: 0 }}>{ago}</span>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* User + sign out */}
+        <div style={{ padding: '0 16px', display: 'flex', alignItems: 'center', gap: 12, borderLeft: `1px solid ${T.sep}` }}>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: T.text, lineHeight: 1.2 }}>{user.full_name || user.username}</div>
+            <div style={{ fontSize: 10, color: T.text3 }}>{user.role.replace('_', ' ')}</div>
+          </div>
+          <button onClick={onLogout} style={{
+            padding: '5px 12px', background: T.bg2, border: `1px solid ${T.sep}`,
+            borderRadius: 7, color: T.text2, fontSize: 12, cursor: 'pointer', fontWeight: 500,
+            whiteSpace: 'nowrap',
+          }}>Sign out</button>
+        </div>
       </div>
     </div>
   )
 }
 
 // ── Mobile bottom nav ──────────────────────────────────────────────────────────
-function BottomNav({ user, onLogout }) {
+const BOTTOM_NAV = [
+  { to: '/loads',    icon: '↗',  label: 'Loads' },
+  { to: '/drivers',  icon: '◉',  label: 'Drivers' },
+  { to: '/trucks',   icon: '▣',  label: 'Trucks' },
+  { to: '/payroll',  icon: '💵', label: 'Payroll' },
+  { to: '/settings', icon: '⚙',  label: 'More' },
+]
+
+function BottomNav({ onLogout }) {
   const loc = useLocation()
-  const links = BOTTOM_NAV_LINKS[user.role] || []
-  // Limit to 5 tabs; Companies is only for dispatcher so it fits
   return (
     <div style={{
       position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 200,
-      background: T.bg1 + 'ee',
-      backdropFilter: 'blur(20px)',
-      WebkitBackdropFilter: 'blur(20px)',
-      borderTop: `1px solid ${T.sep}`,
-      display: 'flex',
+      background: T.bg1 + 'ee', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
+      borderTop: `1px solid ${T.sep}`, display: 'flex',
       paddingBottom: 'env(safe-area-inset-bottom)',
     }}>
-      {links.map(l => {
+      {BOTTOM_NAV.map(l => {
         const active = loc.pathname.startsWith(l.to)
         return (
           <Link key={l.to} to={l.to} style={{
@@ -205,26 +268,22 @@ function BottomNav({ user, onLogout }) {
 function AppShell({ children, user, onLogout }) {
   const mobile = useIsMobile()
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', background: T.bg }}>
-      {!mobile && <Sidebar user={user} onLogout={onLogout} />}
+    <div style={{ minHeight: '100vh', background: T.bg }}>
+      {!mobile && <TopNav user={user} onLogout={onLogout} />}
       <main style={{
-        flex: 1,
-        marginLeft: mobile ? 0 : 220,
-        padding: mobile ? '16px 14px 80px' : '28px 32px',
+        paddingTop: mobile ? 0 : NAV_H,
+        padding: mobile ? '16px 14px 80px' : `${NAV_H + 24}px 28px 28px`,
         minHeight: '100vh',
-        maxWidth: mobile ? '100vw' : undefined,
         overflowX: 'hidden',
       }}>
         {mobile && (
-          <div style={{ fontSize: 13, fontWeight: 800, color: T.text, marginBottom: 16, letterSpacing: 0.5, textTransform: 'uppercase', lineHeight: 1.3 }}>
-            {(user.role === 'company_owner' || user.role === 'dispatcher') && user.company_name
-              ? user.company_name
-              : 'Dispatch Portal'}
+          <div style={{ fontSize: 13, fontWeight: 800, color: T.text, marginBottom: 16, letterSpacing: 0.5, textTransform: 'uppercase' }}>
+            {user.company_name || 'Dispatch Portal'}
           </div>
         )}
         {children}
       </main>
-      {mobile && <BottomNav user={user} onLogout={onLogout} />}
+      {mobile && <BottomNav onLogout={onLogout} />}
     </div>
   )
 }
@@ -234,7 +293,6 @@ export default function App() {
   const [loading, setLoading] = useState(true)
   const [, forceUpdate] = useState(0)
 
-  // Apply saved theme immediately
   useEffect(() => {
     const saved = localStorage.getItem('theme') || 'dark'
     applyTheme(saved)
