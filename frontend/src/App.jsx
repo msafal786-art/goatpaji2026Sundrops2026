@@ -79,12 +79,15 @@ function NavItem({ label, to, mainTo, children }) {
   if (to) return <Link to={to} style={linkStyle}>{label}</Link>
 
   // Split: label navigates to mainTo, ▼ opens dropdown
+  // If no mainTo, entire label+arrow is the toggle
   return (
     <div ref={ref} style={{ position: 'relative', display: 'flex', alignItems: 'stretch' }}>
       {mainTo ? (
         <Link to={mainTo} style={{ ...linkStyle, paddingRight: 4 }}>{label}</Link>
       ) : (
-        <span style={{ ...linkStyle, paddingRight: 4 }}>{label}</span>
+        <button onClick={() => setOpen(o => !o)} style={{ ...linkStyle, background: 'none', border: 'none', paddingRight: 4 }}>
+          {label}
+        </button>
       )}
       <button
         style={{
@@ -131,7 +134,6 @@ function TopNav({ user, onLogout }) {
   }, [])
 
   const moreItems = [
-    { to: '/dashboard',       label: 'Dashboard' },
     { to: '/search',          label: 'Search' },
     { to: '/compliance',      label: 'Compliance' },
     { to: '/calendar',        label: 'Calendar' },
@@ -164,6 +166,7 @@ function TopNav({ user, onLogout }) {
       {/* Nav items */}
       <nav style={{ display: 'flex', alignItems: 'stretch', flex: 1, overflow: 'hidden' }}>
         <NavItem label="Dispatch" to="/loads" />
+        <NavItem label="Dashboard" to="/dashboard" />
         <NavItem label="Drivers" mainTo="/drivers" children={[
           { to: '/drivers', label: 'Driver List' },
           { to: '/payroll', label: 'Payroll' },
