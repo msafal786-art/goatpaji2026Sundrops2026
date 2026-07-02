@@ -186,9 +186,6 @@ function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer, user, compact }
           {!compact && shortCompany && (
             <div style={{ fontSize: 10, fontWeight: 700, color: compColor, marginTop: 2 }}>{shortCompany}</div>
           )}
-          {!compact && load.broker_name && (
-            <div style={{ fontSize: 10, color: T.text3, marginTop: 1 }}>{load.broker_name}</div>
-          )}
           {!compact && load.trailer_number && (
             <div style={{ fontSize: 10, color: T.text3, marginTop: 2 }}>Trailer: {load.trailer_number}</div>
           )}
@@ -198,6 +195,11 @@ function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer, user, compact }
           {!compact && load.checkout_time && (
             <div style={{ fontSize: 10, color: T.teal, fontWeight: 700, marginTop: 2 }}>✓ Checked Out</div>
           )}
+        </td>
+
+        {/* Broker */}
+        <td style={{ padding: padCell, whiteSpace: 'nowrap' }}>
+          <div style={{ fontSize: 12, color: T.text }}>{load.broker_name || '—'}</div>
         </td>
 
         {/* Ship Date */}
@@ -255,7 +257,7 @@ function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer, user, compact }
       {/* Alert bar — must be a <tr> to be valid inside <tbody> */}
       {alert && (
         <tr style={{ background: T.isDark ? 'rgba(255,159,10,0.06)' : 'rgba(255,159,10,0.05)' }}>
-          <td colSpan={8} onClick={e => e.stopPropagation()} style={{ padding: '6px 14px 8px 17px', borderBottom: `1px solid ${T.sep}` }}>
+          <td colSpan={9} onClick={e => e.stopPropagation()} style={{ padding: '6px 14px 8px 17px', borderBottom: `1px solid ${T.sep}` }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <span style={{ fontSize: 11, fontWeight: 600, color: T.orange }}>Pickup window passed</span>
               {user?.role !== 'driver' && <>
@@ -625,6 +627,7 @@ export default function Loads() {
     else if (sortField === 'delivery') { va = a.delivery_date || '9999'; vb = b.delivery_date || '9999' }
     else if (sortField === 'load')     { va = a.load_number || a.broker_order || ''; vb = b.load_number || b.broker_order || '' }
     else if (sortField === 'driver')   { va = (a.driver_name || '').toLowerCase(); vb = (b.driver_name || '').toLowerCase() }
+    else if (sortField === 'broker')   { va = (a.broker_name || '').toLowerCase(); vb = (b.broker_name || '').toLowerCase() }
     else if (sortField === 'origin')   { va = a.pickup_city || ''; vb = b.pickup_city || '' }
     else if (sortField === 'dest')     { va = a.delivery_city || ''; vb = b.delivery_city || '' }
     else if (sortField === 'status')   { va = a.status || ''; vb = b.status || '' }
@@ -742,6 +745,7 @@ export default function Loads() {
                   {[
                     { label: 'Load #',          field: 'load',     first: true },
                     { label: 'Driver / Carrier', field: 'driver' },
+                    { label: 'Broker',           field: 'broker' },
                     { label: 'Ship Date',        field: 'pickup' },
                     { label: 'Del Date',         field: 'delivery' },
                     { label: 'Origin',           field: 'origin' },
