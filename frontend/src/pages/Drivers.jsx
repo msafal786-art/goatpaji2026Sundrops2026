@@ -59,6 +59,9 @@ export default function Drivers() {
   const [search, setSearch] = useState('')
   const [loginMsg, setLoginMsg] = useState(null)
   const [copied, setCopied] = useState(false)
+  const [assignDriver, setAssignDriver] = useState(null) // driver row to assign
+  const [openLoads, setOpenLoads] = useState([])
+  const [assigning, setAssigning] = useState(false)
 
   const load = useCallback(async () => {
     const data = await api.driversBoard()
@@ -72,6 +75,23 @@ export default function Drivers() {
     const iv = setInterval(load, 30000)
     return () => clearInterval(iv)
   }, [load])
+
+  async function openAssign(driver) {
+    setAssignDriver(driver)
+    const all = await api.loads({})
+    setOpenLoads(all.filter(l => !l.driver_id && ['open','covered'].includes(l.status)))
+  }
+
+  async function handleAssign(load) {
+    setAssigning(true)
+    try {
+      await api.changeDriver(load.id, assignDriver.id)
+      setAssignDriver(null)
+      fetch()
+    } finally {
+      setAssigning(false)
+    }
+  }
 
   function openNew() { setForm({ ...EMPTY }); setEditing(null); setShow(true); setError('') }
   function openEdit(d) {
@@ -277,7 +297,7 @@ export default function Drivers() {
                     ) : (
                       !isDisabled && (
                         <button
-                          onClick={() => navigate('/loads/new')}
+                          onClick={() => openAssign(r)}
                           style={{ width: '100%', padding: '7px', background: 'none', border: `1px dashed ${T.sep}`, color: T.text3, borderRadius: 8, fontSize: 12, cursor: 'pointer', marginTop: 4 }}
                         >
                           + Assign Load
@@ -354,7 +374,7 @@ export default function Drivers() {
                             {ls && <div style={{ fontSize: 10, color: ls.color, fontWeight: 600, marginTop: 2 }}>{ls.label}</div>}
                           </div>
                         ) : (
-                          <button onClick={() => navigate('/loads/new')} style={{ background: 'none', border: `1px dashed ${T.sep}`, padding: '3px 8px', cursor: 'pointer', color: T.text3, fontSize: 11, borderRadius: 6 }}>
+                          <button onClick={() => openAssign(r)} style={{ background: 'none', border: `1px dashed ${T.sep}`, padding: '3px 8px', cursor: 'pointer', color: T.text3, fontSize: 11, borderRadius: 6 }}>
                             + Assign
                           </button>
                         )}
@@ -411,6 +431,39 @@ export default function Drivers() {
           </tbody>
         </table>
       </div>
+      )}
+
+      {/* Assign load modal */}
+      {assignDriver && (
+        <div style={modalBg()} onClick={() => setAssignDriver(null)}>
+          <div style={modalBox()} onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+              <h2 style={{ fontSize: 17, fontWeight: 700, color: T.text, margin: 0 }}>
+                Assign load to {assignDriver.full_name}
+              </h2>
+              <button onClick={() => setAssignDriver(null)} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: T.text3 }}>×</button>
+            </div>
+            {openLoads.length === 0 ? (
+              <p style={{ color: T.text3, fontSize: 14, textAlign: 'center', padding: '24px 0' }}>No unassigned open loads.</p>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {openLoads.map(l => (
+                  <button key={l.id} disabled={assigning} onClick={() => handleAssign(l)}
+                    style={{ background: T.bg2, border: `1px solid ${T.sep}`, borderRadius: 10, padding: '12px 14px', textAlign: 'left', cursor: 'pointer', opacity: assigning ? 0.6 : 1 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                      <span style={{ fontWeight: 700, color: T.text, fontSize: 14 }}>Load #{l.load_number || l.id}</span>
+                      {l.broker_name && <span style={{ fontSize: 11, color: T.text3 }}>{l.broker_name}</span>}
+                    </div>
+                    <div style={{ fontSize: 12, color: T.text2, display: 'flex', gap: 16 }}>
+                      <span>Pick: {fmt(l.pickup_city, l.pickup_state)}{l.pickup_date ? ` · ${fmtDate(l.pickup_date)}` : ''}</span>
+                      <span>Drop: {fmt(l.delivery_city, l.delivery_state)}{l.delivery_date ? ` · ${fmtDate(l.delivery_date)}` : ''}</span>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       )}
 
       {/* Driver login copy modal */}
