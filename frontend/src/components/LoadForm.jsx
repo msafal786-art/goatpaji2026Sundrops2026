@@ -126,6 +126,14 @@ export default function LoadForm({ load, onClose, onSave }) {
       if (!payload.driver_id) payload.driver_id = null
       if (!payload.truck_id) payload.truck_id = null
       if (user.role === 'company_owner') payload.company_id = user.company_id
+
+      // Driver requires a company
+      if (payload.driver_id && !payload.company_id) {
+        setError('A company must be selected when a driver is assigned.')
+        setSaving(false)
+        return
+      }
+
       const saved = load ? await api.updateLoad(load.id, payload) : await api.createLoad(payload)
       onSave(saved)
     } catch (err) {
