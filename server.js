@@ -548,9 +548,12 @@ app.get('/api/loads/check-duplicate', auth, (req, res) => {
 app.post('/api/loads', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
   // company_owner → their company; scoped dispatcher (has company_id) → their company; admin dispatcher → body value
   const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
+  // company_owner → their company; admin → body value; scoped dispatcher → body value (validated) or first allowed company
+  const scopedFirst = req.user.allowed_company_ids
+    ? JSON.parse(req.user.allowed_company_ids)[0] : null
   const cid = req.user.role === 'company_owner' ? req.user.company_id
             : isAdmin ? req.body.company_id
-            : req.user.company_id;
+            : req.body.company_id || req.user.company_id || scopedFirst;
   const {
     load_number, broker_name, broker_order, broker_contact, broker_email,
     commodity, weight, miles, trailer_type, bol, rate,

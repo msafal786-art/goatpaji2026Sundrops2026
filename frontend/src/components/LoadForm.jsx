@@ -39,9 +39,15 @@ export default function LoadForm({ load, onClose, onSave }) {
   const dupTimerRef = useRef()
 
   useEffect(() => {
-    if (user.role === 'dispatcher') api.companies().then(setCompanies)
+    if (isAdmin) api.companies().then(setCompanies)
     api.drivers().then(setDrivers)
     api.trucks().then(setTrucks)
+    // Auto-assign company for non-admin users
+    if (!load && !isAdmin) {
+      const cid = user.company_id ||
+        (user.allowed_company_ids ? JSON.parse(user.allowed_company_ids)[0] : null)
+      if (cid) setForm(f => ({ ...f, company_id: String(cid) }))
+    }
   }, [])
 
   function set(k, v) {
@@ -192,7 +198,7 @@ export default function LoadForm({ load, onClose, onSave }) {
             </Row>
           </Section>
 
-          {user.role === 'dispatcher' && (
+          {isAdmin && (
             <Section title="Company">
               <Row>
                 <Field label="Company *">
