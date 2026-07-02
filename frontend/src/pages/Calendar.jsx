@@ -42,7 +42,7 @@ export default function Calendar() {
   })
 
   useEffect(() => {
-    api.loads().then(setLoads).finally(() => setLoading(false))
+    api.loads().then(setLoads).catch(() => {}).finally(() => setLoading(false))
   }, [])
 
   // Group loads by pickup_date

@@ -163,7 +163,7 @@ export default function Recommendations() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    api.recommendations().then(setData).finally(() => setLoading(false))
+    api.recommendations().then(setData).catch(() => {}).finally(() => setLoading(false))
   }, [])
 
   return (

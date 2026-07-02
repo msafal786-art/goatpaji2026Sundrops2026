@@ -30,11 +30,22 @@ async function req(method, path, body, isForm = false) {
   if (token) headers['Authorization'] = `Bearer ${token}`
   if (!isForm) headers['Content-Type'] = 'application/json'
 
-  const res = await fetch(BASE + path, {
-    method,
-    headers,
-    body: isForm ? body : body ? JSON.stringify(body) : undefined
-  })
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 20000) // 20s timeout
+  let res
+  try {
+    res = await fetch(BASE + path, {
+      method,
+      headers,
+      signal: ctrl.signal,
+      body: isForm ? body : body ? JSON.stringify(body) : undefined
+    })
+  } catch (e) {
+    if (e.name === 'AbortError') throw new Error('Request timed out — server may be restarting')
+    throw e
+  } finally {
+    clearTimeout(timer)
+  }
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))

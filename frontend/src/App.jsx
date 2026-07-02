@@ -302,6 +302,7 @@ function AppShell({ children, user, onLogout }) {
 export default function App() {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [slowLoad, setSlowLoad] = useState(false)
   const [, forceUpdate] = useState(0)
 
   useEffect(() => {
@@ -315,8 +316,12 @@ export default function App() {
   useEffect(() => {
     const token = localStorage.getItem('token')
     if (token) {
+      const slow = setTimeout(() => setSlowLoad(true), 4000)
+      const bail = setTimeout(() => { localStorage.removeItem('token'); setLoading(false) }, 22000)
       maybeRefreshToken().finally(() =>
-        api.me().then(setUser).catch(() => localStorage.removeItem('token')).finally(() => setLoading(false))
+        api.me().then(setUser)
+          .catch(() => localStorage.removeItem('token'))
+          .finally(() => { clearTimeout(slow); clearTimeout(bail); setLoading(false) })
       )
     } else {
       setLoading(false)
@@ -335,8 +340,10 @@ export default function App() {
   }
 
   if (loading) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: T.bg, color: T.text2, fontSize: 14 }}>
-      Loading…
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, height: '100vh', background: T.bg, color: T.text2, fontSize: 14 }}>
+      <div style={{ width: 36, height: 36, background: T.blue, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 17, fontWeight: 900, color: '#fff' }}>G</div>
+      <div>{slowLoad ? 'Server is waking up…' : 'Loading…'}</div>
+      {slowLoad && <div style={{ fontSize: 11, color: T.text3 }}>This can take 10–20 s on a cold start</div>}
     </div>
   )
 
@@ -350,6 +357,8 @@ export default function App() {
             <Route path="/login" element={<Login onLogin={handleLogin} />} />
             <Route path="*" element={<Navigate to="/" />} />
           </Routes>
+        ) : user.must_change_password ? (
+          <ChangePassword user={user} onDone={() => api.me().then(setUser)} />
         ) : user.role === 'driver' ? (
           <Routes><Route path="*" element={<DriverView user={user} onLogout={handleLogout} />} /></Routes>
         ) : (

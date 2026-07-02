@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { T } from '../theme.js'
 import { useTheme } from '../ThemeContext.jsx'
 import { useAuth } from '../AuthContext.jsx'
+import { api } from '../api.js'
 
 function useThemeForce() {
   const [, tick] = useState(0)
@@ -165,6 +166,9 @@ export default function Settings() {
         </div>
       </Section>
 
+      {/* Change Password */}
+      <ChangePasswordSection />
+
       {/* About */}
       <Section title="About">
         <Row label="Product"><Val>Dispatch Portal · GOAT INC</Val></Row>
@@ -193,6 +197,63 @@ export default function Settings() {
         Sign Out
       </button>
     </div>
+  )
+}
+
+function ChangePasswordSection() {
+  const [open, setOpen] = useState(false)
+  const [pw, setPw] = useState('')
+  const [pw2, setPw2] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [msg, setMsg] = useState('')
+
+  async function submit(e) {
+    e.preventDefault()
+    if (pw !== pw2) { setMsg('Passwords do not match'); return }
+    if (pw.length < 6) { setMsg('Must be at least 6 characters'); return }
+    setSaving(true); setMsg('')
+    try {
+      await api.changePassword(pw)
+      setMsg('Password updated.')
+      setPw(''); setPw2('')
+      setTimeout(() => { setMsg(''); setOpen(false) }, 2000)
+    } catch (err) {
+      setMsg(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Section title="Security">
+      {!open ? (
+        <Row label="Password" last>
+          <button onClick={() => setOpen(true)} style={{ padding: '6px 14px', background: T.bg2, border: `1px solid ${T.sep}`, borderRadius: 8, cursor: 'pointer', color: T.text2, fontSize: 12, fontWeight: 600 }}>
+            Change Password
+          </button>
+        </Row>
+      ) : (
+        <div style={{ padding: 16 }}>
+          <form onSubmit={submit}>
+            <input type="password" value={pw} onChange={e => setPw(e.target.value)}
+              placeholder="New password" autoFocus autoComplete="new-password"
+              style={{ width: '100%', padding: '10px 12px', background: T.bg2, border: `1px solid ${T.sep}`, borderRadius: 8, color: T.text, fontSize: 13, marginBottom: 8, boxSizing: 'border-box' }} />
+            <input type="password" value={pw2} onChange={e => setPw2(e.target.value)}
+              placeholder="Confirm password" autoComplete="new-password"
+              style={{ width: '100%', padding: '10px 12px', background: T.bg2, border: `1px solid ${T.sep}`, borderRadius: 8, color: T.text, fontSize: 13, marginBottom: 10, boxSizing: 'border-box' }} />
+            {msg && <div style={{ fontSize: 12, color: msg === 'Password updated.' ? T.green : T.red, marginBottom: 10 }}>{msg}</div>}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button type="submit" disabled={saving} style={{ flex: 1, padding: '9px', background: T.blue, color: '#fff', border: 'none', borderRadius: 8, fontWeight: 600, fontSize: 13, cursor: 'pointer' }}>
+                {saving ? 'Saving…' : 'Update'}
+              </button>
+              <button type="button" onClick={() => { setOpen(false); setPw(''); setPw2(''); setMsg('') }} style={{ padding: '9px 16px', background: T.bg2, border: `1px solid ${T.sep}`, borderRadius: 8, color: T.text2, fontSize: 13, cursor: 'pointer' }}>
+                Cancel
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+    </Section>
   )
 }
 
