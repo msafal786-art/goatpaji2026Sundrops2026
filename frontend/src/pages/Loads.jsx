@@ -186,6 +186,9 @@ function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer, user, compact }
           {!compact && shortCompany && (
             <div style={{ fontSize: 10, fontWeight: 700, color: compColor, marginTop: 2 }}>{shortCompany}</div>
           )}
+          {!compact && load.broker_name && (
+            <div style={{ fontSize: 10, color: T.text3, marginTop: 1 }}>{load.broker_name}</div>
+          )}
           {!compact && load.trailer_number && (
             <div style={{ fontSize: 10, color: T.text3, marginTop: 2 }}>Trailer: {load.trailer_number}</div>
           )}
