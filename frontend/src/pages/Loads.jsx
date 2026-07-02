@@ -649,8 +649,34 @@ export default function Loads() {
     .map(ac => companies.find(c => c.name.toUpperCase() === ac))
     .filter(Boolean)
 
+  const NAV_SHORTCUTS = [
+    { label: 'Dashboard',   to: '/dashboard' },
+    { label: 'Drivers',     to: '/drivers' },
+    { label: 'Trucks',      to: '/trucks' },
+    { label: 'Payroll',     to: '/payroll' },
+    { label: 'Calendar',    to: '/calendar' },
+    { label: 'Compliance',  to: '/compliance' },
+    ...(user.role === 'dispatcher' ? [{ label: 'Companies', to: '/companies' }] : []),
+  ]
+
   return (
     <div>
+      {/* Quick nav */}
+      {!mobile && (
+        <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>
+          {NAV_SHORTCUTS.map(s => (
+            <button key={s.to} onClick={() => navigate(s.to)} style={{
+              padding: '5px 14px', background: T.bg1, border: `1px solid ${T.sep}`,
+              borderRadius: 20, fontSize: 12, fontWeight: 600, color: T.text2,
+              cursor: 'pointer', letterSpacing: 0.2,
+            }}
+              onMouseEnter={e => { e.currentTarget.style.background = T.bg2; e.currentTarget.style.color = T.text }}
+              onMouseLeave={e => { e.currentTarget.style.background = T.bg1; e.currentTarget.style.color = T.text2 }}
+            >{s.label}</button>
+          ))}
+        </div>
+      )}
+
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: mobile ? 12 : 18 }}>
         <div>
