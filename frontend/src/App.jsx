@@ -286,7 +286,7 @@ export default function App() {
         ) : (
           <AppShell user={user} onLogout={handleLogout}>
             <Routes>
-              <Route path="/" element={<Navigate to="/dashboard" />} />
+              <Route path="/" element={<Navigate to="/loads" />} />
               <Route path="/dashboard" element={<Dashboard />} />
               <Route path="/loads" element={<Loads />} />
               <Route path="/loads/:id" element={<LoadDetail />} />
@@ -300,7 +300,7 @@ export default function App() {
               <Route path="/recommendations" element={<Recommendations />} />
               <Route path="/payroll" element={<Payroll />} />
               <Route path="/settings" element={<Settings />} />
-              <Route path="*" element={<Navigate to="/dashboard" />} />
+              <Route path="*" element={<Navigate to="/loads" />} />
             </Routes>
           </AppShell>
         )}
