@@ -134,7 +134,6 @@ function TopNav({ user, onLogout }) {
   }, [])
 
   const moreItems = [
-    { to: '/search',          label: 'Search' },
     { to: '/compliance',      label: 'Compliance' },
     { to: '/calendar',        label: 'Calendar' },
     { to: '/recommendations', label: 'Lanes' },
@@ -164,7 +163,7 @@ function TopNav({ user, onLogout }) {
       </div>
 
       {/* Nav items */}
-      <nav style={{ display: 'flex', alignItems: 'stretch', flex: 1, overflow: 'hidden' }}>
+      <nav style={{ display: 'flex', alignItems: 'stretch', flex: 1 }}>
         <NavItem label="Dispatch" to="/loads" />
         <NavItem label="Dashboard" to="/dashboard" />
         <NavItem label="Drivers" mainTo="/drivers" children={[
@@ -174,6 +173,7 @@ function TopNav({ user, onLogout }) {
         <NavItem label="Equipment" mainTo="/trucks" children={[
           { to: '/trucks', label: 'Trucks & Trailers' },
         ]} />
+        <NavItem label="Search" to="/search" />
         <NavItem label="More" children={moreItems} />
       </nav>
 

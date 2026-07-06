@@ -558,8 +558,6 @@ const STATUS_TABS = [
   { key: 'covered',    label: 'Covered' },
   { key: 'dispatched', label: 'Dispatched' },
   { key: 'on_route',   label: 'On Route' },
-  { key: 'invoice',    label: 'To Invoice' },
-  { key: 'completed',  label: 'Completed' },
   { key: 'all',        label: 'All' },
 ]
 
@@ -588,6 +586,7 @@ export default function Loads() {
   const [drawerLoad, setDrawerLoad] = useState(null)
   const [driverModal, setDriverModal] = useState(null) // { load, targetStatus }
   const [lastRefresh, setLastRefresh] = useState(new Date())
+  const [query, setQuery] = useState('')
 
   const fetchLoads = useCallback(async () => {
     const params = {}
@@ -608,7 +607,15 @@ export default function Loads() {
 
   const ACTIVE_STATUSES = ['open','covered','dispatched','loading','on_route','unloading','in_yard']
 
+  const q = query.trim().toLowerCase()
+  const matchesQuery = (l) => !q || [
+    l.load_number, l.broker_order, l.broker_name, l.driver_name, l.company_name,
+    l.pickup_city, l.pickup_state, l.delivery_city, l.delivery_state,
+    l.pickup_name, l.delivery_name, l.commodity,
+  ].some(v => (v || '').toLowerCase().includes(q))
+
   const filtered = loads.filter(l => {
+    if (!matchesQuery(l)) return false
     if (activeTab === 'all') return true
     if (activeTab === 'active') return ACTIVE_STATUSES.includes(l.status)
     if (activeTab === 'late') return isLate(l)
@@ -636,12 +643,13 @@ export default function Loads() {
     return sortDir === 'asc' ? cmp : -cmp
   })
 
+  const searched = loads.filter(matchesQuery)
   const countTab = (key) => {
-    if (key === 'all') return loads.length
-    if (key === 'active') return loads.filter(l => ACTIVE_STATUSES.includes(l.status)).length
-    if (key === 'late') return loads.filter(isLate).length
-    if (key === 'invoice') return loads.filter(l => l.status === 'delivered').length
-    return loads.filter(l => l.status === key).length
+    if (key === 'all') return searched.length
+    if (key === 'active') return searched.filter(l => ACTIVE_STATUSES.includes(l.status)).length
+    if (key === 'late') return searched.filter(isLate).length
+    if (key === 'invoice') return searched.filter(l => l.status === 'delivered').length
+    return searched.filter(l => l.status === key).length
   }
 
   // Active carrier quick filters — exact match against the 5 carriers only
@@ -662,7 +670,27 @@ export default function Loads() {
             </span>
           </div>
         </div>
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <div style={{ position: 'relative' }}>
+            <span style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', fontSize: 12, color: T.text3, pointerEvents: 'none' }}>⌕</span>
+            <input
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder={mobile ? 'Search' : 'Search load #, driver, broker, city…'}
+              style={{
+                width: mobile ? 110 : 230, padding: '8px 10px 8px 28px',
+                background: T.bg2, border: `1px solid ${query ? T.blue : T.sep}`,
+                borderRadius: 8, fontSize: 12, color: T.text, outline: 'none',
+                boxSizing: 'border-box',
+              }}
+            />
+            {query && (
+              <button onClick={() => setQuery('')} style={{
+                position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)',
+                background: 'none', border: 'none', cursor: 'pointer', color: T.text3, fontSize: 13, padding: 2,
+              }}>×</button>
+            )}
+          </div>
           <button onClick={fetchLoads} style={{
             padding: mobile ? '7px 10px' : '8px 14px', background: T.bg2, border: `1px solid ${T.sep}`,
             borderRadius: 8, cursor: 'pointer', fontSize: 14, color: T.text, fontWeight: 600,
@@ -750,7 +778,15 @@ export default function Loads() {
       {/* Load table */}
       {sorted.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '48px 20px', color: T.text3, background: T.bg1, borderRadius: 12, border: `1px solid ${T.sep}` }}>
-          <div style={{ fontSize: 14, fontWeight: 600 }}>No loads in this view</div>
+          <div style={{ fontSize: 14, fontWeight: 600 }}>
+            {q ? `No loads match "${query.trim()}"` : 'No loads in this view'}
+          </div>
+          {q && (
+            <button onClick={() => setQuery('')} style={{
+              marginTop: 12, padding: '7px 16px', background: T.bg2, border: `1px solid ${T.sep}`,
+              borderRadius: 8, cursor: 'pointer', color: T.text2, fontSize: 12, fontWeight: 600,
+            }}>Clear search</button>
+          )}
         </div>
       ) : (
         <div style={{ border: `1px solid ${T.sep}`, borderRadius: 10, overflow: 'hidden' }}>
