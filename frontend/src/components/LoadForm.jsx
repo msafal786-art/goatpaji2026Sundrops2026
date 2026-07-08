@@ -34,6 +34,7 @@ export default function LoadForm({ load, onClose, onSave }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [parseError, setParseError] = useState('')
+  const [dragOver, setDragOver] = useState(false)
   const [dupWarning, setDupWarning] = useState(null) // { id, load_number, broker_name, created_at }
   const fileRef = useRef()
   const dupTimerRef = useRef()
@@ -66,8 +67,16 @@ export default function LoadForm({ load, onClose, onSave }) {
   }
 
   async function handleFileParse(e) {
-    const file = e.target.files[0]
+    parseFile(e.target.files[0])
+    e.target.value = ''
+  }
+
+  async function parseFile(file) {
     if (!file) return
+    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+      setParseError('Only PDF files are supported')
+      return
+    }
     setParsing(true)
     setParseError('')
     try {
@@ -158,8 +167,14 @@ export default function LoadForm({ load, onClose, onSave }) {
         </div>
 
         {/* PDF Parser */}
-        <div style={{ background: T.blue + '18', border: `1.5px dashed ${T.blue}60`, borderRadius: 10, padding: '16px', marginBottom: 20, textAlign: 'center' }}>
-          <div style={{ fontSize: 13, color: T.text2, marginBottom: 8 }}>Upload Rate Confirmation PDF to auto-fill fields</div>
+        <div
+          onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={e => { e.preventDefault(); setDragOver(false); if (!parsing) parseFile(e.dataTransfer.files[0]) }}
+          style={{ background: dragOver ? T.blue + '30' : T.blue + '18', border: `1.5px dashed ${T.blue}${dragOver ? '' : '60'}`, borderRadius: 10, padding: '16px', marginBottom: 20, textAlign: 'center', transition: 'background 0.12s, border-color 0.12s' }}>
+          <div style={{ fontSize: 13, color: T.text2, marginBottom: 8 }}>
+            {dragOver ? 'Drop PDF to auto-fill fields' : 'Drop Rate Confirmation PDF here to auto-fill fields — or'}
+          </div>
           <input type="file" accept=".pdf" ref={fileRef} onChange={handleFileParse} style={{ display: 'none' }} />
           <button type="button" style={{ padding: '8px 18px', background: T.blue, color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}
             onClick={() => fileRef.current.click()} disabled={parsing}>

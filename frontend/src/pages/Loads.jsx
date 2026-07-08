@@ -77,14 +77,27 @@ function parseHM(timeStr) {
   return [h, min]
 }
 
+// Deadline for a delivery window: the last time in the string ("08:00 AM - 02:00 PM" → 2 PM).
+// No parseable time means due by end of day.
+function parseDeliveryHM(timeStr) {
+  const matches = [...(timeStr || '').matchAll(/(\d+):(\d+)\s*(AM|PM)?/gi)]
+  if (!matches.length) return [23, 59]
+  const m = matches[matches.length - 1]
+  let h = parseInt(m[1]), min = parseInt(m[2])
+  if (m[3]?.toUpperCase() === 'PM' && h !== 12) h += 12
+  if (m[3]?.toUpperCase() === 'AM' && h === 12) h = 0
+  return [h, min]
+}
+
 function isLate(load) {
   const now = new Date()
   const [ph, pm] = parseHM(load.pickup_time)
+  const [dh, dm] = parseDeliveryHM(load.delivery_time)
   const pickupTZ = stateToTZ(load.pickup_state)
   const delivTZ  = stateToTZ(load.delivery_state)
   const pickupPassed = load.pickup_date && parseInTZ(load.pickup_date, ph, pm, pickupTZ) < now
   const notPickedUp = ['open','covered','pending','assigned'].includes(load.status)
-  const deliveryPassed = load.delivery_date && parseInTZ(load.delivery_date, 0, 0, delivTZ) < now
+  const deliveryPassed = load.delivery_date && parseInTZ(load.delivery_date, dh, dm, delivTZ) < now
   const notDelivered = !['delivered','completed'].includes(load.status)
   return (pickupPassed && notPickedUp) || (deliveryPassed && notDelivered)
 }

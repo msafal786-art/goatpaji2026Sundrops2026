@@ -15,7 +15,17 @@ function isLate(load) {
   const now = new Date()
   const pickupPassed = load.pickup_date && new Date(load.pickup_date + 'T06:00') < now
   const notPickedUp = ['open','covered','pending','assigned'].includes(load.status)
-  const delivPassed = load.delivery_date && new Date(load.delivery_date + 'T00:00') < now
+  // Deadline is the end of the delivery window ("08:00 AM - 02:00 PM" → 2 PM),
+  // or end of day when no time is set — never midnight, or everything due today flags at 12 AM.
+  const m = [...(load.delivery_time || '').matchAll(/(\d+):(\d+)\s*(AM|PM)?/gi)].pop()
+  let dh = 23, dm = 59
+  if (m) {
+    dh = parseInt(m[1]); dm = parseInt(m[2])
+    if (m[3]?.toUpperCase() === 'PM' && dh !== 12) dh += 12
+    if (m[3]?.toUpperCase() === 'AM' && dh === 12) dh = 0
+  }
+  const deadline = `T${String(dh).padStart(2, '0')}:${String(dm).padStart(2, '0')}`
+  const delivPassed = load.delivery_date && new Date(load.delivery_date + deadline) < now
   const notDelivered = !['delivered', 'completed'].includes(load.status)
   return (pickupPassed && notPickedUp) || (delivPassed && notDelivered)
 }
