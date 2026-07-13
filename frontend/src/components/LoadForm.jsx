@@ -158,13 +158,34 @@ export default function LoadForm({ load, onClose, onSave }) {
     }
   }
 
+  async function handleDelete() {
+    if (!confirm(`Delete this load? This cannot be undone.`)) return
+    setSaving(true)
+    try { await api.deleteLoad(load.id); onSave() }
+    catch (err) { setError(err.message); setSaving(false) }
+  }
+
+  const deleteBtn = load && isAdmin && (
+    <button type="button" disabled={saving} onClick={handleDelete}
+      style={{ padding: '10px 16px', background: T.red + '15', color: T.red, border: `1px solid ${T.red}40`, borderRadius: 9, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
+      Delete Load
+    </button>
+  )
+
   return (
     <div style={modalBg} onClick={onClose}>
       <div style={modalBox} onClick={e => e.stopPropagation()}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 20 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 20 }}>
           <h2 style={{ fontSize: 18, fontWeight: 700, color: T.text }}>{load ? 'Edit Load' : 'Add Load'}</h2>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: T.text3 }}>×</button>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            {deleteBtn}
+            <button type="button" style={secBtn} onClick={onClose}>Cancel</button>
+            <button type="submit" form="load-form" style={primaryBtn} disabled={saving}>{saving ? 'Saving…' : load ? 'Update Load' : 'Create Load'}</button>
+            <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: T.text3 }}>×</button>
+          </div>
         </div>
+
+        {error && <div style={{ color: T.red, fontSize: 13, marginBottom: 12, padding: '8px 12px', background: T.red + '18', borderRadius: 6 }}>{error}</div>}
 
         {/* PDF Parser */}
         <div
@@ -183,7 +204,7 @@ export default function LoadForm({ load, onClose, onSave }) {
           {parseError && <div style={{ color: T.red, fontSize: 12, marginTop: 8 }}>{parseError}</div>}
         </div>
 
-        <form onSubmit={handleSubmit}>
+        <form id="load-form" onSubmit={handleSubmit}>
           <Section title="Assign Driver & Truck">
             <Row>
               <Field label="Driver">
@@ -395,18 +416,7 @@ export default function LoadForm({ load, onClose, onSave }) {
           {error && <div style={{ color: T.red, fontSize: 13, marginBottom: 12, padding: '8px 12px', background: T.red + '18', borderRadius: 6 }}>{error}</div>}
 
           <div style={{ display: 'flex', gap: 10, justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              {load && isAdmin && (
-                <button type="button" disabled={saving} onClick={async () => {
-                  if (!confirm(`Delete this load? This cannot be undone.`)) return
-                  setSaving(true)
-                  try { await api.deleteLoad(load.id); onSave() }
-                  catch (err) { setError(err.message); setSaving(false) }
-                }} style={{ padding: '10px 16px', background: T.red + '15', color: T.red, border: `1px solid ${T.red}40`, borderRadius: 9, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
-                  Delete Load
-                </button>
-              )}
-            </div>
+            <div>{deleteBtn}</div>
             <div style={{ display: 'flex', gap: 10 }}>
               <button type="button" style={secBtn} onClick={onClose}>Cancel</button>
               <button type="submit" style={primaryBtn} disabled={saving}>{saving ? 'Saving…' : load ? 'Update Load' : 'Create Load'}</button>
