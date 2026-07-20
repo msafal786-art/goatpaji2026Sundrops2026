@@ -289,12 +289,22 @@ if (!userCols.includes('can_see_revenue'))         db.prepare('ALTER TABLE users
 if (!userCols.includes('must_change_password'))    db.prepare('ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0').run();
 if (!userCols.includes('allowed_company_ids'))     db.prepare('ALTER TABLE users ADD COLUMN allowed_company_ids TEXT DEFAULT NULL').run();
 
-// Seed a default dispatcher account
+// Seed a default dispatcher account on a brand-new database only.
+// The password comes from SEED_DISPATCHER_PASSWORD; if that isn't set we mint a
+// random one and print it once, so a fresh deploy never ships a password that
+// is published in this repo. Either way the account must change it at first login.
 const bcrypt = require('bcryptjs');
 const existingDispatcher = db.prepare('SELECT id FROM users WHERE username = ?').get('dispatcher');
 if (!existingDispatcher) {
-  const hash = bcrypt.hashSync('dispatch123', 10);
-  db.prepare(`INSERT INTO users (username, password, role, full_name) VALUES (?, ?, 'dispatcher', 'Main Dispatcher')`).run('dispatcher', hash);
+  const seeded = process.env.SEED_DISPATCHER_PASSWORD;
+  const password = seeded || require('crypto').randomBytes(9).toString('base64url');
+  const hash = bcrypt.hashSync(password, 10);
+  db.prepare(`INSERT INTO users (username, password, role, full_name, must_change_password) VALUES (?, ?, 'dispatcher', 'Main Dispatcher', 1)`)
+    .run('dispatcher', hash);
+  if (!seeded) {
+    console.log(`[seed] Created 'dispatcher' with a one-time password: ${password}`);
+    console.log("[seed] Log in and change it now (or set SEED_DISPATCHER_PASSWORD before first boot).");
+  }
 }
 
 module.exports = db;

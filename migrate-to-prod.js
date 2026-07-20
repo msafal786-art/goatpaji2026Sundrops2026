@@ -1,11 +1,23 @@
 #!/usr/bin/env node
-// One-time migration: push all local loads/drivers/companies to production
-// Run with: node migrate-to-prod.js
+// One-time migration: push all local loads/drivers/companies to production.
+//
+// Credentials are NEVER hardcoded here — pass them in the environment:
+//   PROD_USER=dispatcher PROD_PASS='…' PROD_ADMIN_CODE='…' node migrate-to-prod.js
 
 const db = require('./db.js')
 
-const PROD = 'https://goatpaji.com'
-const CREDS = { username: 'dispatcher', password: 'dispatch123' }
+const PROD = process.env.PROD_URL || 'https://goatpaji.com'
+const CREDS = {
+  username: process.env.PROD_USER,
+  password: process.env.PROD_PASS,
+  admin_code: process.env.PROD_ADMIN_CODE,
+}
+
+if (!CREDS.username || !CREDS.password) {
+  console.error('Missing credentials. Run with:')
+  console.error("  PROD_USER=dispatcher PROD_PASS='…' PROD_ADMIN_CODE='…' node migrate-to-prod.js")
+  process.exit(1)
+}
 
 async function req(method, path, body, token) {
   const res = await fetch(PROD + '/api' + path, {
