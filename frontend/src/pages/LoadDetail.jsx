@@ -8,6 +8,12 @@ import LoadForm from '../components/LoadForm.jsx'
 
 const DOC_TYPES = ['Rate Con', 'BOL', 'POD', 'Other']
 
+// Once the truck is physically working the load, "Mark Dispatched" is moot —
+// the driver plainly got the dispatch. Only offer it before the wheels turn.
+const PRE_DISPATCH_STATUSES = ['open', 'covered', 'dispatched']
+const canMarkDispatched = (load) =>
+  !!load && !load.dispatch_sent && !!load.driver_id && PRE_DISPATCH_STATUSES.includes(load.status)
+
 export default function LoadDetail() {
   const { id } = useParams()
   const { user } = useAuth()
@@ -236,7 +242,7 @@ ${load.company_name || 'Dispatch'}`
         {canEdit && (
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <Btn onClick={handleGetDispatch}>Dispatch Message</Btn>
-            {!load.dispatch_sent && load.driver_id && (
+            {canMarkDispatched(load) && (
               <Btn color={T.green} onClick={handleMarkDispatched}>Mark Dispatched</Btn>
             )}
             {load.status === 'delivered' && (
@@ -630,7 +636,7 @@ ${load.company_name || 'Dispatch'}`
             }}>{dispatchMsg}</pre>
             <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
               <Btn color={T.blue} onClick={handleCopy}>{copying ? '✓ Copied!' : 'Copy to Clipboard'}</Btn>
-              {!load.dispatch_sent && load.driver_id && (
+              {canMarkDispatched(load) && (
                 <Btn color={T.green} onClick={async () => { await handleMarkDispatched(); setShowMsg(false) }}>Mark as Sent</Btn>
               )}
             </div>

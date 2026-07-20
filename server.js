@@ -98,7 +98,27 @@ const upload = multer({
     cb(null, false);
   },
 });
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+// Document reads take 15–40s. Give the SDK room and let it ride out transient
+// upstream failures (429 / 5xx / connection errors) before we surface an error.
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  timeout: 100000,
+  maxRetries: 3,
+});
+
+// Shape an Anthropic failure into a message the dispatcher can act on, plus a
+// `retryable` flag the frontend uses to decide whether to try again itself.
+function describeParseError(err) {
+  const m = err?.message || '';
+  if (err?.status === 429)  return { msg: 'Too many documents at once — wait a few seconds and retry.', retryable: true };
+  if (err?.status === 529 || /overload/i.test(m)) return { msg: 'Document service is busy — retry in a moment.', retryable: true };
+  if (err?.status >= 500)   return { msg: 'Document service had a problem — retry in a moment.', retryable: true };
+  if (/credit/i.test(m))    return { msg: 'PDF reading unavailable — API credits exhausted. Enter details manually.', retryable: false };
+  if (err?.status === 401 || /api key/i.test(m)) return { msg: 'PDF reading unavailable — API key not configured. Contact admin.', retryable: false };
+  if (/timeout|ETIMEDOUT|aborted/i.test(m)) return { msg: 'Reading this PDF took too long — retry, or enter it manually.', retryable: true };
+  if (/No JSON/i.test(m))   return { msg: 'Could not read load details from this PDF — try entering manually.', retryable: false };
+  return { msg: 'Failed to read PDF', retryable: false };
+}
 
 // ── Health check (Railway uses this) ────────────────────────────────────────
 app.get('/api/health', (req, res) => res.json({ ok: true }));
@@ -928,19 +948,10 @@ Rules:
 
     res.json(data);
   } catch (err) {
-    console.error('Parse error:', err.message, err.status, err.error);
+    console.error('Parse error:', err.message, err.status);
     try { fs.unlinkSync(req.file.path); } catch {}
-    let msg = 'Failed to parse PDF';
-    if (err.message?.includes('credit balance') || err.message?.includes('credit')) {
-      msg = 'PDF parsing unavailable — API credits exhausted. Enter load details manually.';
-    } else if (err.status === 401 || err.message?.includes('401') || err.message?.includes('auth') || err.message?.includes('API key')) {
-      msg = 'PDF parsing unavailable — API key not configured. Contact admin.';
-    } else if (err.status === 529 || err.message?.includes('overloaded')) {
-      msg = 'Anthropic API is overloaded — try again in a moment.';
-    } else if (err.message?.includes('No JSON')) {
-      msg = 'Could not extract load data from PDF — try entering manually.';
-    }
-    res.status(500).json({ error: msg, detail: err.message });
+    const { msg, retryable } = describeParseError(err);
+    res.status(retryable ? 503 : 500).json({ error: msg, retryable, detail: err.message });
   }
 });
 
@@ -1095,12 +1106,8 @@ Rules:
   } catch (err) {
     console.error('Doc match error:', err.message, err.status);
     try { fs.unlinkSync(req.file.path); } catch {}
-    let msg = 'Failed to read document';
-    if (err.message?.includes('credit')) msg = 'Document reading unavailable — API credits exhausted.';
-    else if (err.status === 401) msg = 'Document reading unavailable — API key not configured.';
-    else if (err.status === 529) msg = 'Anthropic API is overloaded — try again in a moment.';
-    else if (err.message?.includes('No JSON')) msg = 'Could not read identifying details from this document.';
-    res.status(500).json({ error: msg, detail: err.message });
+    const { msg, retryable } = describeParseError(err);
+    res.status(retryable ? 503 : 500).json({ error: msg, retryable, detail: err.message });
   }
 });
 

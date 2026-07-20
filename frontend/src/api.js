@@ -24,35 +24,63 @@ export async function maybeRefreshToken() {
   } catch { /* non-critical */ }
 }
 
-async function req(method, path, body, isForm = false) {
-  const headers = {}
-  const token = getToken()
-  if (token) headers['Authorization'] = `Bearer ${token}`
-  if (!isForm) headers['Content-Type'] = 'application/json'
+// Most calls are quick DB reads, but anything that reads a PDF with Claude
+// takes 15–40s. A single blanket timeout either cut those off mid-parse or
+// made ordinary calls hang, so the timeout (and retry policy) is per-call.
+const DEFAULT_TIMEOUT = 20000
+const sleep = (ms) => new Promise(r => setTimeout(r, ms))
 
-  const ctrl = new AbortController()
-  const timer = setTimeout(() => ctrl.abort(), 20000) // 20s timeout
-  let res
-  try {
-    res = await fetch(BASE + path, {
-      method,
-      headers,
-      signal: ctrl.signal,
-      body: isForm ? body : body ? JSON.stringify(body) : undefined
-    })
-  } catch (e) {
-    if (e.name === 'AbortError') throw new Error('Request timed out — server may be restarting')
-    throw e
-  } finally {
+// Worth retrying: the upstream model was busy, or the connection dropped.
+// Never retried: 4xx (bad request / auth / duplicate) — retrying won't help.
+function isTransient(err) {
+  return err?.transient === true || err?.name === 'AbortError' || err?.name === 'TypeError'
+}
+
+async function req(method, path, body, isForm = false, opts = {}) {
+  const timeoutMs = opts.timeout ?? DEFAULT_TIMEOUT
+  const maxAttempts = (opts.retries ?? 0) + 1
+
+  let lastErr
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    const headers = {}
+    const token = getToken()
+    if (token) headers['Authorization'] = `Bearer ${token}`
+    if (!isForm) headers['Content-Type'] = 'application/json'
+
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+    let res
+    try {
+      res = await fetch(BASE + path, {
+        method,
+        headers,
+        signal: ctrl.signal,
+        body: isForm ? body : body ? JSON.stringify(body) : undefined,
+      })
+    } catch (e) {
+      clearTimeout(timer)
+      lastErr = e.name === 'AbortError'
+        ? Object.assign(new Error(`Timed out after ${Math.round(timeoutMs / 1000)}s`), { transient: true })
+        : e
+      if (attempt < maxAttempts && isTransient(lastErr)) { await sleep(1000 * attempt); continue }
+      throw lastErr
+    }
     clearTimeout(timer)
-  }
 
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: res.statusText }))
-    const msg = err.error || 'Request failed'
-    throw new Error(err.detail ? `${msg} — ${err.detail}` : msg)
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: res.statusText }))
+      const msg = err.error || 'Request failed'
+      lastErr = Object.assign(
+        new Error(err.detail ? `${msg} — ${err.detail}` : msg),
+        // 429/5xx are worth another go; the server also flags retryable cases.
+        { transient: res.status === 429 || res.status >= 500 || err.retryable === true }
+      )
+      if (attempt < maxAttempts && isTransient(lastErr)) { await sleep(1000 * attempt); continue }
+      throw lastErr
+    }
+    return res.json()
   }
-  return res.json()
+  throw lastErr
 }
 
 export const api = {
@@ -98,29 +126,34 @@ export const api = {
   markDispatched: (id) => req('POST', `/loads/${id}/mark-dispatched`),
   updateLoadStatus: (id, status, extra = {}) => req('POST', `/loads/${id}/status`, { status, ...extra }),
 
+  // Reading a PDF with Claude runs 15–40s; allow well past that and retry
+  // once on a timeout or an overloaded upstream.
   parseRateCon: (file) => {
     const fd = new FormData()
     fd.append('file', file)
-    return req('POST', '/parse-rate-con', fd, true)
+    return req('POST', '/parse-rate-con', fd, true, { timeout: 120000, retries: 1 })
   },
 
   // Document drop box — parse a BOL/POD and match it to an existing load
   matchDoc: (file) => {
     const fd = new FormData()
     fd.append('file', file)
-    return req('POST', '/docs/match', fd, true)
+    return req('POST', '/docs/match', fd, true, { timeout: 120000, retries: 1 })
   },
   attachDoc: (staged_filename, original_name, load_id, doc_type) =>
-    req('POST', '/docs/attach', { staged_filename, original_name, load_id, doc_type }),
+    req('POST', '/docs/attach', { staged_filename, original_name, load_id, doc_type }, false, { timeout: 90000 }),
   discardDoc: (staged_filename) => req('POST', '/docs/discard', { staged_filename }),
 
   // Load documents
   loadDocs: (loadId) => req('GET', `/loads/${loadId}/docs`),
+  // Uploads can be a 20 MB scan over a phone connection, and the server also
+  // pushes to Drive. No retry — filing the same document twice is worse than
+  // an error the dispatcher can act on.
   uploadDoc: (loadId, file, doc_type) => {
     const fd = new FormData()
     fd.append('file', file)
     fd.append('doc_type', doc_type)
-    return req('POST', `/loads/${loadId}/docs`, fd, true)
+    return req('POST', `/loads/${loadId}/docs`, fd, true, { timeout: 90000 })
   },
   downloadDoc: async (docId, filename) => {
     const token = localStorage.getItem('token')
