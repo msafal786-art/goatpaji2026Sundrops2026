@@ -146,7 +146,7 @@ function pickupAlertNeeded(load) {
     && ['open','covered','dispatched','pending','assigned'].includes(load.status)
 }
 
-function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer, user, compact }) {
+function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer, user, compact, justBuilt }) {
   const navigate = useNavigate()
   const late = isLate(load)
   const alert = pickupAlertNeeded(load)
@@ -176,7 +176,9 @@ function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer, user, compact }
   const dest       = finalDest(load)
   const delivCity  = dest.text
 
-  const rowBg = late
+  const rowBg = justBuilt
+    ? (T.isDark ? 'rgba(48,209,88,0.13)' : 'rgba(48,209,88,0.10)')
+    : late
     ? (T.isDark ? 'rgba(255,69,58,0.09)' : 'rgba(255,59,48,0.07)')
     : ['on_route','in_transit'].includes(load.status)
       ? (T.isDark ? 'rgba(48,209,88,0.07)' : 'rgba(48,209,88,0.06)')
@@ -199,6 +201,13 @@ function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer, user, compact }
           <div style={{ fontSize: 13, fontWeight: 700, color: late ? T.red : T.text, letterSpacing: -0.2 }}>
             {late && <span style={{ color: T.red, marginRight: 3 }}>!</span>}
             {load.load_number || `#${load.id}`}
+            {justBuilt && (
+              <span style={{
+                marginLeft: 5, fontSize: 8.5, fontWeight: 800, letterSpacing: 0.5,
+                color: T.green, background: T.green + '22', padding: '1px 5px', borderRadius: 4,
+                verticalAlign: 'middle',
+              }}>NEW</span>
+            )}
           </div>
           {!compact && (
             <div style={{ fontSize: 10, color: T.text3, marginTop: 2, maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis' }}>
@@ -619,6 +628,39 @@ export default function Loads() {
   const [showForm, setShowForm] = useState(false)
   const [showBulkRC, setShowBulkRC] = useState(false)
   const [showDocInbox, setShowDocInbox] = useState(false)
+  const [justBuiltIds, setJustBuiltIds] = useState([])   // newest first — pinned to top of the board
+  const [justBuilt, setJustBuilt] = useState(null)       // the load to offer dispatch for
+  const [dispatchMsg, setDispatchMsg] = useState('')
+  const [copied, setCopied] = useState(false)
+
+  // A load was just created — pin it and offer to copy its dispatch right away.
+  function handleCreated(saved) {
+    if (!saved?.id) return
+    setJustBuiltIds(ids => [saved.id, ...ids.filter(i => i !== saved.id)])
+    setJustBuilt(saved)
+    setDispatchMsg('')
+    setCopied(false)
+  }
+
+  async function copyDispatch() {
+    if (!justBuilt) return
+    try {
+      let msg = dispatchMsg
+      if (!msg) {
+        const res = await api.dispatchMessage(justBuilt.id)
+        msg = res.message
+        setDispatchMsg(msg)
+      }
+      await navigator.clipboard.writeText(msg)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Clipboard blocked (or no driver on the load) — show the text to copy by hand
+      if (!dispatchMsg) {
+        try { setDispatchMsg((await api.dispatchMessage(justBuilt.id)).message) } catch {}
+      }
+    }
+  }
   const [editLoad, setEditLoad] = useState(null)
   const [drawerLoad, setDrawerLoad] = useState(null)
   const [driverModal, setDriverModal] = useState(null) // { load, targetStatus }
@@ -666,6 +708,15 @@ export default function Loads() {
   }
 
   const sorted = [...filtered].sort((a, b) => {
+    // Loads created in this session pin to the top (newest first) so a load you
+    // just built is right there to dispatch, whatever the current sort is.
+    const aNew = justBuiltIds.indexOf(a.id)
+    const bNew = justBuiltIds.indexOf(b.id)
+    if (aNew !== -1 || bNew !== -1) {
+      if (aNew === -1) return 1
+      if (bNew === -1) return -1
+      return aNew - bNew
+    }
     let va, vb
     if (sortField === 'pickup')   { va = a.pickup_date || '9999';   vb = b.pickup_date || '9999' }
     else if (sortField === 'delivery') { va = a.delivery_date || '9999'; vb = b.delivery_date || '9999' }
@@ -746,6 +797,48 @@ export default function Loads() {
           }}>+ Add Load</button>
         </div>
       </div>
+
+      {/* Just-built load — dispatch it without hunting for it on the board */}
+      {justBuilt && (
+        <div style={{
+          background: T.green + '14', border: `1px solid ${T.green}55`, borderRadius: 10,
+          padding: '10px 14px', marginBottom: 12,
+          display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+        }}>
+          <span style={{ fontSize: 13, color: T.text, fontWeight: 600 }}>
+            Load #{justBuilt.load_number || justBuilt.broker_order || justBuilt.id} added
+            {justBuilt.driver_name
+              ? <span style={{ fontWeight: 400, color: T.text2 }}> · {justBuilt.driver_name}</span>
+              : <span style={{ fontWeight: 400, color: T.orange }}> · no driver assigned yet</span>}
+          </span>
+          <div style={{ display: 'flex', gap: 7, marginLeft: 'auto', flexWrap: 'wrap' }}>
+            <button onClick={copyDispatch} style={{
+              padding: '6px 13px', background: copied ? T.green : T.blue, border: 'none',
+              borderRadius: 7, cursor: 'pointer', fontSize: 12.5, color: '#fff', fontWeight: 600,
+            }}>{copied ? '✓ Copied' : 'Copy dispatch'}</button>
+            <button onClick={() => navigate(`/loads/${justBuilt.id}`)} style={{
+              padding: '6px 13px', background: T.bg2, border: `1px solid ${T.sep}`,
+              borderRadius: 7, cursor: 'pointer', fontSize: 12.5, color: T.text, fontWeight: 600,
+            }}>Open load</button>
+            <button onClick={() => { setJustBuilt(null); setDispatchMsg('') }} title="Dismiss" style={{
+              padding: '6px 10px', background: 'none', border: 'none',
+              cursor: 'pointer', fontSize: 16, color: T.text3, lineHeight: 1,
+            }}>×</button>
+          </div>
+          {dispatchMsg && !copied && (
+            <textarea
+              readOnly
+              value={dispatchMsg}
+              onFocus={e => e.target.select()}
+              style={{
+                width: '100%', height: 130, marginTop: 4, padding: '8px 10px',
+                border: `1px solid ${T.sep}`, borderRadius: 8, fontSize: 11.5,
+                background: T.bg1, color: T.text, fontFamily: 'inherit', resize: 'vertical',
+              }}
+            />
+          )}
+        </div>
+      )}
 
       {/* Carrier quick-filter chips */}
       {user.role === 'dispatcher' && activeCarrierCompanies.length > 0 && (
@@ -874,6 +967,7 @@ export default function Loads() {
                     load={l}
                     user={user}
                     compact={compact}
+                    justBuilt={justBuiltIds.includes(l.id)}
                     onStatusUpdate={fetchLoads}
                     onEdit={(load) => { setEditLoad(load); setShowForm(true) }}
                     onStatusDrawer={setDrawerLoad}
@@ -889,14 +983,25 @@ export default function Loads() {
         <LoadForm
           load={editLoad}
           onClose={() => { setShowForm(false); setEditLoad(null) }}
-          onSave={() => { fetchLoads(); setShowForm(false); setEditLoad(null) }}
+          onSave={(saved) => {
+            const wasNew = !editLoad
+            fetchLoads()
+            setShowForm(false)
+            setEditLoad(null)
+            if (wasNew) handleCreated(saved)
+          }}
         />
       )}
 
       {showBulkRC && (
         <BulkRateCons
           onClose={() => setShowBulkRC(false)}
-          onDone={fetchLoads}
+          onDone={(created) => {
+            fetchLoads()
+            if (Array.isArray(created) && created.length) {
+              setJustBuiltIds(ids => [...created.map(l => l.id), ...ids.filter(i => !created.some(c => c.id === i))])
+            }
+          }}
         />
       )}
 

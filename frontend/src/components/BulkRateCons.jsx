@@ -73,12 +73,14 @@ export default function BulkRateCons({ onClose, onDone }) {
   async function createAll() {
     if (needsCompany.length) return
     setWorking(true)
+    const created = []
     for (const item of readyItems) {
       setItems(prev => prev.map(i => i.id === item.id ? { ...i, state: 'creating' } : i))
       try {
         const payload = { ...item.data, company_id: item.data.company_id || defaultCompany }
         delete payload._filename
-        await api.createLoad(payload)
+        const saved = await api.createLoad(payload)
+        if (saved?.id) created.push(saved)
         setItems(prev => prev.map(i => i.id === item.id ? { ...i, state: 'created' } : i))
       } catch (err) {
         const dup = /already exists/i.test(err.message || '')
@@ -87,7 +89,7 @@ export default function BulkRateCons({ onClose, onDone }) {
       }
     }
     setWorking(false)
-    onDone?.()
+    onDone?.(created)
   }
 
   const createdCount = items.filter(i => i.state === 'created').length
