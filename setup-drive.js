@@ -11,10 +11,30 @@
 //   Application type: "Desktop app"
 
 const http = require('http');
+const fs = require('fs');
 const { google } = require('googleapis');
 
-const CLIENT_ID = process.env.GOOGLE_OAUTH_CLIENT_ID;
-const CLIENT_SECRET = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+// Credentials can come from the JSON Google gives you (easiest — no copying
+// secrets by hand) or from environment variables.
+//   node setup-drive.js ~/Downloads/client_secret_xxx.json
+function fromJsonFile(pathArg) {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(pathArg, 'utf8'));
+    const c = parsed.installed || parsed.web || parsed;
+    if (c.client_id && c.client_secret) {
+      return { id: c.client_id, secret: c.client_secret };
+    }
+    console.error(`No client_id/client_secret found in ${pathArg}`);
+  } catch (e) {
+    console.error(`Could not read ${pathArg}: ${e.message}`);
+  }
+  return {};
+}
+
+const fileArg = process.argv[2];
+const fromFile = fileArg ? fromJsonFile(fileArg) : {};
+const CLIENT_ID = fromFile.id || process.env.GOOGLE_OAUTH_CLIENT_ID;
+const CLIENT_SECRET = fromFile.secret || process.env.GOOGLE_OAUTH_CLIENT_SECRET;
 const PORT = 53682;
 const REDIRECT = `http://localhost:${PORT}`;
 
@@ -30,11 +50,11 @@ Missing OAuth client credentials.
    Enable "Google Drive API".
 2. APIs & Services -> Credentials -> Create Credentials -> OAuth client ID
    Application type: Desktop app
-3. Re-run with the values it gives you:
+3. Download the JSON and pass it in:
 
-   GOOGLE_OAUTH_CLIENT_ID=xxx.apps.googleusercontent.com \\
-   GOOGLE_OAUTH_CLIENT_SECRET=xxx \\
-   node setup-drive.js
+   node setup-drive.js ~/Downloads/client_secret_xxx.json
+
+   (or set GOOGLE_OAUTH_CLIENT_ID / GOOGLE_OAUTH_CLIENT_SECRET instead)
 `);
   process.exit(1);
 }
