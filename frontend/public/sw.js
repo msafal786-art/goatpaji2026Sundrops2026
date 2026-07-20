@@ -1,4 +1,4 @@
-const CACHE = 'dispatch-v3'
+const CACHE = 'dispatch-v4'
 const PRECACHE = ['/', '/index.html']
 
 self.addEventListener('install', e => {
@@ -15,7 +15,7 @@ self.addEventListener('activate', e => {
   )
 })
 
-// Network-first for API, cache-first for assets
+// Network-first for API and pages, cache-first only for hashed build assets
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url)
 
@@ -25,17 +25,34 @@ self.addEventListener('fetch', e => {
     return
   }
 
-  // Cache-first for static assets
+  // Hashed build assets (filename changes every build) — cache-first is safe
+  if (url.pathname.startsWith('/assets/')) {
+    e.respondWith(
+      caches.match(e.request).then(cached => {
+        if (cached) return cached
+        return fetch(e.request).then(res => {
+          if (res.ok && e.request.method === 'GET') {
+            const clone = res.clone()
+            caches.open(CACHE).then(c => c.put(e.request, clone))
+          }
+          return res
+        })
+      })
+    )
+    return
+  }
+
+  // Pages and everything else — network-first so deploys show up on a normal
+  // refresh; fall back to the cached copy only when actually offline
   e.respondWith(
-    caches.match(e.request).then(cached => {
-      if (cached) return cached
-      return fetch(e.request).then(res => {
-        if (res.ok && e.request.method === 'GET') {
-          const clone = res.clone()
-          caches.open(CACHE).then(c => c.put(e.request, clone))
-        }
-        return res
-      }).catch(() => caches.match('/index.html'))
-    })
+    fetch(e.request).then(res => {
+      if (res.ok && e.request.method === 'GET') {
+        const clone = res.clone()
+        caches.open(CACHE).then(c => c.put(e.request, clone))
+      }
+      return res
+    }).catch(() =>
+      caches.match(e.request).then(cached => cached || caches.match('/index.html'))
+    )
   )
 })
