@@ -135,7 +135,6 @@ function TopNav({ user, onLogout }) {
 
   const moreItems = [
     { to: '/compliance',      label: 'Compliance' },
-    { to: '/calendar',        label: 'Calendar' },
     { to: '/recommendations', label: 'Lanes' },
     ...(isAdmin ? [{ to: '/companies', label: 'Companies' }, { to: '/users', label: 'Users' }] : []),
     { to: '/settings',        label: 'Settings' },
@@ -165,6 +164,7 @@ function TopNav({ user, onLogout }) {
       {/* Nav items */}
       <nav style={{ display: 'flex', alignItems: 'stretch', flex: 1 }}>
         <NavItem label="Dispatch" to="/loads" />
+        <NavItem label="Calendar" to="/calendar" />
         <NavItem label="Dashboard" to="/dashboard" />
         <NavItem label="Drivers" mainTo="/drivers" children={[
           { to: '/drivers', label: 'Driver List' },

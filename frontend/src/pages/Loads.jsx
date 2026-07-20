@@ -5,6 +5,8 @@ import { useAuth } from '../AuthContext.jsx'
 import { T, STATUS, carrierColor, ACTIVE_CARRIERS } from '../theme.js'
 import { useIsMobile } from '../hooks/useIsMobile.js'
 import LoadForm from '../components/LoadForm.jsx'
+import BulkRateCons from '../components/BulkRateCons.jsx'
+import DocInbox from '../components/DocInbox.jsx'
 
 // Final destination for a load. Multi-drop loads keep drop 1 in delivery_*
 // and the remaining drops in extra_stops (JSON array, in order). The board
@@ -615,6 +617,8 @@ export default function Loads() {
   const [sortField, setSortField] = useState('pickup')
   const [sortDir, setSortDir] = useState('asc')
   const [showForm, setShowForm] = useState(false)
+  const [showBulkRC, setShowBulkRC] = useState(false)
+  const [showDocInbox, setShowDocInbox] = useState(false)
   const [editLoad, setEditLoad] = useState(null)
   const [drawerLoad, setDrawerLoad] = useState(null)
   const [driverModal, setDriverModal] = useState(null) // { load, targetStatus }
@@ -728,6 +732,14 @@ export default function Loads() {
             padding: mobile ? '7px 10px' : '8px 14px', background: T.bg2, border: `1px solid ${T.sep}`,
             borderRadius: 8, cursor: 'pointer', fontSize: 14, color: T.text, fontWeight: 600,
           }}>↻</button>
+          <button onClick={() => setShowDocInbox(true)} title="Drop BOLs and PODs — they're matched to their load automatically" style={{
+            padding: mobile ? '7px 10px' : '8px 14px', background: T.bg2, border: `1px solid ${T.sep}`,
+            borderRadius: 8, cursor: 'pointer', fontSize: mobile ? 12 : 13, color: T.text, fontWeight: 600,
+          }}>{mobile ? 'Docs' : 'Drop BOLs'}</button>
+          <button onClick={() => setShowBulkRC(true)} title="Add several rate cons at once" style={{
+            padding: mobile ? '7px 10px' : '8px 14px', background: T.bg2, border: `1px solid ${T.sep}`,
+            borderRadius: 8, cursor: 'pointer', fontSize: mobile ? 12 : 13, color: T.text, fontWeight: 600,
+          }}>{mobile ? 'Bulk RC' : 'Bulk rate cons'}</button>
           <button onClick={() => { setEditLoad(null); setShowForm(true) }} style={{
             padding: mobile ? '7px 12px' : '8px 16px', background: T.blue, border: 'none',
             borderRadius: 8, cursor: 'pointer', fontSize: mobile ? 12 : 13, color: '#fff', fontWeight: 600,
@@ -878,6 +890,20 @@ export default function Loads() {
           load={editLoad}
           onClose={() => { setShowForm(false); setEditLoad(null) }}
           onSave={() => { fetchLoads(); setShowForm(false); setEditLoad(null) }}
+        />
+      )}
+
+      {showBulkRC && (
+        <BulkRateCons
+          onClose={() => setShowBulkRC(false)}
+          onDone={fetchLoads}
+        />
+      )}
+
+      {showDocInbox && (
+        <DocInbox
+          onClose={() => setShowDocInbox(false)}
+          onDone={fetchLoads}
         />
       )}
 

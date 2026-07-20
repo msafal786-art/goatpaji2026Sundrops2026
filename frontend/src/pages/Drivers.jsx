@@ -4,6 +4,7 @@ import { api } from '../api.js'
 import { useAuth } from '../AuthContext.jsx'
 import { T, STATUS } from '../theme.js'
 import { useIsMobile } from '../hooks/useIsMobile.js'
+import LoadForm from '../components/LoadForm.jsx'
 
 const EMPTY = {
   full_name: '', phone: '', email: '', address: '', date_of_birth: '',
@@ -62,19 +63,28 @@ export default function Drivers() {
   const [assignDriver, setAssignDriver] = useState(null) // driver row to assign
   const [openLoads, setOpenLoads] = useState([])
   const [assigning, setAssigning] = useState(false)
+  const [newLoadDriver, setNewLoadDriver] = useState(null) // driver to pre-fill on a brand-new load
 
-  const load = useCallback(async () => {
+  // Patch a single driver row in place (used by the inline notes cell so the
+  // whole board doesn't have to refetch on every keystroke-save).
+  function patchDriver(id, patch) {
+    setRows(rs => rs.map(r => r.id === id ? { ...r, ...patch } : r))
+  }
+
+  function openNewLoad(driver) { setNewLoadDriver(driver) }
+
+  const refresh = useCallback(async () => {
     const data = await api.driversBoard()
     setRows(data)
   }, [])
 
   useEffect(() => {
-    load()
+    refresh()
     // All dispatchers need companies — for filter tabs AND the edit form
     if (user.role === 'dispatcher' || user.role === 'company_owner') api.companies().then(setCompanies)
-    const iv = setInterval(load, 30000)
+    const iv = setInterval(refresh, 30000)
     return () => clearInterval(iv)
-  }, [load])
+  }, [refresh])
 
   async function openAssign(driver) {
     setAssignDriver(driver)
@@ -87,7 +97,7 @@ export default function Drivers() {
     try {
       await api.changeDriver(load.id, assignDriver.id)
       setAssignDriver(null)
-      fetch()
+      await refresh()
     } finally {
       setAssigning(false)
     }
@@ -118,7 +128,7 @@ export default function Drivers() {
         await api.createDriver(form)
       }
       setShow(false)
-      load()
+      refresh()
     } catch (err) { setError(err.message) }
     finally { setSaving(false) }
   }
@@ -296,13 +306,28 @@ export default function Drivers() {
                       </div>
                     ) : (
                       !isDisabled && (
-                        <button
-                          onClick={() => openAssign(r)}
-                          style={{ width: '100%', padding: '7px', background: 'none', border: `1px dashed ${T.sep}`, color: T.text3, borderRadius: 8, fontSize: 12, cursor: 'pointer', marginTop: 4 }}
-                        >
-                          + Assign Load
-                        </button>
+                        <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+                          <button
+                            onClick={() => openAssign(r)}
+                            style={{ flex: 1, padding: '7px', background: 'none', border: `1px dashed ${T.sep}`, color: T.text3, borderRadius: 8, fontSize: 12, cursor: 'pointer' }}
+                          >
+                            + Assign Load
+                          </button>
+                          <button
+                            onClick={() => openNewLoad(r)}
+                            style={{ flex: 1, padding: '7px', background: 'none', border: `1px dashed ${T.blue}66`, color: T.blue, borderRadius: 8, fontSize: 12, cursor: 'pointer' }}
+                          >
+                            + New Load
+                          </button>
+                        </div>
                       )
+                    )}
+                    {/* Notes */}
+                    {!isDisabled && (
+                      <div style={{ marginTop: 8, borderTop: `1px solid ${T.sep}`, paddingTop: 7 }}>
+                        <div style={{ fontSize: 9.5, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 3 }}>Notes</div>
+                        <NotesCell driver={r} onSaved={(notes) => patchDriver(r.id, { notes })} />
+                      </div>
                     )}
                   </div>
                 )
@@ -317,7 +342,7 @@ export default function Drivers() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, minWidth: 900 }}>
           <thead>
             <tr style={{ background: T.bg2, borderBottom: `2px solid ${T.sep}` }}>
-              {['Driver', 'Status', 'Phone', 'Load #', 'Broker', 'Pickup', 'Drop(s)', 'Rate', ''].map((h, i) => (
+              {['Driver', 'Status', 'Phone', 'Load #', 'Broker', 'Pickup', 'Drop(s)', 'Rate', 'Notes', ''].map((h, i) => (
                 <th key={i} style={{
                   padding: '10px 12px', textAlign: 'left', fontSize: 10.5, fontWeight: 700,
                   color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8,
@@ -333,7 +358,7 @@ export default function Drivers() {
               <React.Fragment key={company}>
                 {showGroups && (
                   <tr style={{ background: T.blue + '12' }}>
-                    <td colSpan={9} style={{ padding: '6px 14px', fontSize: 11, fontWeight: 700, color: T.blue, letterSpacing: 0.5 }}>
+                    <td colSpan={10} style={{ padding: '6px 14px', fontSize: 11, fontWeight: 700, color: T.blue, letterSpacing: 0.5 }}>
                       {company}
                     </td>
                   </tr>
@@ -374,9 +399,15 @@ export default function Drivers() {
                             {ls && <div style={{ fontSize: 10, color: ls.color, fontWeight: 600, marginTop: 2 }}>{ls.label}</div>}
                           </div>
                         ) : (
-                          <button onClick={() => openAssign(r)} style={{ background: 'none', border: `1px dashed ${T.sep}`, padding: '3px 8px', cursor: 'pointer', color: T.text3, fontSize: 11, borderRadius: 6 }}>
-                            + Assign
-                          </button>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start' }}>
+                            <button onClick={() => openAssign(r)} style={{ background: 'none', border: `1px dashed ${T.sep}`, padding: '3px 8px', cursor: 'pointer', color: T.text3, fontSize: 11, borderRadius: 6 }}>
+                              + Assign
+                            </button>
+                            <button onClick={() => openNewLoad(r)} title="Create a brand-new load for this driver"
+                              style={{ background: 'none', border: `1px dashed ${T.blue}66`, padding: '3px 8px', cursor: 'pointer', color: T.blue, fontSize: 11, borderRadius: 6 }}>
+                              + New load
+                            </button>
+                          </div>
                         )}
                       </td>
                       <td style={{ padding: '10px 12px', color: T.text2, maxWidth: 130 }}>
@@ -410,6 +441,9 @@ export default function Drivers() {
                       <td style={{ padding: '10px 12px', whiteSpace: 'nowrap', fontWeight: 600, color: T.green }}>
                         {hasLoad && r.rate ? `$${Number(r.rate).toLocaleString()}` : <span style={{ color: T.text3, fontWeight: 400 }}>—</span>}
                       </td>
+                      <td style={{ padding: '6px 10px', minWidth: 150, maxWidth: 220 }}>
+                        <NotesCell driver={r} onSaved={(notes) => patchDriver(r.id, { notes })} />
+                      </td>
                       <td style={{ padding: '10px 10px', whiteSpace: 'nowrap' }}>
                         <div style={{ display: 'flex', gap: 5 }}>
                           {!isDisabled && <button style={smBtn()} onClick={() => openEdit(r)}>Edit</button>}
@@ -426,11 +460,23 @@ export default function Drivers() {
               </React.Fragment>
             ))}
             {filtered.length === 0 && (
-              <tr><td colSpan={9} style={{ padding: 30, color: T.text3, textAlign: 'center' }}>No drivers found.</td></tr>
+              <tr><td colSpan={10} style={{ padding: 30, color: T.text3, textAlign: 'center' }}>No drivers found.</td></tr>
             )}
           </tbody>
         </table>
       </div>
+      )}
+
+      {/* New load for a specific driver — driver + company pre-filled */}
+      {newLoadDriver && (
+        <LoadForm
+          initial={{
+            driver_id: newLoadDriver.id,
+            company_id: newLoadDriver.company_id || '',
+          }}
+          onClose={() => setNewLoadDriver(null)}
+          onSave={async () => { setNewLoadDriver(null); await refresh() }}
+        />
       )}
 
       {/* Assign load modal */}
@@ -625,6 +671,67 @@ export default function Drivers() {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// Inline notes cell — click to edit, saves on blur (Esc cancels, Cmd/Ctrl+Enter
+// saves). Uses the notes-only endpoint so it can't clobber the driver record.
+function NotesCell({ driver, onSaved }) {
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState(driver.notes || '')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => { if (!editing) setValue(driver.notes || '') }, [driver.notes, editing])
+
+  async function save() {
+    setEditing(false)
+    const next = value.trim()
+    if (next === (driver.notes || '')) return
+    setSaving(true)
+    try {
+      await api.updateDriverNotes(driver.id, next)
+      onSaved(next)
+    } catch {
+      setValue(driver.notes || '') // revert on failure
+    } finally { setSaving(false) }
+  }
+
+  if (editing) {
+    return (
+      <textarea
+        autoFocus
+        value={value}
+        onChange={e => setValue(e.target.value)}
+        onBlur={save}
+        onKeyDown={e => {
+          if (e.key === 'Escape') { setValue(driver.notes || ''); setEditing(false) }
+          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) e.currentTarget.blur()
+        }}
+        placeholder="Note…"
+        style={{
+          width: '100%', minHeight: 46, resize: 'vertical', padding: '5px 7px',
+          border: `1px solid ${T.blue}`, borderRadius: 6, fontSize: 11.5,
+          background: T.bg1, color: T.text, outline: 'none', boxSizing: 'border-box',
+          fontFamily: 'inherit', lineHeight: 1.35,
+        }}
+      />
+    )
+  }
+
+  return (
+    <div
+      onClick={() => setEditing(true)}
+      title={driver.notes || 'Click to add a note'}
+      style={{
+        cursor: 'text', minHeight: 20, padding: '3px 5px', borderRadius: 5,
+        fontSize: 11.5, lineHeight: 1.35, color: driver.notes ? T.text2 : T.text3,
+        border: `1px dashed ${driver.notes ? 'transparent' : T.sep}`,
+        display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical',
+        overflow: 'hidden', opacity: saving ? 0.5 : 1,
+      }}
+    >
+      {driver.notes || '+ note'}
     </div>
   )
 }

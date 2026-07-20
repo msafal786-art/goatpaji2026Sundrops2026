@@ -104,6 +104,16 @@ export const api = {
     return req('POST', '/parse-rate-con', fd, true)
   },
 
+  // Document drop box — parse a BOL/POD and match it to an existing load
+  matchDoc: (file) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return req('POST', '/docs/match', fd, true)
+  },
+  attachDoc: (staged_filename, original_name, load_id, doc_type) =>
+    req('POST', '/docs/attach', { staged_filename, original_name, load_id, doc_type }),
+  discardDoc: (staged_filename) => req('POST', '/docs/discard', { staged_filename }),
+
   // Load documents
   loadDocs: (loadId) => req('GET', `/loads/${loadId}/docs`),
   uploadDoc: (loadId, file, doc_type) => {
@@ -178,5 +188,6 @@ export const api = {
   savePayrollEntry: (body) => req('PUT', '/payroll/entry', body),
   deletePayrollEntry: (driver_id, date) => req('DELETE', `/payroll/entry?driver_id=${driver_id}&date=${date}`),
   updateDriverRate: (id, rate) => req('PUT', `/drivers/${id}/rate`, { rate_per_mile: rate }),
+  updateDriverNotes: (id, notes) => req('PUT', `/drivers/${id}/notes`, { notes }),
   get: (path) => req('GET', path.replace(/^\/api/, '')),
 }

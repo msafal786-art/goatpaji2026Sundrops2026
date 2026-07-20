@@ -944,6 +944,199 @@ Rules:
   }
 });
 
+// ── BOL / POD drop box — parse a document and match it to an existing load ────
+// Two-step so the file is only uploaded once: /match parses + suggests loads
+// (keeping the file staged in UPLOADS_DIR), /attach commits it to a load.
+
+// Normalize a reference for comparison: strip everything but alphanumerics.
+function normRef(s) {
+  return String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+// Score how well a parsed document matches a load. Reference-number hits are
+// worth far more than city/date hits, which are corroborating signals only.
+function scoreDocAgainstLoad(doc, load) {
+  const reasons = [];
+  let score = 0;
+
+  const docRefs = [doc.load_number, doc.bol_number, doc.po_number, doc.pro_number, ...(doc.reference_numbers || [])]
+    .map(normRef).filter(r => r.length >= 4);
+  const loadRefs = [load.load_number, load.broker_order, load.bol, load.pickup_refs, load.delivery_refs]
+    .flatMap(v => String(v || '').split(/[\s,;|]+/))
+    .map(normRef).filter(r => r.length >= 4);
+
+  for (const dr of docRefs) {
+    if (loadRefs.some(lr => lr === dr)) { score += 60; reasons.push(`reference ${dr} matches`); break; }
+  }
+  if (score === 0) {
+    for (const dr of docRefs) {
+      if (loadRefs.some(lr => lr.includes(dr) || dr.includes(lr))) { score += 35; reasons.push(`reference ${dr} partially matches`); break; }
+    }
+  }
+
+  const city = (v) => String(v || '').toUpperCase().trim();
+  if (doc.pickup_city && city(doc.pickup_city) === city(load.pickup_city)) { score += 12; reasons.push('pickup city matches'); }
+  if (doc.delivery_city && city(doc.delivery_city) === city(load.delivery_city)) { score += 12; reasons.push('delivery city matches'); }
+  if (doc.carrier_name && load.company_name && city(doc.carrier_name).includes(city(load.company_name).split(' ')[0])) {
+    score += 5; reasons.push('carrier matches');
+  }
+  for (const d of [doc.ship_date, doc.delivery_date].filter(Boolean)) {
+    if (d === load.pickup_date || d === load.delivery_date) { score += 8; reasons.push(`date ${d} matches`); break; }
+  }
+  return { score, reasons };
+}
+
+app.post('/api/docs/match', auth, requireRole('dispatcher', 'company_owner'), upload.single('file'), async (req, res) => {
+  if (req._fileTypeError) return res.status(400).json({ error: req._fileTypeError });
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  const isPdf = req.file.mimetype === 'application/pdf' ||
+                path.extname(req.file.originalname).toLowerCase() === '.pdf';
+
+  try {
+    let doc = {};
+    if (isPdf) {
+      const base64 = fs.readFileSync(req.file.path).toString('base64');
+      const response = await anthropic.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1000,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
+            {
+              type: 'text',
+              text: `This is a freight document (bill of lading, proof of delivery, or similar). Extract identifying information so it can be matched to a dispatch record. Return ONLY a valid JSON object in exactly this format:
+
+{
+  "doc_type": "",
+  "load_number": "",
+  "bol_number": "",
+  "po_number": "",
+  "pro_number": "",
+  "reference_numbers": [],
+  "carrier_name": "",
+  "shipper_name": "",
+  "consignee_name": "",
+  "pickup_city": "",
+  "pickup_state": "",
+  "delivery_city": "",
+  "delivery_state": "",
+  "ship_date": "",
+  "delivery_date": "",
+  "signed": false
+}
+
+Rules:
+- doc_type: one of "BOL", "POD", "Lumper", "Scale Ticket", "Invoice", "Other".
+- reference_numbers: every other reference/order/pickup number visible, as strings.
+- Dates in YYYY-MM-DD format. Use "" for anything not present — never guess.
+- signed: true only if the document shows a delivery/receiver signature.`
+            }
+          ]
+        }]
+      });
+      const text = response.content[0].text.trim();
+      const m = text.match(/\{[\s\S]*\}/);
+      if (!m) throw new Error('No JSON in response');
+      doc = JSON.parse(m[0]);
+    }
+
+    // Candidate loads, scoped to what this user may see
+    let where = "WHERE l.status NOT IN ('completed')";
+    const params = [];
+    if (req.user.company_id) { where += ' AND l.company_id = ?'; params.push(req.user.company_id); }
+    else if (req.user.allowed_company_ids) {
+      const ids = JSON.parse(req.user.allowed_company_ids);
+      if (ids.length) { where += ` AND l.company_id IN (${ids.map(() => '?').join(',')})`; params.push(...ids); }
+    }
+    const loads = db.prepare(`
+      SELECT l.*, d.full_name as driver_name, c.name as company_name
+      FROM loads l
+      LEFT JOIN drivers d ON l.driver_id = d.id
+      LEFT JOIN companies c ON l.company_id = c.id
+      ${where}
+      ORDER BY l.id DESC LIMIT 400
+    `).all(...params);
+
+    const candidates = loads
+      .map(l => {
+        const { score, reasons } = scoreDocAgainstLoad(doc, l);
+        return {
+          score, reasons,
+          load: {
+            id: l.id, load_number: l.load_number, broker_order: l.broker_order,
+            broker_name: l.broker_name, status: l.status, driver_name: l.driver_name,
+            company_name: l.company_name,
+            pickup_city: l.pickup_city, pickup_state: l.pickup_state, pickup_date: l.pickup_date,
+            delivery_city: l.delivery_city, delivery_state: l.delivery_state, delivery_date: l.delivery_date,
+          },
+        };
+      })
+      .filter(c => c.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5);
+
+    // Auto-confident when the best match is a strong reference hit and clearly
+    // ahead of the runner-up — the UI can pre-select it.
+    const best = candidates[0];
+    const runnerUp = candidates[1];
+    const confident = !!best && best.score >= 60 && (!runnerUp || best.score - runnerUp.score >= 25);
+
+    res.json({
+      staged_filename: req.file.filename,
+      original_name: req.file.originalname,
+      parsed: isPdf,
+      extracted: doc,
+      suggested_doc_type: doc.doc_type || 'BOL',
+      candidates,
+      confident,
+    });
+  } catch (err) {
+    console.error('Doc match error:', err.message, err.status);
+    try { fs.unlinkSync(req.file.path); } catch {}
+    let msg = 'Failed to read document';
+    if (err.message?.includes('credit')) msg = 'Document reading unavailable — API credits exhausted.';
+    else if (err.status === 401) msg = 'Document reading unavailable — API key not configured.';
+    else if (err.status === 529) msg = 'Anthropic API is overloaded — try again in a moment.';
+    else if (err.message?.includes('No JSON')) msg = 'Could not read identifying details from this document.';
+    res.status(500).json({ error: msg, detail: err.message });
+  }
+});
+
+// Commit a staged document to a load.
+app.post('/api/docs/attach', auth, requireRole('dispatcher', 'company_owner'), async (req, res) => {
+  const { staged_filename, original_name, load_id, doc_type } = req.body;
+  if (!staged_filename || !load_id) return res.status(400).json({ error: 'staged_filename and load_id required' });
+
+  // staged_filename must be a bare multer filename inside UPLOADS_DIR
+  const safeName = path.basename(String(staged_filename));
+  const localPath = path.join(UPLOADS_DIR, safeName);
+  if (!localPath.startsWith(path.resolve(UPLOADS_DIR)) || !fs.existsSync(localPath)) {
+    return res.status(400).json({ error: 'Staged file not found — re-upload it' });
+  }
+
+  const load = db.prepare('SELECT company_id FROM loads WHERE id = ?').get(load_id);
+  if (!load) return res.status(404).json({ error: 'Load not found' });
+  if (req.user.company_id && load.company_id !== req.user.company_id)
+    return res.status(403).json({ error: 'Forbidden' });
+
+  const driveId = await drive.upload(localPath, original_name || safeName, 'application/pdf');
+  const r = db.prepare('INSERT INTO load_docs (load_id, doc_type, original_name, filename, uploaded_by, drive_file_id) VALUES (?,?,?,?,?,?)')
+    .run(load_id, doc_type || 'BOL', original_name || safeName, safeName, req.user.id, driveId || null);
+  res.json(db.prepare('SELECT * FROM load_docs WHERE id = ?').get(r.lastInsertRowid));
+});
+
+// Discard a staged document that the dispatcher chose not to attach.
+app.post('/api/docs/discard', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
+  const safeName = path.basename(String(req.body.staged_filename || ''));
+  const localPath = path.join(UPLOADS_DIR, safeName);
+  if (safeName && localPath.startsWith(path.resolve(UPLOADS_DIR))) {
+    try { fs.unlinkSync(localPath); } catch {}
+  }
+  res.json({ ok: true });
+});
+
 // ── Stats for dashboard ───────────────────────────────────────────────────────
 // ── Rich dashboard stats ──────────────────────────────────────────────────────
 app.get('/api/dashboard-stats', auth, (req, res) => {
@@ -1221,6 +1414,19 @@ app.put('/api/drivers/:id/rate', auth, requireRole('dispatcher', 'company_owner'
   if (isNaN(rate) || rate < 0) return res.status(400).json({ error: 'Invalid rate' });
   db.prepare('UPDATE drivers SET rate_per_mile=? WHERE id=?').run(rate, req.params.id);
   res.json({ ok: true, rate_per_mile: rate });
+});
+
+// Notes-only update — used by the inline notes cell on the driver list so a
+// quick note can't clobber the rest of the driver record (the full PUT above
+// replaces every column).
+app.put('/api/drivers/:id/notes', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
+  const notes = typeof req.body.notes === 'string' ? req.body.notes.slice(0, 2000) : '';
+  const driver = db.prepare('SELECT company_id FROM drivers WHERE id = ?').get(req.params.id);
+  if (!driver) return res.status(404).json({ error: 'Driver not found' });
+  if (req.user.company_id && driver.company_id !== req.user.company_id)
+    return res.status(403).json({ error: 'Forbidden' });
+  db.prepare('UPDATE drivers SET notes=? WHERE id=?').run(notes, req.params.id);
+  res.json({ ok: true, notes });
 });
 
 // ── Lane recommendations ──────────────────────────────────────────────────────

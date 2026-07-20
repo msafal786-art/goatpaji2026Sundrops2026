@@ -15,10 +15,15 @@ const EMPTY = {
 
 const EMPTY_STOP = { name: '', address: '', city: '', state: '', zip: '', date: '', time: '', phone: '', refs: '' }
 
-export default function LoadForm({ load, onClose, onSave }) {
+// `load` = existing load being edited. `initial` = prefill values for a NEW
+// load (e.g. driver pre-selected from the driver board) — it must not make the
+// form think it is editing, so it never takes the update path.
+export default function LoadForm({ load, initial, onClose, onSave }) {
   const { user } = useAuth()
   const isAdmin = user.role === 'dispatcher' && !user.company_id && !user.allowed_company_ids
-  const [form, setForm] = useState(load ? { ...EMPTY, ...load, driver_id: load.driver_id || '', truck_id: load.truck_id || '' } : { ...EMPTY })
+  const [form, setForm] = useState(load
+    ? { ...EMPTY, ...load, driver_id: load.driver_id || '', truck_id: load.truck_id || '' }
+    : { ...EMPTY, ...(initial || {}) })
   const [extraStops, setExtraStops] = useState(() => {
     if (!load?.extra_stops) return []
     try { return JSON.parse(load.extra_stops) } catch { return [] }
