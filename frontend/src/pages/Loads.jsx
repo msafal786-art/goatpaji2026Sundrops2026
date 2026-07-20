@@ -6,6 +6,19 @@ import { T, STATUS, carrierColor, ACTIVE_CARRIERS } from '../theme.js'
 import { useIsMobile } from '../hooks/useIsMobile.js'
 import LoadForm from '../components/LoadForm.jsx'
 
+// Final destination for a load. Multi-drop loads keep drop 1 in delivery_*
+// and the remaining drops in extra_stops (JSON array, in order). The board
+// should show where the truck ends up — the LAST drop, not the first.
+function finalDest(load) {
+  let stops = []
+  try { stops = load?.extra_stops ? JSON.parse(load.extra_stops) : [] } catch { stops = [] }
+  if (!Array.isArray(stops)) stops = []
+  const last = stops.length ? stops[stops.length - 1] : null
+  const city  = last?.city  || load?.delivery_city
+  const state = last?.state || load?.delivery_state
+  return { city, state, text: [city, state].filter(Boolean).join(', '), extraCount: stops.length }
+}
+
 function useDensity() {
   const [density, setDensity] = useState(() => localStorage.getItem('density') || 'comfortable')
   useEffect(() => {
@@ -158,7 +171,8 @@ function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer, user, compact }
   }
 
   const pickupCity = [load.pickup_city, load.pickup_state].filter(Boolean).join(', ')
-  const delivCity  = [load.delivery_city, load.delivery_state].filter(Boolean).join(', ')
+  const dest       = finalDest(load)
+  const delivCity  = dest.text
 
   const rowBg = late
     ? (T.isDark ? 'rgba(255,69,58,0.09)' : 'rgba(255,59,48,0.07)')
@@ -232,9 +246,14 @@ function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer, user, compact }
           <div style={{ fontSize: 12, fontWeight: 500, color: T.text }}>{pickupCity || load.pickup_name || '—'}</div>
         </td>
 
-        {/* Destination */}
+        {/* Destination — final drop for multi-stop loads */}
         <td style={{ padding: padCell, whiteSpace: 'nowrap' }}>
           <div style={{ fontSize: 12, fontWeight: 500, color: T.text }}>{delivCity || load.delivery_name || '—'}</div>
+          {dest.extraCount > 0 && (
+            <div style={{ fontSize: 10, color: T.text3, marginTop: 1 }}>
+              {dest.extraCount + 1} stops · final drop
+            </div>
+          )}
         </td>
 
         {/* Status badge */}
@@ -465,7 +484,8 @@ function StatusDrawer({ load, onClose, onSaved, user, onDriverExtra }) {
     : STATUS_FLOW
 
   const pickupCity = [load.pickup_city, load.pickup_state].filter(Boolean).join(', ')
-  const delivCity  = [load.delivery_city, load.delivery_state].filter(Boolean).join(', ')
+  const dest       = finalDest(load)
+  const delivCity  = dest.text
 
   async function handleStatus(key) {
     if (key === load.status) { onClose(); return }
@@ -649,7 +669,7 @@ export default function Loads() {
     else if (sortField === 'driver')   { va = (a.driver_name || '').toLowerCase(); vb = (b.driver_name || '').toLowerCase() }
     else if (sortField === 'broker')   { va = (a.broker_name || '').toLowerCase(); vb = (b.broker_name || '').toLowerCase() }
     else if (sortField === 'origin')   { va = a.pickup_city || ''; vb = b.pickup_city || '' }
-    else if (sortField === 'dest')     { va = a.delivery_city || ''; vb = b.delivery_city || '' }
+    else if (sortField === 'dest')     { va = finalDest(a).city || ''; vb = finalDest(b).city || '' }
     else if (sortField === 'status')   { va = a.status || ''; vb = b.status || '' }
     else { va = a.pickup_date || '9999'; vb = b.pickup_date || '9999' }
     const cmp = va < vb ? -1 : va > vb ? 1 : 0
