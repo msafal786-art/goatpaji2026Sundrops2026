@@ -39,6 +39,17 @@ export default function LoadForm({ load, initial, onClose, onSave }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [parseError, setParseError] = useState('')
+  // Rate con PDF staged on the server, filed against the load once it's saved.
+  const [stagedRC, setStagedRC] = useState(null)
+
+  // Leaving without saving — drop the staged PDF rather than orphaning it.
+  async function handleClose() {
+    if (stagedRC) {
+      try { await api.discardDoc(stagedRC.filename) } catch {}
+      setStagedRC(null)
+    }
+    onClose()
+  }
   const [dragOver, setDragOver] = useState(false)
   const [dupWarning, setDupWarning] = useState(null) // { id, load_number, broker_name, created_at }
   const fileRef = useRef()
@@ -86,6 +97,10 @@ export default function LoadForm({ load, initial, onClose, onSave }) {
     setParseError('')
     try {
       const data = await api.parseRateCon(file)
+      // Hold onto the PDF so it can be filed as this load's Rate Con on save.
+      if (data.staged_filename) {
+        setStagedRC({ filename: data.staged_filename, originalName: data.original_name })
+      }
       setForm(f => ({
         ...f,
         load_number: data.load_number || f.load_number,
@@ -155,6 +170,13 @@ export default function LoadForm({ load, initial, onClose, onSave }) {
       }
 
       const saved = load ? await api.updateLoad(load.id, payload) : await api.createLoad(payload)
+
+      // File the rate con PDF against the load it produced.
+      if (saved?.id && stagedRC) {
+        try { await api.attachDoc(stagedRC.filename, stagedRC.originalName, saved.id, 'Rate Con') }
+        catch { /* the load saved fine; don't fail on the attachment */ }
+        setStagedRC(null)
+      }
       onSave(saved)
     } catch (err) {
       setError(err.message)
@@ -178,15 +200,15 @@ export default function LoadForm({ load, initial, onClose, onSave }) {
   )
 
   return (
-    <div style={modalBg} onClick={onClose}>
+    <div style={modalBg} onClick={handleClose}>
       <div style={modalBox} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 20 }}>
           <h2 style={{ fontSize: 18, fontWeight: 700, color: T.text }}>{load ? 'Edit Load' : 'Add Load'}</h2>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
             {deleteBtn}
-            <button type="button" style={secBtn} onClick={onClose}>Cancel</button>
+            <button type="button" style={secBtn} onClick={handleClose}>Cancel</button>
             <button type="submit" form="load-form" style={primaryBtn} disabled={saving}>{saving ? 'Saving…' : load ? 'Update Load' : 'Create Load'}</button>
-            <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: T.text3 }}>×</button>
+            <button onClick={handleClose} style={{ background: "none", border: "none", fontSize: 22, cursor: 'pointer', color: T.text3 }}>×</button>
           </div>
         </div>
 
@@ -423,7 +445,7 @@ export default function LoadForm({ load, initial, onClose, onSave }) {
           <div style={{ display: 'flex', gap: 10, justifyContent: 'space-between', alignItems: 'center' }}>
             <div>{deleteBtn}</div>
             <div style={{ display: 'flex', gap: 10 }}>
-              <button type="button" style={secBtn} onClick={onClose}>Cancel</button>
+              <button type="button" style={secBtn} onClick={handleClose}>Cancel</button>
               <button type="submit" style={primaryBtn} disabled={saving}>{saving ? 'Saving…' : load ? 'Update Load' : 'Create Load'}</button>
             </div>
           </div>

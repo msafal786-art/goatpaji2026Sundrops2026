@@ -79,8 +79,19 @@ export default function BulkRateCons({ onClose, onDone }) {
       try {
         const payload = { ...item.data, company_id: item.data.company_id || defaultCompany }
         delete payload._filename
+        const staged = payload.staged_filename
+        const originalName = payload.original_name
+        delete payload.staged_filename
+        delete payload.original_name
+
         const saved = await api.createLoad(payload)
         if (saved?.id) created.push(saved)
+
+        // File the rate con itself against the load it created.
+        if (saved?.id && staged) {
+          try { await api.attachDoc(staged, originalName, saved.id, 'Rate Con') }
+          catch { /* load is created; a missing RC attachment shouldn't fail the batch */ }
+        }
         setItems(prev => prev.map(i => i.id === item.id ? { ...i, state: 'created' } : i))
       } catch (err) {
         const dup = /already exists/i.test(err.message || '')
@@ -94,12 +105,19 @@ export default function BulkRateCons({ onClose, onDone }) {
 
   const createdCount = items.filter(i => i.state === 'created').length
 
+  // Drop any parsed-but-never-created rate cons from the server on the way out.
+  async function handleClose() {
+    const orphans = items.filter(i => i.data?.staged_filename && i.state !== 'created')
+    await Promise.allSettled(orphans.map(i => api.discardDoc(i.data.staged_filename)))
+    onClose()
+  }
+
   return (
-    <div style={modalBg} onClick={onClose}>
+    <div style={modalBg} onClick={handleClose}>
       <div style={modalBox} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
           <h2 style={{ fontSize: 18, fontWeight: 700, color: T.text, margin: 0 }}>Add rate cons in bulk</h2>
-          <button onClick={onClose} style={closeBtn}>×</button>
+          <button onClick={handleClose} style={closeBtn}>×</button>
         </div>
         <p style={{ fontSize: 12.5, color: T.text3, margin: '0 0 14px' }}>
           Drop a stack of rate confirmation PDFs. Each one is read automatically — review the details, then add them all at once.
@@ -208,7 +226,7 @@ export default function BulkRateCons({ onClose, onDone }) {
               {createdCount} load{createdCount > 1 ? 's' : ''} added
             </span>
           )}
-          <button onClick={onClose} style={secBtn}>{createdCount ? 'Done' : 'Cancel'}</button>
+          <button onClick={handleClose} style={secBtn}>{createdCount ? "Done" : "Cancel"}</button>
           <button
             onClick={createAll}
             disabled={working || readyItems.length === 0 || needsCompany.length > 0}

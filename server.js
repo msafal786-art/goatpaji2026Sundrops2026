@@ -113,14 +113,67 @@ const anthropic = new Anthropic({
 // unconfigured, down, or errors, the file stays on disk and the download
 // endpoint serves it from there — an upload must never silently lose a BOL
 // just because Google was unavailable.
-async function storeDocument(localPath, originalName, mimeType) {
-  const driveId = await drive.upload(localPath, originalName, mimeType);
+async function storeDocument(localPath, fileName, mimeType) {
+  const driveId = await drive.upload(localPath, fileName, mimeType);
   if (driveId) {
     try { fs.unlinkSync(localPath); } catch (e) {
       console.error('[storage] Drive copy saved but local cleanup failed:', e.message);
     }
   }
   return driveId;
+}
+
+// Parsed-but-never-filed uploads (a rate con read, then the tab closed) leave
+// a staged file behind that no /discard call will ever clean up. Sweep files
+// that no document row references and that nothing is plausibly still working
+// on, so the volume doesn't creep up with abandoned scratch.
+const STAGE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+function sweepStagedUploads() {
+  try {
+    const referenced = new Set([
+      ...db.prepare('SELECT filename FROM load_docs').all(),
+      ...db.prepare('SELECT filename FROM truck_docs').all(),
+    ].map(r => r.filename));
+    const cutoff = Date.now() - STAGE_TTL_MS;
+    let removed = 0;
+    for (const name of fs.readdirSync(UPLOADS_DIR)) {
+      if (referenced.has(name)) continue;
+      const p = path.join(UPLOADS_DIR, name);
+      try {
+        if (fs.statSync(p).mtimeMs < cutoff) { fs.unlinkSync(p); removed++; }
+      } catch {}
+    }
+    if (removed) console.log(`[storage] Swept ${removed} abandoned staged upload(s)`);
+  } catch (e) {
+    console.error('[storage] Sweep failed:', e.message);
+  }
+}
+setInterval(sweepStagedUploads, 60 * 60 * 1000).unref();
+setTimeout(sweepStagedUploads, 30000).unref();
+
+// Documents are named for what they are, not whatever the scanner called them:
+//   "2499616 - BOL.pdf", "2499616 - Rate Con.pdf", "2499616 - POD (2).pdf"
+// so a folder of them is searchable by load number in Drive.
+function buildDocName(ref, docType, originalName, existingCount = 0) {
+  const clean = (s) => String(s || '').replace(/[\\/:*?"<>|]/g, '').trim();
+  const ext = path.extname(originalName || '').toLowerCase() || '.pdf';
+  const label = clean(docType) || 'Document';
+  const prefix = clean(ref) || 'Unfiled';
+  const dupe = existingCount > 0 ? ` (${existingCount + 1})` : '';
+  return `${prefix} - ${label}${dupe}${ext}`;
+}
+
+// How this load should be referred to in a filename.
+function loadRef(loadId) {
+  const l = db.prepare('SELECT load_number, broker_order, id FROM loads WHERE id = ?').get(loadId);
+  return l ? (l.load_number || l.broker_order || `Load ${l.id}`) : `Load ${loadId}`;
+}
+
+// Existing docs of this type on this load, so a second BOL becomes "(2)".
+function docTypeCount(table, column, ownerId, docType) {
+  const row = db.prepare(`SELECT COUNT(*) as n FROM ${table} WHERE ${column} = ? AND doc_type = ?`)
+    .get(ownerId, docType);
+  return row?.n || 0;
 }
 
 // Shape an Anthropic failure into a message the dispatcher can act on, plus a
@@ -960,8 +1013,11 @@ Rules:
       _filename: req.file.originalname,
     };
 
-    // Clean up temp file
-    fs.unlinkSync(req.file.path);
+    // Keep the PDF staged rather than discarding it — the client attaches it
+    // to the load it creates as the "Rate Con" document. Anything the user
+    // abandons is cleaned up via /api/docs/discard.
+    data.staged_filename = req.file.filename;
+    data.original_name = req.file.originalname;
 
     res.json(data);
   } catch (err) {
@@ -1145,9 +1201,12 @@ app.post('/api/docs/attach', auth, requireRole('dispatcher', 'company_owner'), a
   if (req.user.company_id && load.company_id !== req.user.company_id)
     return res.status(403).json({ error: 'Forbidden' });
 
-  const driveId = await storeDocument(localPath, original_name || safeName, 'application/pdf');
+  const type = doc_type || 'BOL';
+  const docName = buildDocName(loadRef(load_id), type, original_name || safeName,
+    docTypeCount('load_docs', 'load_id', load_id, type));
+  const driveId = await storeDocument(localPath, docName, 'application/pdf');
   const r = db.prepare('INSERT INTO load_docs (load_id, doc_type, original_name, filename, uploaded_by, drive_file_id) VALUES (?,?,?,?,?,?)')
-    .run(load_id, doc_type || 'BOL', original_name || safeName, safeName, req.user.id, driveId || null);
+    .run(load_id, type, docName, safeName, req.user.id, driveId || null);
   res.json(db.prepare('SELECT * FROM load_docs WHERE id = ?').get(r.lastInsertRowid));
 });
 
@@ -1648,10 +1707,13 @@ app.post('/api/loads/:id/docs', auth, upload.single('file'), async (req, res) =>
     return res.status(403).json({ error: 'Forbidden' });
   }
   const { doc_type } = req.body;
+  const type = doc_type || 'Other';
   const localPath = path.join(UPLOADS_DIR, req.file.filename);
-  const driveId = await storeDocument(localPath, req.file.originalname, req.file.mimetype);
+  const docName = buildDocName(loadRef(req.params.id), type, req.file.originalname,
+    docTypeCount('load_docs', 'load_id', req.params.id, type));
+  const driveId = await storeDocument(localPath, docName, req.file.mimetype);
   const r = db.prepare('INSERT INTO load_docs (load_id, doc_type, original_name, filename, uploaded_by, drive_file_id) VALUES (?,?,?,?,?,?)')
-    .run(req.params.id, doc_type || 'Other', req.file.originalname, req.file.filename, req.user.id, driveId || null);
+    .run(req.params.id, type, docName, req.file.filename, req.user.id, driveId || null);
   res.json(db.prepare('SELECT * FROM load_docs WHERE id = ?').get(r.lastInsertRowid));
 });
 
@@ -1715,10 +1777,14 @@ app.post('/api/trucks/:id/docs', auth, requireRole('dispatcher', 'company_owner'
   if (req.user.role === 'company_owner' && truck.company_id !== req.user.company_id)
     return res.status(403).json({ error: 'Forbidden' });
   const { doc_type } = req.body;
+  const type = doc_type || 'Other';
   const localPath = path.join(UPLOADS_DIR, req.file.filename);
-  const driveId = await storeDocument(localPath, req.file.originalname, req.file.mimetype);
+  const truckRef = truck.tractor_number ? `Truck ${truck.tractor_number}` : `Truck ${truck.id}`;
+  const docName = buildDocName(truckRef, type, req.file.originalname,
+    docTypeCount('truck_docs', 'truck_id', req.params.id, type));
+  const driveId = await storeDocument(localPath, docName, req.file.mimetype);
   const r = db.prepare('INSERT INTO truck_docs (truck_id, doc_type, original_name, filename, uploaded_by, drive_file_id) VALUES (?,?,?,?,?,?)')
-    .run(req.params.id, doc_type || 'Other', req.file.originalname, req.file.filename, req.user.id, driveId || null);
+    .run(req.params.id, type, docName, req.file.filename, req.user.id, driveId || null);
   res.json(db.prepare('SELECT * FROM truck_docs WHERE id = ?').get(r.lastInsertRowid));
 });
 
