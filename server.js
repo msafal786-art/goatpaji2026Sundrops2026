@@ -106,6 +106,23 @@ const anthropic = new Anthropic({
   maxRetries: 3,
 });
 
+// Push an uploaded file to Drive and, once Drive confirms it, drop the local
+// copy so Drive is the only place documents live.
+//
+// The local file is deleted ONLY on a confirmed Drive file id. If Drive is
+// unconfigured, down, or errors, the file stays on disk and the download
+// endpoint serves it from there — an upload must never silently lose a BOL
+// just because Google was unavailable.
+async function storeDocument(localPath, originalName, mimeType) {
+  const driveId = await drive.upload(localPath, originalName, mimeType);
+  if (driveId) {
+    try { fs.unlinkSync(localPath); } catch (e) {
+      console.error('[storage] Drive copy saved but local cleanup failed:', e.message);
+    }
+  }
+  return driveId;
+}
+
 // Shape an Anthropic failure into a message the dispatcher can act on, plus a
 // `retryable` flag the frontend uses to decide whether to try again itself.
 function describeParseError(err) {
@@ -1128,7 +1145,7 @@ app.post('/api/docs/attach', auth, requireRole('dispatcher', 'company_owner'), a
   if (req.user.company_id && load.company_id !== req.user.company_id)
     return res.status(403).json({ error: 'Forbidden' });
 
-  const driveId = await drive.upload(localPath, original_name || safeName, 'application/pdf');
+  const driveId = await storeDocument(localPath, original_name || safeName, 'application/pdf');
   const r = db.prepare('INSERT INTO load_docs (load_id, doc_type, original_name, filename, uploaded_by, drive_file_id) VALUES (?,?,?,?,?,?)')
     .run(load_id, doc_type || 'BOL', original_name || safeName, safeName, req.user.id, driveId || null);
   res.json(db.prepare('SELECT * FROM load_docs WHERE id = ?').get(r.lastInsertRowid));
@@ -1632,7 +1649,7 @@ app.post('/api/loads/:id/docs', auth, upload.single('file'), async (req, res) =>
   }
   const { doc_type } = req.body;
   const localPath = path.join(UPLOADS_DIR, req.file.filename);
-  const driveId = await drive.upload(localPath, req.file.originalname, req.file.mimetype);
+  const driveId = await storeDocument(localPath, req.file.originalname, req.file.mimetype);
   const r = db.prepare('INSERT INTO load_docs (load_id, doc_type, original_name, filename, uploaded_by, drive_file_id) VALUES (?,?,?,?,?,?)')
     .run(req.params.id, doc_type || 'Other', req.file.originalname, req.file.filename, req.user.id, driveId || null);
   res.json(db.prepare('SELECT * FROM load_docs WHERE id = ?').get(r.lastInsertRowid));
@@ -1654,10 +1671,16 @@ app.get('/api/docs/:id/download', auth, async (req, res) => {
   if (doc.drive_file_id) {
     const ok = await drive.download(doc.drive_file_id, res);
     if (ok) return res.end();
-    // Drive failed — fall through to disk
+    // Drive is where this document lives; only older files still have a local copy.
   }
   const filePath = path.join(UPLOADS_DIR, doc.filename);
-  if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'File not found on disk' });
+  if (!fs.existsSync(filePath)) {
+    return res.status(doc.drive_file_id ? 503 : 404).json({
+      error: doc.drive_file_id
+        ? 'Could not reach Google Drive for this document — try again shortly.'
+        : 'File not found',
+    });
+  }
   res.download(filePath, doc.original_name);
 });
 
@@ -1693,7 +1716,7 @@ app.post('/api/trucks/:id/docs', auth, requireRole('dispatcher', 'company_owner'
     return res.status(403).json({ error: 'Forbidden' });
   const { doc_type } = req.body;
   const localPath = path.join(UPLOADS_DIR, req.file.filename);
-  const driveId = await drive.upload(localPath, req.file.originalname, req.file.mimetype);
+  const driveId = await storeDocument(localPath, req.file.originalname, req.file.mimetype);
   const r = db.prepare('INSERT INTO truck_docs (truck_id, doc_type, original_name, filename, uploaded_by, drive_file_id) VALUES (?,?,?,?,?,?)')
     .run(req.params.id, doc_type || 'Other', req.file.originalname, req.file.filename, req.user.id, driveId || null);
   res.json(db.prepare('SELECT * FROM truck_docs WHERE id = ?').get(r.lastInsertRowid));
