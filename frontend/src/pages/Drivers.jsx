@@ -37,6 +37,45 @@ function fmt(city, state) {
   return city || state || ''
 }
 
+// When does this driver actually go empty, and where?
+//
+// "Available / On Load" only said whether a truck was busy right now, which is
+// the one thing a dispatcher can already see. What they need is when it frees
+// up, so they can book the next load — hence a date, not a flag. Taken from
+// the LAST drop of the current load, since that is where the truck ends up.
+function freeWhen(row) {
+  if (row.is_active === 0) return { label: 'Disabled', tone: 'off' }
+  if (row.status === 'off_duty') return { label: 'Off duty', tone: 'off' }
+  if (!row.load_id) return { label: 'Empty now', tone: 'now', sort: -1 }
+
+  let stops = []
+  try { stops = row.extra_stops ? JSON.parse(row.extra_stops) : [] } catch {}
+  if (!Array.isArray(stops)) stops = []
+  const filled = stops.filter(s => s && (s.city || s.state || s.name))
+  const last = filled.length ? filled[filled.length - 1] : null
+
+  const date = (last?.date || row.delivery_date || '').slice(0, 10)
+  const where = fmt(last?.city || row.delivery_city, last?.state || row.delivery_state)
+  if (!date) return { label: 'On load', tone: 'busy', where, sort: 99 }
+
+  const d = daysUntil(date)
+  if (d === null) return { label: 'On load', tone: 'busy', where, sort: 99 }
+  if (d < 0)  return { label: `Late — due ${fmtDate(date)}`, tone: 'late', where, sort: -0.5 }
+  if (d === 0) return { label: 'Empty today', tone: 'today', where, sort: 0 }
+  if (d === 1) return { label: 'Empty tomorrow', tone: 'soon', where, sort: 1 }
+  return { label: `Empty ${fmtDate(date)}`, tone: 'later', where, sort: d }
+}
+
+const FREE_TONE = {
+  now:   () => T.green,
+  today: () => T.orange,
+  soon:  () => T.blue,
+  later: () => T.text3,
+  late:  () => T.red,
+  busy:  () => T.text3,
+  off:   () => T.text3,
+}
+
 function fmtDate(d) {
   if (!d) return ''
   const parts = d.split('-')
@@ -51,6 +90,7 @@ export default function Drivers() {
   const [companies, setCompanies] = useState([])
   const [selectedCompanyId, setSelectedCompanyId] = useState(null) // null = All
   const [sortAsc, setSortAsc] = useState(true)
+  const [sortBy, setSortBy] = useState('empty') // 'empty' | 'name'
   const [showInactive, setShowInactive] = useState(false)
   const [show, setShow] = useState(false)
   const [editing, setEditing] = useState(null)
@@ -169,6 +209,13 @@ export default function Drivers() {
     .sort((a, b) => {
       // Active always before inactive
       if (a.is_active !== b.is_active) return b.is_active - a.is_active
+      if (sortBy === 'empty') {
+        // Soonest-empty first — the trucks needing freight booked.
+        const av = freeWhen(a).sort ?? 999
+        const bv = freeWhen(b).sort ?? 999
+        if (av !== bv) return av - bv
+        return a.full_name.localeCompare(b.full_name)
+      }
       const cmp = a.full_name.localeCompare(b.full_name)
       return sortAsc ? cmp : -cmp
     })
@@ -228,9 +275,18 @@ export default function Drivers() {
           placeholder="Search drivers, loads, broker…"
           value={search} onChange={e => setSearch(e.target.value)}
         />
-        <button onClick={() => setSortAsc(a => !a)} style={tabBtn(false)} title="Toggle sort order">
-          A–Z {sortAsc ? '↑' : '↓'}
+        <button
+          onClick={() => setSortBy(s => s === 'empty' ? 'name' : 'empty')}
+          style={tabBtn(sortBy === 'empty')}
+          title="Sort by who frees up soonest, or by name"
+        >
+          {sortBy === 'empty' ? 'Empty first' : 'A–Z'}
         </button>
+        {sortBy === 'name' && (
+          <button onClick={() => setSortAsc(a => !a)} style={tabBtn(false)} title="Toggle sort order">
+            {sortAsc ? '↑' : '↓'}
+          </button>
+        )}
         <button onClick={() => setShowInactive(s => !s)} style={tabBtn(showInactive)}>
           {showInactive ? 'Hide Inactive' : 'Show Inactive'}
         </button>
@@ -248,7 +304,8 @@ export default function Drivers() {
               )}
               {drivers.map(r => {
                 const isDisabled = r.is_active === 0
-                const sc = STATUS[r.status] || STATUS.available
+                const free = freeWhen(r)
+                const freeColor = (FREE_TONE[free.tone] || FREE_TONE.off)()
                 const ls = r.load_status ? (LOAD_STATUSES[r.load_status] || {}) : null
                 const hasLoad = !!r.load_id
                 let extraStops = []
@@ -260,7 +317,7 @@ export default function Drivers() {
                       <div>
                         <div style={{ fontWeight: 700, fontSize: 15, color: T.text }}>{r.full_name}</div>
                         <div style={{ display: 'flex', gap: 6, marginTop: 3, flexWrap: 'wrap' }}>
-                          <span style={{ fontSize: 10, fontWeight: 700, color: sc.color, background: sc.color + '20', padding: '2px 8px', borderRadius: 10 }}>{sc.label}</span>
+                          <span style={{ fontSize: 10, fontWeight: 700, color: freeColor, background: freeColor + '20', padding: '2px 8px', borderRadius: 10 }}>{free.label}</span>
                           {r.phone && (
                             <a href={`tel:${r.phone}`} style={{ fontSize: 12, color: T.blue, textDecoration: 'none' }}>{r.phone}</a>
                           )}
@@ -342,7 +399,7 @@ export default function Drivers() {
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5, minWidth: 900 }}>
           <thead>
             <tr style={{ background: T.bg2, borderBottom: `2px solid ${T.sep}` }}>
-              {['Driver', 'Status', 'Phone', 'Load #', 'Broker', 'Pickup', 'Drop(s)', 'Rate', 'Notes', ''].map((h, i) => (
+              {['Driver', 'Empty', 'Phone', 'Load #', 'Broker', 'Pickup', 'Drop(s)', 'Rate', 'Notes', ''].map((h, i) => (
                 <th key={i} style={{
                   padding: '10px 12px', textAlign: 'left', fontSize: 10.5, fontWeight: 700,
                   color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8,
@@ -365,7 +422,8 @@ export default function Drivers() {
                 )}
                 {drivers.map((r, idx) => {
                   const isDisabled = r.is_active === 0
-                  const sc = STATUS[r.status] || STATUS.available
+                  const free = freeWhen(r)
+                  const freeColor = (FREE_TONE[free.tone] || FREE_TONE.off)()
                   const ls = r.load_status ? (LOAD_STATUSES[r.load_status] || {}) : null
                   const hasLoad = !!r.load_id
 
@@ -383,9 +441,12 @@ export default function Drivers() {
                         {isDisabled && <span style={{ fontSize: 9, fontWeight: 700, color: T.orange, background: T.orange + '20', padding: '1px 5px', borderRadius: 4 }}>DISABLED</span>}
                       </td>
                       <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
-                        <span style={{ fontSize: 10, fontWeight: 700, color: sc.color, background: sc.color + '20', padding: '2px 8px', borderRadius: 10 }}>
-                          {sc.label}
+                        <span style={{ fontSize: 10, fontWeight: 700, color: freeColor, background: freeColor + '20', padding: '2px 8px', borderRadius: 10 }}>
+                          {free.label}
                         </span>
+                        {free.where && (
+                          <div style={{ fontSize: 10, color: T.text3, marginTop: 3 }}>in {free.where}</div>
+                        )}
                       </td>
                       <td style={{ padding: '10px 12px', color: T.text2, whiteSpace: 'nowrap' }}>
                         {r.phone || <span style={{ color: T.text3 }}>—</span>}
