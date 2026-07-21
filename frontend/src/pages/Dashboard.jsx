@@ -11,13 +11,24 @@ function fmt$(n) { return '$' + Number(n || 0).toLocaleString(undefined, { maxim
 function fmtMi(n) { return Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' mi' }
 function pct(a, b) { if (!b) return null; return Math.round(((a - b) / b) * 100) }
 
+// Late == the delivery window has passed and the load still hasn't delivered.
+// A missed pickup is deliberately NOT late here — it's a separate, lesser
+// problem, and it must match the load board's definition (see isLate there).
 function isLate(load) {
-  const now = new Date()
-  const pickupPassed = load.pickup_date && new Date(load.pickup_date + 'T06:00') < now
-  const notPickedUp = ['open','covered','pending','assigned'].includes(load.status)
+  if (['delivered', 'completed'].includes(load.status)) return false
+
+  // Multi-stop loads are judged on their final drop, not drop 1.
+  let stops = []
+  try { stops = load.extra_stops ? JSON.parse(load.extra_stops) : [] } catch {}
+  if (!Array.isArray(stops)) stops = []
+  const last = stops.length ? stops[stops.length - 1] : null
+
+  const date = (last?.date || load.delivery_date || '').slice(0, 10)
+  if (!date) return false
+
   // Deadline is the end of the delivery window ("08:00 AM - 02:00 PM" → 2 PM),
   // or end of day when no time is set — never midnight, or everything due today flags at 12 AM.
-  const m = [...(load.delivery_time || '').matchAll(/(\d+):(\d+)\s*(AM|PM)?/gi)].pop()
+  const m = [...((last?.time || load.delivery_time) || '').matchAll(/(\d+):(\d+)\s*(AM|PM)?/gi)].pop()
   let dh = 23, dm = 59
   if (m) {
     dh = parseInt(m[1]); dm = parseInt(m[2])
@@ -25,9 +36,7 @@ function isLate(load) {
     if (m[3]?.toUpperCase() === 'AM' && dh === 12) dh = 0
   }
   const deadline = `T${String(dh).padStart(2, '0')}:${String(dm).padStart(2, '0')}`
-  const delivPassed = load.delivery_date && new Date(load.delivery_date + deadline) < now
-  const notDelivered = !['delivered', 'completed'].includes(load.status)
-  return (pickupPassed && notPickedUp) || (delivPassed && notDelivered)
+  return new Date(date + deadline) < new Date()
 }
 
 // ── KPI card ──────────────────────────────────────────────────────────────────

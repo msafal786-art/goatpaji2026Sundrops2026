@@ -8,17 +8,26 @@ import LoadForm from '../components/LoadForm.jsx'
 import BulkRateCons from '../components/BulkRateCons.jsx'
 import DocInbox from '../components/DocInbox.jsx'
 
-// Final destination for a load. Multi-drop loads keep drop 1 in delivery_*
-// and the remaining drops in extra_stops (JSON array, in order). The board
-// should show where the truck ends up — the LAST drop, not the first.
+// Final drop for a load. Multi-drop loads keep drop 1 in delivery_* and the
+// remaining drops in extra_stops (JSON array, in order). The board shows where
+// the truck ends up — the LAST drop — so the date, time and city all have to
+// come from that same stop, or a row reads "drop 1's time, last drop's city".
 function finalDest(load) {
   let stops = []
   try { stops = load?.extra_stops ? JSON.parse(load.extra_stops) : [] } catch { stops = [] }
   if (!Array.isArray(stops)) stops = []
-  const last = stops.length ? stops[stops.length - 1] : null
+  // Ignore trailing stops with no location — a blank row shouldn't become "the destination".
+  const filled = stops.filter(s => s && (s.city || s.state || s.name))
+  const last = filled.length ? filled[filled.length - 1] : null
   const city  = last?.city  || load?.delivery_city
   const state = last?.state || load?.delivery_state
-  return { city, state, text: [city, state].filter(Boolean).join(', '), extraCount: stops.length }
+  return {
+    city, state,
+    date: last?.date || load?.delivery_date,
+    time: last?.time || load?.delivery_time,
+    text: [city, state].filter(Boolean).join(', '),
+    extraCount: filled.length,
+  }
 }
 
 function useDensity() {
@@ -104,17 +113,20 @@ function parseDeliveryHM(timeStr) {
   return [h, min]
 }
 
+// Late means one thing: the delivery window has passed and the load still
+// hasn't delivered. A missed *pickup* is a different, lesser problem — it has
+// its own "Pickup window passed" banner (see pickupAlertNeeded) and must not
+// paint the row red, or half the board reads as an emergency.
+//
+// Uses the final drop for multi-stop loads, so a load isn't called late on
+// drop 1's date while it still has stops to make.
 function isLate(load) {
-  const now = new Date()
-  const [ph, pm] = parseHM(load.pickup_time)
-  const [dh, dm] = parseDeliveryHM(load.delivery_time)
-  const pickupTZ = stateToTZ(load.pickup_state)
-  const delivTZ  = stateToTZ(load.delivery_state)
-  const pickupPassed = load.pickup_date && parseInTZ(load.pickup_date, ph, pm, pickupTZ) < now
-  const notPickedUp = ['open','covered','pending','assigned'].includes(load.status)
-  const deliveryPassed = load.delivery_date && parseInTZ(load.delivery_date, dh, dm, delivTZ) < now
-  const notDelivered = !['delivered','completed'].includes(load.status)
-  return (pickupPassed && notPickedUp) || (deliveryPassed && notDelivered)
+  if (['delivered', 'completed'].includes(load.status)) return false
+  const dest = finalDest(load)
+  const date = (dest.date || '').slice(0, 10)
+  if (!date) return false
+  const [dh, dm] = parseDeliveryHM(dest.time)
+  return parseInTZ(date, dh, dm, stateToTZ(dest.state)) < new Date()
 }
 
 // Urgency color: overrides status color for unassigned/near-pickup loads
@@ -246,10 +258,10 @@ function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer, user, compact, 
           {!compact && load.pickup_time && <div style={{ fontSize: 10, color: T.text3, marginTop: 1 }}>{load.pickup_time}</div>}
         </td>
 
-        {/* Del Date */}
+        {/* Del Date — final drop, matching the Destination column */}
         <td style={{ padding: padCell, whiteSpace: 'nowrap' }}>
-          <div style={{ fontSize: 12, color: T.text }}>{load.delivery_date || '—'}</div>
-          {!compact && load.delivery_time && <div style={{ fontSize: 10, color: T.text3, marginTop: 1 }}>{load.delivery_time}</div>}
+          <div style={{ fontSize: 12, color: T.text }}>{dest.date || '—'}</div>
+          {!compact && dest.time && <div style={{ fontSize: 10, color: T.text3, marginTop: 1 }}>{dest.time}</div>}
         </td>
 
         {/* Origin */}
@@ -539,7 +551,7 @@ function StatusDrawer({ load, onClose, onSaved, user, onDriverExtra }) {
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: 9, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 4 }}>Delivery</div>
             <div style={{ fontSize: 13, fontWeight: 600, color: T.text }}>{delivCity || '—'}</div>
-            <div style={{ fontSize: 11, color: T.text3, marginTop: 2 }}>{load.delivery_date}</div>
+            <div style={{ fontSize: 11, color: T.text3, marginTop: 2 }}>{dest.date}</div>
           </div>
         </div>
 
@@ -719,7 +731,7 @@ export default function Loads() {
     }
     let va, vb
     if (sortField === 'pickup')   { va = a.pickup_date || '9999';   vb = b.pickup_date || '9999' }
-    else if (sortField === 'delivery') { va = a.delivery_date || '9999'; vb = b.delivery_date || '9999' }
+    else if (sortField === 'delivery') { va = finalDest(a).date || '9999'; vb = finalDest(b).date || '9999' }
     else if (sortField === 'load')     { va = a.load_number || a.broker_order || ''; vb = b.load_number || b.broker_order || '' }
     else if (sortField === 'driver')   { va = (a.driver_name || '').toLowerCase(); vb = (b.driver_name || '').toLowerCase() }
     else if (sortField === 'broker')   { va = (a.broker_name || '').toLowerCase(); vb = (b.broker_name || '').toLowerCase() }
