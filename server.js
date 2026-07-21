@@ -106,6 +106,24 @@ const anthropic = new Anthropic({
   maxRetries: 3,
 });
 
+// ── Driver availability ──────────────────────────────────────────────────────
+// drivers.status duplicates something the loads table already knows, so it
+// drifts: finishing one load used to mark a driver 'available' even when they
+// were still running another. Recompute it from the loads instead of setting
+// it by hand at each call site.
+//
+// 'off_duty' is a deliberate choice by a dispatcher, so it is never
+// auto-cleared here — only the available/on_load pair is derived.
+const ACTIVE_LOAD_SQL = "status NOT IN ('delivered','completed')";
+
+function syncDriverStatus(driverId) {
+  if (!driverId) return;
+  const d = db.prepare('SELECT status FROM drivers WHERE id = ?').get(driverId);
+  if (!d || d.status === 'off_duty') return;
+  const n = db.prepare(`SELECT COUNT(*) AS n FROM loads WHERE driver_id = ? AND ${ACTIVE_LOAD_SQL}`).get(driverId).n;
+  db.prepare('UPDATE drivers SET status = ? WHERE id = ?').run(n > 0 ? 'on_load' : 'available', driverId);
+}
+
 // Push an uploaded file to Drive and, once Drive confirms it, drop the local
 // copy so Drive is the only place documents live.
 //
@@ -379,7 +397,13 @@ app.delete('/api/users/:id', auth, requireRole('dispatcher'), (req, res) => {
 
 // ── Drivers ──────────────────────────────────────────────────────────────────
 app.get('/api/drivers', auth, (req, res) => {
-  let query = 'SELECT d.*, c.name as company_name FROM drivers d LEFT JOIN companies c ON d.company_id = c.id';
+  // Same derivation as /drivers/board — the driver dropdowns show "(on_load)"
+  // from this, so it has to agree with the board.
+  let query = `SELECT d.*, c.name as company_name,
+      CASE WHEN d.status = 'off_duty' THEN 'off_duty'
+           WHEN EXISTS (SELECT 1 FROM loads WHERE driver_id = d.id AND ${ACTIVE_LOAD_SQL})
+             THEN 'on_load' ELSE 'available' END as status
+    FROM drivers d LEFT JOIN companies c ON d.company_id = c.id`;
   const params = [];
   if (req.user.role === 'company_owner') {
     query += ' WHERE d.company_id = ?';
@@ -410,7 +434,12 @@ app.get('/api/drivers/board', auth, (req, res) => {
     where = 'WHERE d.company_id = ?'; params.push(req.user.company_id);
   }
   const rows = db.prepare(`
-    SELECT d.id, d.full_name, d.phone, d.status, d.is_active, d.company_id,
+    SELECT d.id, d.full_name, d.phone, d.is_active, d.company_id,
+           -- Availability is derived from the loads, never read from the
+           -- stored column, so the board can't show a stale value.
+           CASE WHEN d.status = 'off_duty' THEN 'off_duty'
+                WHEN l.id IS NOT NULL THEN 'on_load'
+                ELSE 'available' END as status,
            c.name as company_name,
            l.id as load_id, l.load_number, l.broker_name, l.status as load_status,
            l.pickup_name, l.pickup_city, l.pickup_state, l.pickup_date, l.pickup_time,
@@ -697,9 +726,7 @@ app.post('/api/loads', auth, requireRole('dispatcher', 'company_owner'), (req, r
     'open', extraStopsJson, extraPickupsJson
   );
 
-  if (driver_id) {
-    db.prepare("UPDATE drivers SET status='on_load' WHERE id=?").run(driver_id);
-  }
+  syncDriverStatus(driver_id);
   if (truck_id) {
     db.prepare("UPDATE trucks SET status = 'on_load' WHERE id = ?").run(truck_id);
   }
@@ -725,10 +752,8 @@ app.put('/api/loads/:id', auth, requireRole('dispatcher', 'company_owner'), (req
     special_instructions, notes, driver_id, truck_id, status, company_id, extra_stops, extra_pickups
   } = req.body;
 
-  // Free up old driver/truck if changed
-  if (existing.driver_id && existing.driver_id !== driver_id) {
-    db.prepare("UPDATE drivers SET status = 'available' WHERE id = ?").run(existing.driver_id);
-  }
+  // Old driver's availability is recomputed after the load row is updated —
+  // doing it here would still see this load assigned to them.
   if (existing.truck_id && existing.truck_id !== truck_id) {
     db.prepare("UPDATE trucks SET status = 'available' WHERE id = ?").run(existing.truck_id);
   }
@@ -765,7 +790,10 @@ app.put('/api/loads/:id', auth, requireRole('dispatcher', 'company_owner'), (req
     req.params.id
   );
 
-  if (driver_id) db.prepare("UPDATE drivers SET status='on_load' WHERE id=?").run(driver_id);
+  // Recompute both sides: the driver taken off this load may still be running
+  // another, and the one put on it may have been idle.
+  syncDriverStatus(existing.driver_id);
+  syncDriverStatus(driver_id);
   if (truck_id) db.prepare("UPDATE trucks SET status = 'on_load' WHERE id = ?").run(truck_id);
 
   res.json(db.prepare('SELECT l.*, d.full_name as driver_name, d.phone as driver_phone, t.tractor_number, t.trailer_number as truck_trailer, c.name as company_name FROM loads l LEFT JOIN drivers d ON l.driver_id = d.id LEFT JOIN trucks t ON l.truck_id = t.id LEFT JOIN companies c ON l.company_id = c.id WHERE l.id = ?').get(req.params.id));
@@ -775,9 +803,9 @@ app.delete('/api/loads/:id', auth, requireRole('dispatcher'), (req, res) => {
   const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
   if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
   const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
-  if (load?.driver_id) db.prepare("UPDATE drivers SET status = 'available' WHERE id = ?").run(load.driver_id);
   if (load?.truck_id) db.prepare("UPDATE trucks SET status = 'available' WHERE id = ?").run(load.truck_id);
   db.prepare('DELETE FROM loads WHERE id = ?').run(req.params.id);
+  syncDriverStatus(load?.driver_id); // after the delete, so this load no longer counts
   res.json({ ok: true });
 });
 
@@ -892,9 +920,11 @@ app.post('/api/loads/:id/status', auth, (req, res) => {
   const setClauses = Object.keys(fields).map(k => `${k}=?`).join(', ');
   db.prepare(`UPDATE loads SET ${setClauses} WHERE id=?`).run(...Object.values(fields), req.params.id);
 
+  // Recompute on every status change, not just on delivery — a driver freed by
+  // finishing this load may still be running another one.
+  syncDriverStatus(load.driver_id);
   if (['delivered','completed'].includes(status)) {
-    if (load.driver_id) db.prepare("UPDATE drivers SET status='available' WHERE id=?").run(load.driver_id);
-    if (load.truck_id)  db.prepare("UPDATE trucks SET status='available' WHERE id=?").run(load.truck_id);
+    if (load.truck_id) db.prepare("UPDATE trucks SET status='available' WHERE id=?").run(load.truck_id);
   }
 
   res.json({ ok: true });
@@ -1630,14 +1660,12 @@ app.put('/api/loads/:id/change-driver', auth, requireRole('dispatcher', 'company
   // Store original driver the first time a swap happens
   const originalId = load.original_driver_id || load.driver_id;
 
-  // Free previous driver if different
-  if (load.driver_id && load.driver_id !== Number(driver_id)) {
-    db.prepare("UPDATE drivers SET status='available' WHERE id=?").run(load.driver_id);
-  }
-
   db.prepare('UPDATE loads SET driver_id=?, original_driver_id=?, status=? WHERE id=?')
     .run(driver_id, originalId || null, load.status === 'open' ? 'covered' : load.status, req.params.id);
-  db.prepare("UPDATE drivers SET status='on_load' WHERE id=?").run(driver_id);
+
+  // After the swap: the previous driver may still have other work.
+  syncDriverStatus(load.driver_id);
+  syncDriverStatus(driver_id);
 
   const updated = db.prepare(`
     SELECT l.*, d.full_name as driver_name, d.phone as driver_phone,
