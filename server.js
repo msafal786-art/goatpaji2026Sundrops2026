@@ -523,8 +523,17 @@ app.post('/api/trucks', auth, requireRole('dispatcher', 'company_owner'), (req, 
 });
 
 app.put('/api/trucks/:id', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
-  const { tractor_number, trailer_number, trailer_type, vin, plate, registration_expiry, insurance_expiry, notes, status } = req.body;
-  db.prepare('UPDATE trucks SET tractor_number=?,trailer_number=?,trailer_type=?,vin=?,plate=?,registration_expiry=?,insurance_expiry=?,notes=?,status=? WHERE id=?').run(tractor_number, trailer_number, trailer_type, vin, plate, registration_expiry, insurance_expiry, notes, status, req.params.id);
+  const { tractor_number, trailer_number, trailer_type, vin, plate, registration_expiry, insurance_expiry, notes, status, company_id } = req.body;
+  const existing = db.prepare('SELECT company_id FROM trucks WHERE id = ?').get(req.params.id);
+  if (!existing) return res.status(404).json({ error: 'Not found' });
+
+  // Only an unscoped admin dispatcher may move a truck between carriers — it
+  // changes who can see the truck and which drivers can be put on it.
+  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
+  const effectiveCompanyId = isAdmin && company_id ? company_id : existing.company_id;
+
+  db.prepare('UPDATE trucks SET tractor_number=?,trailer_number=?,trailer_type=?,vin=?,plate=?,registration_expiry=?,insurance_expiry=?,notes=?,status=?,company_id=? WHERE id=?')
+    .run(tractor_number, trailer_number, trailer_type, vin, plate, registration_expiry, insurance_expiry, notes, status, effectiveCompanyId, req.params.id);
   res.json(db.prepare('SELECT t.*, c.name as company_name FROM trucks t LEFT JOIN companies c ON t.company_id = c.id WHERE t.id = ?').get(req.params.id));
 });
 
