@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../api.js'
-import { T, STATUS, carrierColor, ACTIVE_CARRIERS } from '../theme.js'
+import { T, STATUS, carrierColor, carrierKey, ACTIVE_CARRIERS } from '../theme.js'
 import { useAuth } from '../AuthContext.jsx'
 
 // Statuses worth showing on a planning calendar — completed loads are noise.
@@ -52,12 +52,12 @@ export default function Calendar() {
 
   const isDispatcher = user.role === 'dispatcher'
   const carrierNames = ACTIVE_CARRIERS.filter(name =>
-    loads.some(l => (l.company_name || '').toUpperCase().includes(name.split(' ')[0])))
+    loads.some(l => carrierKey(l.company_name) === carrierKey(name)))
 
   const visible = loads.filter(l => {
     if (l.status === 'completed') return false
     if (!carrier) return true
-    return (l.company_name || '').toUpperCase().includes(carrier.split(' ')[0])
+    return carrierKey(l.company_name) === carrierKey(carrier)
   })
 
   // Each load lands on its pickup day AND its delivery day, so the calendar

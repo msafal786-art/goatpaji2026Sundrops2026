@@ -70,11 +70,21 @@ export const CARRIER_COLORS = {
   'BROTHERS LOGISTICS INC':    '#bf5af2',
 }
 
+// The first meaningful word of a carrier name, used as its match key. Filler
+// words are skipped so "THE FRONTLINE FREIGHT INC" keys off FRONTLINE rather
+// than THE — matching on "THE" wrongly caught "BRO(THE)RS LOGISTICS INC", which
+// contains it as a substring.
+const CARRIER_FILLER = new Set(['THE', 'A', 'AND', '&'])
+export function carrierKey(name) {
+  if (!name) return ''
+  return name.toUpperCase().split(/\s+/).find(w => w && !CARRIER_FILLER.has(w)) || ''
+}
+
 export function carrierColor(name) {
   if (!name) return T.text3
-  const upper = name.toUpperCase()
+  const k = carrierKey(name)
   for (const [key, color] of Object.entries(CARRIER_COLORS)) {
-    if (upper.includes(key.split(' ')[0])) return color
+    if (k && k === carrierKey(key)) return color
   }
   return T.text3
 }
