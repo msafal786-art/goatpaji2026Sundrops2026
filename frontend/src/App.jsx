@@ -18,6 +18,7 @@ import Settings from './pages/Settings.jsx'
 import Search from './pages/Search.jsx'
 import Recommendations from './pages/Recommendations.jsx'
 import Deadhead from './pages/Deadhead.jsx'
+import Revenue from './pages/Revenue.jsx'
 import Payroll from './pages/Payroll.jsx'
 import Users from './pages/Users.jsx'
 import ChangePassword from './pages/ChangePassword.jsx'
@@ -138,6 +139,7 @@ function TopNav({ user, onLogout }) {
     { to: '/compliance',      label: 'Compliance' },
     { to: '/recommendations', label: 'Lanes' },
     { to: '/deadhead',        label: 'Deadhead' },
+    { to: '/revenue',         label: 'Revenue' },
     ...(isAdmin ? [{ to: '/companies', label: 'Companies' }, { to: '/users', label: 'Users' }] : []),
     { to: '/settings',        label: 'Settings' },
   ]
@@ -379,6 +381,7 @@ export default function App() {
               <Route path="/search" element={<Search />} />
               <Route path="/recommendations" element={<Recommendations />} />
               <Route path="/deadhead" element={<Deadhead />} />
+              <Route path="/revenue" element={<Revenue />} />
               <Route path="/payroll" element={<Payroll />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="*" element={<Navigate to="/loads" />} />

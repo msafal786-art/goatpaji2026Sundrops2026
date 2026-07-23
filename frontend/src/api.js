@@ -188,6 +188,7 @@ export const api = {
   deleteMaintenance: (id) => req('DELETE', `/maintenance/${id}`),
 
   stats: () => req('GET', '/stats'),
+  revenueStreams: (by, period) => req('GET', `/revenue-streams?by=${by}&period=${period}`),
 
   activeUsers: () => req('GET', '/active-users'),
   compliance: () => req('GET', '/compliance'),

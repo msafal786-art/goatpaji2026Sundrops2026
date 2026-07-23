@@ -1354,6 +1354,86 @@ app.get('/api/dashboard-stats', auth, (req, res) => {
   });
 });
 
+// Revenue attributed to each driver or truck, bucketed by week or month.
+// Same revenue rule as the dashboard: realized on delivered/completed loads,
+// dated by delivery_date. Gated by the can_see_revenue permission.
+app.get('/api/revenue-streams', auth, (req, res) => {
+  const isOwner = req.user.role === 'company_owner';
+  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
+  const canRevenue = isOwner || isAdmin || req.user.can_see_revenue;
+  if (!canRevenue) return res.status(403).json({ error: 'Not authorized to view revenue' });
+
+  const by = req.query.by === 'truck' ? 'truck' : 'driver';
+  const period = req.query.period === 'month' ? 'month' : 'week';
+
+  // Company scope — mirrors dashboard-stats.
+  let cWhere = '';
+  let cParams = [];
+  if (isOwner) {
+    cWhere = 'AND l.company_id = ?';
+    cParams = [req.user.company_id];
+  } else if (req.user.allowed_company_ids) {
+    const ids = JSON.parse(req.user.allowed_company_ids);
+    if (ids.length > 0) {
+      cWhere = `AND l.company_id IN (${ids.map(() => '?').join(',')})`;
+      cParams = ids;
+    }
+  } else if (req.user.company_id) {
+    cWhere = 'AND l.company_id = ?';
+    cParams = [req.user.company_id];
+  }
+
+  const periodFmt = period === 'month' ? '%Y-%m' : '%Y-W%W';
+  const sinceDays = period === 'month' ? 400 : 90; // ~13 months / ~13 weeks
+  const groupCol = by === 'truck' ? 'l.truck_id' : 'l.driver_id';
+
+  const grouped = db.prepare(`
+    SELECT ${groupCol} AS gid,
+           strftime('${periodFmt}', l.delivery_date) AS period,
+           COUNT(*) AS loads,
+           SUM(CAST(l.rate AS REAL)) AS revenue
+    FROM loads l
+    WHERE l.status IN ('delivered','completed')
+      AND ${groupCol} IS NOT NULL
+      AND l.delivery_date IS NOT NULL AND l.delivery_date != ''
+      AND l.delivery_date >= date('now', '-${sinceDays} days')
+      ${cWhere}
+    GROUP BY gid, period
+  `).all(...cParams);
+
+  // Entity display names
+  const names = {};
+  if (by === 'truck') {
+    for (const t of db.prepare('SELECT id, tractor_number, trailer_number FROM trucks').all())
+      names[t.id] = { name: t.tractor_number || `Truck #${t.id}`, sub: t.trailer_number || '' };
+  } else {
+    for (const d of db.prepare('SELECT id, full_name FROM drivers').all())
+      names[d.id] = { name: d.full_name || `Driver #${d.id}`, sub: '' };
+  }
+
+  // Assemble: distinct period axis (newest last) + per-entity cells.
+  const periodSet = new Set();
+  const entities = new Map(); // gid -> { id, name, sub, total, loadsTotal, cells }
+  for (const r of grouped) {
+    if (!r.period) continue;
+    periodSet.add(r.period);
+    let e = entities.get(r.gid);
+    if (!e) {
+      const meta = names[r.gid] || { name: `#${r.gid}`, sub: '' };
+      e = { id: r.gid, name: meta.name, sub: meta.sub, total: 0, loadsTotal: 0, cells: {} };
+      entities.set(r.gid, e);
+    }
+    const rev = r.revenue || 0;
+    e.cells[r.period] = { revenue: rev, loads: r.loads };
+    e.total += rev;
+    e.loadsTotal += r.loads;
+  }
+
+  const periods = [...periodSet].sort();
+  const rows = [...entities.values()].sort((a, b) => b.total - a.total);
+  res.json({ canRevenue, by, period, periods, rows });
+});
+
 app.get('/api/stats', auth, (req, res) => {
   const isOwner = req.user.role === 'company_owner';
   const cid = isOwner ? req.user.company_id : null;
