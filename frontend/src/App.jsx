@@ -17,6 +17,7 @@ import DriverView from './pages/DriverView.jsx'
 import Settings from './pages/Settings.jsx'
 import Search from './pages/Search.jsx'
 import Recommendations from './pages/Recommendations.jsx'
+import Deadhead from './pages/Deadhead.jsx'
 import Payroll from './pages/Payroll.jsx'
 import Users from './pages/Users.jsx'
 import ChangePassword from './pages/ChangePassword.jsx'
@@ -136,6 +137,7 @@ function TopNav({ user, onLogout }) {
   const moreItems = [
     { to: '/compliance',      label: 'Compliance' },
     { to: '/recommendations', label: 'Lanes' },
+    { to: '/deadhead',        label: 'Deadhead' },
     ...(isAdmin ? [{ to: '/companies', label: 'Companies' }, { to: '/users', label: 'Users' }] : []),
     { to: '/settings',        label: 'Settings' },
   ]
@@ -376,6 +378,7 @@ export default function App() {
               <Route path="/calendar" element={<Calendar />} />
               <Route path="/search" element={<Search />} />
               <Route path="/recommendations" element={<Recommendations />} />
+              <Route path="/deadhead" element={<Deadhead />} />
               <Route path="/payroll" element={<Payroll />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="*" element={<Navigate to="/loads" />} />
