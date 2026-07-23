@@ -80,9 +80,11 @@ export default function Revenue() {
   const cellPad = mobile ? '7px 8px' : '9px 12px'
   const th = { padding: cellPad, fontSize: 10.5, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.5, textAlign: 'right', whiteSpace: 'nowrap' }
   const stickyLeft = { position: 'sticky', left: 0, background: T.bg1, zIndex: 1 }
+  // Pin the Total column to the right so it stays visible while weeks scroll.
+  const stickyRight = { position: 'sticky', right: 0, background: T.bg1, zIndex: 1, borderLeft: `1px solid ${T.sep}` }
 
   return (
-    <div style={{ maxWidth: 1100 }}>
+    <div style={{ maxWidth: 1500 }}>
       <div style={{ marginBottom: 18 }}>
         <h1 style={{ fontSize: mobile ? 20 : 24, fontWeight: 700, color: T.text, letterSpacing: -0.5 }}>
           Revenue Streams
@@ -145,7 +147,7 @@ export default function Revenue() {
                   <tr style={{ borderBottom: `1px solid ${T.sep}` }}>
                     <th style={{ ...th, ...stickyLeft, textAlign: 'left' }}>{entityLabel}</th>
                     {periods.map(p => <th key={p} style={th}>{periodLabel(p, period)}</th>)}
-                    <th style={{ ...th, color: T.text2, borderLeft: `1px solid ${T.sep}` }}>Total</th>
+                    <th style={{ ...th, ...stickyRight, color: T.text2 }}>Total</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -171,7 +173,7 @@ export default function Revenue() {
                             </td>
                           )
                         })}
-                        <td style={{ padding: cellPad, fontSize: 13, fontWeight: 700, textAlign: 'right', color: T.text, borderLeft: `1px solid ${T.sep}`, whiteSpace: 'nowrap' }}>
+                        <td style={{ ...stickyRight, padding: cellPad, fontSize: 13, fontWeight: 700, textAlign: 'right', color: T.text, whiteSpace: 'nowrap' }}>
                           {fmtFull(rowTotal)}
                         </td>
                       </tr>
@@ -186,7 +188,7 @@ export default function Revenue() {
                         {fmtK(grandByPeriod[p])}
                       </td>
                     ))}
-                    <td style={{ padding: cellPad, fontSize: 13, fontWeight: 800, textAlign: 'right', color: T.green, borderLeft: `1px solid ${T.sep}`, whiteSpace: 'nowrap' }}>
+                    <td style={{ ...stickyRight, padding: cellPad, fontSize: 13, fontWeight: 800, textAlign: 'right', color: T.green, whiteSpace: 'nowrap' }}>
                       {fmtFull(grandTotal)}
                     </td>
                   </tr>
