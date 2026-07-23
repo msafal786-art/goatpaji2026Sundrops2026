@@ -37,7 +37,7 @@ export default function Calendar() {
   const { user } = useAuth()
   const [loads, setLoads] = useState([])
   const [loading, setLoading] = useState(true)
-  const [view, setView] = useState('month')
+  const [view, setView] = useState('week')
   const [carrier, setCarrier] = useState(null)       // company name, null = all
   const [dayOpen, setDayOpen] = useState(null)       // date string for the day panel
   const [cursor, setCursor] = useState(() => {

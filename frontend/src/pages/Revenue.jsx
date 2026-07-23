@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { T } from '../theme.js'
+import { T, carrierKey, carrierColor } from '../theme.js'
 import { api } from '../api.js'
 import { useIsMobile } from '../hooks/useIsMobile.js'
 
@@ -43,10 +43,25 @@ function Segmented({ value, onChange, options }) {
   )
 }
 
+// Carrier filter chip — brand-colored, echoing the segmented controls above it.
+const companyChip = (active, color) => ({
+  display: 'inline-flex', alignItems: 'center', gap: 7,
+  padding: '6px 12px', borderRadius: 8, cursor: 'pointer',
+  fontSize: 12.5, fontWeight: active ? 700 : 500, whiteSpace: 'nowrap',
+  background: active ? color + '1f' : T.bg2,
+  border: `1px solid ${active ? color : 'transparent'}`,
+  color: active ? T.text : T.text2,
+  transition: 'background .12s, border-color .12s',
+})
+function Dot({ color }) {
+  return <span style={{ width: 7, height: 7, borderRadius: '50%', background: color, flexShrink: 0 }} />
+}
+
 export default function Revenue() {
   const mobile = useIsMobile()
   const [by, setBy] = useState('driver')       // driver | truck
   const [period, setPeriod] = useState('week') // week | month
+  const [companyId, setCompanyId] = useState(null) // null = all carriers
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
   const [denied, setDenied] = useState(false)
@@ -54,15 +69,15 @@ export default function Revenue() {
   useEffect(() => {
     let cancelled = false
     setLoading(true); setDenied(false)
-    api.revenueStreams(by, period)
+    api.revenueStreams(by, period, companyId)
       .then(d => { if (!cancelled) setData(d) })
       .catch(e => { if (!cancelled) { if (/authoriz/i.test(e.message)) setDenied(true); setData(null) } })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [by, period])
+  }, [by, period, companyId])
 
-  // Keep the table a sensible width — show the most recent periods, scroll for older.
-  const MAX_COLS = mobile ? 6 : 12
+  // Weekly shows ~one month; monthly shows a longer trend. Older periods scroll.
+  const MAX_COLS = period === 'month' ? (mobile ? 6 : 10) : (mobile ? 4 : 5)
   const periods = data ? data.periods.slice(-MAX_COLS) : []
 
   // Grand totals
@@ -90,8 +105,9 @@ export default function Revenue() {
           Revenue Streams
         </h1>
         <p style={{ fontSize: 13, color: T.text3, marginTop: 5, lineHeight: 1.5 }}>
-          Delivered revenue by {by === 'driver' ? 'driver' : 'truck'}, per {period === 'week' ? 'week' : 'month'}.
-          Counts loads marked delivered or completed, dated by their delivery day.
+          Revenue by {by === 'driver' ? 'driver' : 'truck'}, per {period === 'week' ? 'week' : 'month'}.
+          Counts each load once it's loaded, dated by its pickup day
+          {by === 'driver' && <> and credited to the driver who was loaded (not a local drop driver)</>}.
         </p>
       </div>
 
@@ -106,6 +122,23 @@ export default function Revenue() {
           { value: 'month', label: 'Monthly' },
         ]} />
       </div>
+
+      {/* Company filter — divide revenue between carriers */}
+      {data && data.companies && data.companies.length > 1 && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 18, flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 10.5, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.6, marginRight: 2 }}>Carrier</span>
+          <button onClick={() => setCompanyId(null)} style={companyChip(!companyId, T.blue)}>All</button>
+          {data.companies.map(c => {
+            const color = carrierColor(c.name)
+            return (
+              <button key={c.id} onClick={() => setCompanyId(companyId === c.id ? null : c.id)} style={companyChip(companyId === c.id, color)}>
+                <Dot color={color} />
+                {carrierKey(c.name) || c.name}
+              </button>
+            )
+          })}
+        </div>
+      )}
 
       {denied && (
         <div style={{ background: T.bg1, border: `1px solid ${T.sep}`, borderRadius: 14, padding: '40px 24px', textAlign: 'center' }}>
@@ -137,8 +170,8 @@ export default function Revenue() {
           {data.rows.length === 0 ? (
             <div style={{ background: T.bg1, border: `1px solid ${T.sep}`, borderRadius: 14, padding: '48px 24px', textAlign: 'center' }}>
               <div style={{ fontSize: 32, marginBottom: 12 }}>📊</div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: T.text, marginBottom: 6 }}>No delivered revenue in range</div>
-              <div style={{ fontSize: 13, color: T.text3 }}>Revenue appears here once loads are marked delivered with a rate and a {by} assigned.</div>
+              <div style={{ fontSize: 14, fontWeight: 600, color: T.text, marginBottom: 6 }}>No revenue in range</div>
+              <div style={{ fontSize: 13, color: T.text3 }}>Revenue appears here once loads are picked up (loaded) with a rate and a {by} assigned.</div>
             </div>
           ) : (
             <div style={{ overflowX: 'auto', background: T.bg1, border: `1px solid ${T.sep}`, borderRadius: 14 }}>

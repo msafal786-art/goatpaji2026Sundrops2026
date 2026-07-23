@@ -1384,32 +1384,78 @@ app.get('/api/revenue-streams', auth, (req, res) => {
   }
 
   const periodFmt = period === 'month' ? '%Y-%m' : '%Y-W%W';
-  const sinceDays = period === 'month' ? 400 : 90; // ~13 months / ~13 weeks
-  const groupCol = by === 'truck' ? 'l.truck_id' : 'l.driver_id';
+  const sinceDays = period === 'month' ? 400 : 35; // ~13 months / ~5 weeks (≈ one month)
+
+  // Credit the driver who was LOADED, not whoever finishes the drop. change-driver
+  // preserves the first-assigned driver in original_driver_id, so a load handed to a
+  // local drop driver (e.g. Hrang) still counts for the hauler — no clashing credit.
+  const groupCol = by === 'truck' ? 'l.truck_id' : 'COALESCE(l.original_driver_id, l.driver_id)';
+
+  // Revenue is recorded once a load is loaded/underway (not only on delivery), dated
+  // by the pickup day — the moment the driver was loaded.
+  const REV_STATUSES = "'loading','on_route','unloading','in_yard','delivered','completed'";
+
+  // Optional carrier filter, so revenue can be viewed per company.
+  let compWhere = '';
+  const compParams = [];
+  if (req.query.company_id) { compWhere = 'AND l.company_id = ?'; compParams.push(Number(req.query.company_id)); }
 
   const grouped = db.prepare(`
     SELECT ${groupCol} AS gid,
-           strftime('${periodFmt}', l.delivery_date) AS period,
+           strftime('${periodFmt}', l.pickup_date) AS period,
            COUNT(*) AS loads,
            SUM(CAST(l.rate AS REAL)) AS revenue
     FROM loads l
-    WHERE l.status IN ('delivered','completed')
+    WHERE l.status IN (${REV_STATUSES})
       AND ${groupCol} IS NOT NULL
-      AND l.delivery_date IS NOT NULL AND l.delivery_date != ''
-      AND l.delivery_date >= date('now', '-${sinceDays} days')
-      ${cWhere}
+      AND l.pickup_date IS NOT NULL AND l.pickup_date != ''
+      AND l.pickup_date >= date('now', '-${sinceDays} days')
+      ${cWhere} ${compWhere}
     GROUP BY gid, period
-  `).all(...cParams);
+  `).all(...cParams, ...compParams);
 
-  // Entity display names
+  // Entity display names (with home carrier as the sub-label)
   const names = {};
   if (by === 'truck') {
-    for (const t of db.prepare('SELECT id, tractor_number, trailer_number FROM trucks').all())
-      names[t.id] = { name: t.tractor_number || `Truck #${t.id}`, sub: t.trailer_number || '' };
+    for (const t of db.prepare('SELECT t.id, t.tractor_number, t.trailer_number, c.name AS company_name FROM trucks t LEFT JOIN companies c ON t.company_id = c.id').all())
+      names[t.id] = { name: t.tractor_number || `Truck #${t.id}`, sub: t.company_name || t.trailer_number || '' };
   } else {
-    for (const d of db.prepare('SELECT id, full_name FROM drivers').all())
-      names[d.id] = { name: d.full_name || `Driver #${d.id}`, sub: '' };
+    for (const d of db.prepare('SELECT d.id, d.full_name, c.name AS company_name FROM drivers d LEFT JOIN companies c ON d.company_id = c.id').all())
+      names[d.id] = { name: d.full_name || `Driver #${d.id}`, sub: d.company_name || '' };
   }
+
+  // Carriers that have revenue in range, for the company filter.
+  const companies = db.prepare(`
+    SELECT DISTINCT c.id, c.name
+    FROM loads l JOIN companies c ON l.company_id = c.id
+    WHERE l.status IN (${REV_STATUSES})
+      AND l.pickup_date >= date('now', '-${sinceDays} days')
+      ${cWhere}
+    ORDER BY c.name
+  `).all(...cParams);
+
+  // Which carrier each entity actually ran under (loads.company_id), so the row's
+  // company reflects the revenue source rather than the driver's home company.
+  const carrierAgg = db.prepare(`
+    SELECT ${groupCol} AS gid, c.name AS company_name, SUM(CAST(l.rate AS REAL)) AS rev
+    FROM loads l LEFT JOIN companies c ON l.company_id = c.id
+    WHERE l.status IN (${REV_STATUSES})
+      AND ${groupCol} IS NOT NULL
+      AND l.pickup_date >= date('now', '-${sinceDays} days')
+      ${cWhere} ${compWhere}
+    GROUP BY gid, l.company_id
+  `).all(...cParams, ...compParams);
+  const carrierByGid = {};
+  for (const r of carrierAgg) {
+    const g = (carrierByGid[r.gid] ||= { best: '', bestRev: -1, n: 0 });
+    g.n++;
+    if ((r.rev || 0) > g.bestRev) { g.bestRev = r.rev || 0; g.best = r.company_name || ''; }
+  }
+  const carrierLabel = (gid) => {
+    const g = carrierByGid[gid];
+    if (!g) return '';
+    return g.best + (g.n > 1 ? ` +${g.n - 1}` : '');
+  };
 
   // Assemble: distinct period axis (newest last) + per-entity cells.
   const periodSet = new Set();
@@ -1420,7 +1466,7 @@ app.get('/api/revenue-streams', auth, (req, res) => {
     let e = entities.get(r.gid);
     if (!e) {
       const meta = names[r.gid] || { name: `#${r.gid}`, sub: '' };
-      e = { id: r.gid, name: meta.name, sub: meta.sub, total: 0, loadsTotal: 0, cells: {} };
+      e = { id: r.gid, name: meta.name, sub: carrierLabel(r.gid) || meta.sub, total: 0, loadsTotal: 0, cells: {} };
       entities.set(r.gid, e);
     }
     const rev = r.revenue || 0;
@@ -1431,7 +1477,7 @@ app.get('/api/revenue-streams', auth, (req, res) => {
 
   const periods = [...periodSet].sort();
   const rows = [...entities.values()].sort((a, b) => b.total - a.total);
-  res.json({ canRevenue, by, period, periods, rows });
+  res.json({ canRevenue, by, period, periods, rows, companies });
 });
 
 app.get('/api/stats', auth, (req, res) => {
