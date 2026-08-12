@@ -248,8 +248,8 @@ function LoadRow({ load, onStatusUpdate, onEdit, onStatusDrawer, user, compact, 
         </td>
 
         {/* Broker */}
-        <td style={{ padding: padCell, whiteSpace: 'nowrap' }}>
-          <div style={{ fontSize: 12, color: T.text }}>{load.broker_name || '—'}</div>
+        <td style={{ padding: padCell }}>
+          <div style={{ fontSize: 12, color: T.text, maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={load.broker_name || ''}>{load.broker_name || '—'}</div>
         </td>
 
         {/* Ship Date */}

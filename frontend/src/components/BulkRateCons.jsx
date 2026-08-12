@@ -29,7 +29,12 @@ export default function BulkRateCons({ onClose, onDone }) {
   const nextId = useRef(1)
 
   useEffect(() => {
-    if (isAdmin || user.role === 'dispatcher') api.companies().then(setCompanies).catch(() => {})
+    if (isAdmin || user.role === 'dispatcher') api.companies().then(cs => {
+      setCompanies(cs)
+      // Scoped users only get their own carrier(s) from the API. If there's
+      // exactly one, select it so they never pick (or fail to pick) a carrier.
+      if (cs.length === 1) setDefaultCompany(String(cs[0].id))
+    }).catch(() => {})
   }, [isAdmin, user.role])
 
   function addFiles(fileList) {

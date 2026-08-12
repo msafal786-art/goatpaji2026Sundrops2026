@@ -237,6 +237,53 @@ function requireRole(...roles) {
   };
 }
 
+// ── Company scoping — single source of truth for data isolation ──────────────
+// Every endpoint that returns or mutates company-owned rows MUST scope through
+// these. The failure mode we guard against: a scoped user (company_owner, or a
+// dispatcher with allowed_company_ids / company_id) falling through to "no
+// filter", which returns every carrier's data.
+//
+// Returns the list of company_ids a user may access, or null for unrestricted
+// admin access. An empty array means "scoped to nothing" — never "everything".
+function scopeCompanyIds(user) {
+  const isAdmin = user.role === 'dispatcher' && !user.company_id && !user.allowed_company_ids;
+  if (isAdmin) return null;
+  if (user.allowed_company_ids) {
+    try {
+      const ids = JSON.parse(user.allowed_company_ids);
+      return Array.isArray(ids) ? ids.map(Number) : [];
+    } catch { return []; }
+  }
+  if (user.company_id) return [Number(user.company_id)];
+  return [];
+}
+
+// True if the user may access rows belonging to companyId.
+function userCanAccessCompany(user, companyId) {
+  const ids = scopeCompanyIds(user);
+  if (ids === null) return true;
+  return companyId != null && ids.includes(Number(companyId));
+}
+
+// Builds a SQL clause restricting `col` (a qualified company column, e.g.
+// 'l.company_id') to the user's scope. `lead` is the joining keyword ('WHERE'
+// or 'AND'). Admin → empty clause. Empty scope → an impossible predicate so
+// zero rows are returned rather than all of them.
+function companyScopeClause(user, col, lead = 'WHERE') {
+  const ids = scopeCompanyIds(user);
+  if (ids === null) return { clause: '', params: [] };
+  if (ids.length === 0) return { clause: `${lead} 1=0`, params: [] };
+  return { clause: `${lead} ${col} IN (${ids.map(() => '?').join(',')})`, params: ids };
+}
+
+// Admin = unscoped dispatcher. User- and company-management are admin-only:
+// a scoped dispatcher is a tenant and must not enumerate accounts, create users
+// (privilege escalation via role/allowed_company_ids), or rename carriers.
+function requireAdmin(req, res, next) {
+  if (scopeCompanyIds(req.user) !== null) return res.status(403).json({ error: 'Admin only' });
+  next();
+}
+
 // ── Auth routes ──────────────────────────────────────────────────────────────
 app.post('/api/login', loginLimiter, (req, res) => {
   const { username, password, admin_code } = req.body;
@@ -327,23 +374,42 @@ app.post('/api/admin/reset-passwords', auth, (req, res) => {
 
 // ── Companies ────────────────────────────────────────────────────────────────
 app.get('/api/companies', auth, (req, res) => {
-  res.json(db.prepare('SELECT * FROM companies ORDER BY name').all());
+  // Scope the company list to what the caller is allowed to see. Loads are already
+  // filtered per-company; without this, a scoped user (company_owner / scoped
+  // dispatcher) would receive every carrier's name via this endpoint (e.g. the
+  // Load Board carrier chips), leaking other companies' identities.
+  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
+  if (isAdmin) {
+    return res.json(db.prepare('SELECT * FROM companies ORDER BY name').all());
+  }
+  // Scoped dispatcher with an explicit allow-list
+  if (req.user.allowed_company_ids) {
+    const ids = JSON.parse(req.user.allowed_company_ids);
+    if (!ids.length) return res.json([]);
+    return res.json(db.prepare(`SELECT * FROM companies WHERE id IN (${ids.map(() => '?').join(',')}) ORDER BY name`).all(...ids));
+  }
+  // company_owner or single-company scoped dispatcher → only their own company
+  if (req.user.company_id) {
+    return res.json(db.prepare('SELECT * FROM companies WHERE id = ?').all(req.user.company_id));
+  }
+  // Drivers / anyone else with no company scope → nothing
+  return res.json([]);
 });
 
-app.post('/api/companies', auth, requireRole('dispatcher'), (req, res) => {
+app.post('/api/companies', auth, requireAdmin, (req, res) => {
   const { name, mc_number, dot_number, address, phone, email } = req.body;
   const r = db.prepare('INSERT INTO companies (name,mc_number,dot_number,address,phone,email) VALUES (?,?,?,?,?,?)').run(name, mc_number, dot_number, address, phone, email);
   res.json(db.prepare('SELECT * FROM companies WHERE id = ?').get(r.lastInsertRowid));
 });
 
-app.put('/api/companies/:id', auth, requireRole('dispatcher'), (req, res) => {
+app.put('/api/companies/:id', auth, requireAdmin, (req, res) => {
   const { name, mc_number, dot_number, address, phone, email } = req.body;
   db.prepare('UPDATE companies SET name=?,mc_number=?,dot_number=?,address=?,phone=?,email=? WHERE id=?').run(name, mc_number, dot_number, address, phone, email, req.params.id);
   res.json(db.prepare('SELECT * FROM companies WHERE id = ?').get(req.params.id));
 });
 
 // ── Users (for company owners and drivers) ───────────────────────────────────
-app.get('/api/users', auth, requireRole('dispatcher'), (req, res) => {
+app.get('/api/users', auth, requireAdmin, (req, res) => {
   const users = db.prepare(`
     SELECT u.id, u.username, u.role, u.company_id, u.full_name, u.email, u.phone,
            u.can_see_revenue, u.last_seen_at, u.allowed_company_ids, c.name as company_name
@@ -354,7 +420,7 @@ app.get('/api/users', auth, requireRole('dispatcher'), (req, res) => {
   res.json(users);
 });
 
-app.post('/api/users', auth, requireRole('dispatcher'), (req, res) => {
+app.post('/api/users', auth, requireAdmin, (req, res) => {
   const { username, password, role, company_id, full_name, email, phone, can_see_revenue, allowed_company_ids } = req.body;
   if (!username || !password || !role) return res.status(400).json({ error: 'username, password, role required' });
   const hash = bcrypt.hashSync(password, 10);
@@ -463,7 +529,15 @@ app.post('/api/drivers', auth, requireRole('dispatcher', 'company_owner'), (req,
     hire_date, date_of_birth, address, cdl_class, license_state,
     drug_test_date, drug_test_expiry, background_check_date, emergency_contact_name, emergency_contact_phone
   } = req.body;
-  const cid = req.user.role === 'company_owner' ? req.user.company_id : company_id;
+  const dScope = scopeCompanyIds(req.user);
+  let cid;
+  if (dScope === null) {
+    cid = company_id;
+  } else {
+    cid = company_id != null && company_id !== '' ? Number(company_id) : dScope[0];
+    if (!dScope.includes(Number(cid)))
+      return res.status(403).json({ error: 'Forbidden: cannot create a driver for another company' });
+  }
 
   let user_id = null;
   if (username && password) {
@@ -494,7 +568,21 @@ app.put('/api/drivers/:id', auth, requireRole('dispatcher', 'company_owner'), (r
     hire_date, date_of_birth, address, cdl_class, license_state,
     drug_test_date, drug_test_expiry, background_check_date, emergency_contact_name, emergency_contact_phone
   } = req.body;
-  const cid = req.user.role === 'company_owner' ? req.user.company_id : (req.body.company_id || null);
+  const existingDriver = db.prepare('SELECT company_id FROM drivers WHERE id = ?').get(req.params.id);
+  if (!existingDriver) return res.status(404).json({ error: 'Driver not found' });
+  if (!userCanAccessCompany(req.user, existingDriver.company_id))
+    return res.status(403).json({ error: 'Forbidden' });
+  const dScope = scopeCompanyIds(req.user);
+  let cid;
+  if (dScope === null) {
+    cid = req.body.company_id || null;
+  } else {
+    // Scoped users may not move a driver outside their scope; default to keeping it.
+    cid = req.body.company_id != null && req.body.company_id !== ''
+      ? Number(req.body.company_id) : existingDriver.company_id;
+    if (!dScope.includes(Number(cid)))
+      return res.status(403).json({ error: 'Forbidden: cannot move a driver to another company' });
+  }
   db.prepare(`UPDATE drivers SET
     full_name=?,phone=?,email=?,license_number=?,license_expiry=?,medical_card_expiry=?,notes=?,status=?,pay_percentage=?,
     hire_date=?,date_of_birth=?,address=?,cdl_class=?,license_state=?,drug_test_date=?,drug_test_expiry=?,background_check_date=?,
@@ -511,6 +599,8 @@ app.put('/api/drivers/:id', auth, requireRole('dispatcher', 'company_owner'), (r
 // Bulk reassign drivers to a company: { driver_ids: [1,2,3], company_id: 6 }
 app.post('/api/drivers/bulk-assign-company', auth, requireRole('dispatcher'), (req, res) => {
   const { driver_ids, company_id } = req.body;
+  // Reassigning drivers across carriers is an admin-only operation.
+  if (scopeCompanyIds(req.user) !== null) return res.status(403).json({ error: 'Forbidden' });
   if (!Array.isArray(driver_ids) || !company_id) return res.status(400).json({ error: 'driver_ids and company_id required' });
   const update = db.prepare('UPDATE drivers SET company_id=? WHERE id=?');
   const tx = db.transaction(() => driver_ids.forEach(id => update.run(company_id, id)));
@@ -519,6 +609,10 @@ app.post('/api/drivers/bulk-assign-company', auth, requireRole('dispatcher'), (r
 });
 
 app.delete('/api/drivers/:id', auth, requireRole('dispatcher'), (req, res) => {
+  const driver = db.prepare('SELECT company_id FROM drivers WHERE id = ?').get(req.params.id);
+  if (!driver) return res.status(404).json({ error: 'Driver not found' });
+  if (!userCanAccessCompany(req.user, driver.company_id))
+    return res.status(403).json({ error: 'Forbidden' });
   db.prepare('DELETE FROM drivers WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
@@ -546,7 +640,15 @@ app.get('/api/trucks', auth, (req, res) => {
 
 app.post('/api/trucks', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
   const { tractor_number, trailer_number, trailer_type, vin, plate, registration_expiry, insurance_expiry, notes, company_id } = req.body;
-  const cid = req.user.role === 'company_owner' ? req.user.company_id : company_id;
+  const tScope = scopeCompanyIds(req.user);
+  let cid;
+  if (tScope === null) {
+    cid = company_id;
+  } else {
+    cid = company_id != null && company_id !== '' ? Number(company_id) : tScope[0];
+    if (!tScope.includes(Number(cid)))
+      return res.status(403).json({ error: 'Forbidden: cannot create a truck for another company' });
+  }
   const r = db.prepare('INSERT INTO trucks (company_id,tractor_number,trailer_number,trailer_type,vin,plate,registration_expiry,insurance_expiry,notes) VALUES (?,?,?,?,?,?,?,?,?)').run(cid, tractor_number, trailer_number, trailer_type, vin, plate, registration_expiry, insurance_expiry, notes);
   res.json(db.prepare('SELECT t.*, c.name as company_name FROM trucks t LEFT JOIN companies c ON t.company_id = c.id WHERE t.id = ?').get(r.lastInsertRowid));
 });
@@ -555,6 +657,8 @@ app.put('/api/trucks/:id', auth, requireRole('dispatcher', 'company_owner'), (re
   const { tractor_number, trailer_number, trailer_type, vin, plate, registration_expiry, insurance_expiry, notes, status, company_id } = req.body;
   const existing = db.prepare('SELECT company_id FROM trucks WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Not found' });
+  if (!userCanAccessCompany(req.user, existing.company_id))
+    return res.status(403).json({ error: 'Forbidden' });
 
   // Only an unscoped admin dispatcher may move a truck between carriers — it
   // changes who can see the truck and which drivers can be put on it.
@@ -567,6 +671,10 @@ app.put('/api/trucks/:id', auth, requireRole('dispatcher', 'company_owner'), (re
 });
 
 app.delete('/api/trucks/:id', auth, requireRole('dispatcher'), (req, res) => {
+  const truck = db.prepare('SELECT company_id FROM trucks WHERE id = ?').get(req.params.id);
+  if (!truck) return res.status(404).json({ error: 'Not found' });
+  if (!userCanAccessCompany(req.user, truck.company_id))
+    return res.status(403).json({ error: 'Forbidden' });
   db.prepare('DELETE FROM trucks WHERE id = ?').run(req.params.id);
   res.json({ ok: true });
 });
@@ -654,7 +762,7 @@ app.get('/api/loads/:id', auth, (req, res) => {
     const { rate, relay_split, ...safe } = load;
     return res.json(safe);
   }
-  if (req.user.company_id && load.company_id !== req.user.company_id)
+  if (!userCanAccessCompany(req.user, load.company_id))
     return res.status(403).json({ error: 'Forbidden' });
 
   res.json(load);
@@ -674,14 +782,19 @@ app.get('/api/loads/check-duplicate', auth, (req, res) => {
 });
 
 app.post('/api/loads', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
-  // company_owner → their company; scoped dispatcher (has company_id) → their company; admin dispatcher → body value
-  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
-  // company_owner → their company; admin → body value; scoped dispatcher → body value (validated) or first allowed company
-  const scopedFirst = req.user.allowed_company_ids
-    ? JSON.parse(req.user.allowed_company_ids)[0] : null
-  const cid = req.user.role === 'company_owner' ? req.user.company_id
-            : isAdmin ? req.body.company_id
-            : req.body.company_id || req.user.company_id || scopedFirst;
+  // Company assignment is authoritative server-side. A scoped user may only
+  // create loads for a company in their scope — never trust req.body.company_id
+  // for them. Admin dispatchers may assign any company.
+  const scopeIds = scopeCompanyIds(req.user); // null = admin (unrestricted)
+  let cid;
+  if (scopeIds === null) {
+    cid = req.body.company_id;
+  } else {
+    cid = req.body.company_id != null && req.body.company_id !== ''
+      ? Number(req.body.company_id) : scopeIds[0];
+    if (!scopeIds.includes(Number(cid)))
+      return res.status(403).json({ error: 'Forbidden: cannot create a load for another company' });
+  }
   const {
     load_number, broker_name, broker_order, broker_contact, broker_email,
     commodity, weight, miles, trailer_type, bol, rate,
@@ -738,8 +851,8 @@ app.put('/api/loads/:id', auth, requireRole('dispatcher', 'company_owner'), (req
   const existing = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Not found' });
 
-  // Scoped dispatcher or company_owner can only edit loads in their own company
-  if (req.user.company_id && existing.company_id !== req.user.company_id)
+  // Scoped users can only edit loads within their company scope.
+  if (!userCanAccessCompany(req.user, existing.company_id))
     return res.status(403).json({ error: 'Forbidden' });
 
   const {
@@ -813,6 +926,12 @@ app.delete('/api/loads/:id', auth, requireRole('dispatcher'), (req, res) => {
 app.get('/api/loads/:id/dispatch-message', auth, (req, res) => {
   const load = db.prepare('SELECT l.*, d.full_name as driver_name FROM loads l LEFT JOIN drivers d ON l.driver_id = d.id WHERE l.id = ?').get(req.params.id);
   if (!load) return res.status(404).json({ error: 'Not found' });
+  if (req.user.role === 'driver') {
+    const driver = db.prepare('SELECT id FROM drivers WHERE user_id = ?').get(req.user.id);
+    if (!driver || load.driver_id !== driver.id) return res.status(403).json({ error: 'Forbidden' });
+  } else if (!userCanAccessCompany(req.user, load.company_id)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
 
   const lines = []
   lines.push(`Hello ${load.driver_name || 'Driver'},`)
@@ -873,6 +992,10 @@ app.get('/api/loads/:id/dispatch-message', auth, (req, res) => {
 });
 
 app.post('/api/loads/:id/mark-dispatched', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
+  const load = db.prepare('SELECT company_id FROM loads WHERE id = ?').get(req.params.id);
+  if (!load) return res.status(404).json({ error: 'Not found' });
+  if (!userCanAccessCompany(req.user, load.company_id))
+    return res.status(403).json({ error: 'Forbidden' });
   db.prepare("UPDATE loads SET dispatch_sent=1, dispatch_sent_at=datetime('now'), status='dispatched' WHERE id=?").run(req.params.id);
   res.json({ ok: true });
 });
@@ -896,6 +1019,8 @@ app.post('/api/loads/:id/status', auth, (req, res) => {
     if (!driver || load.driver_id !== driver.id) return res.status(403).json({ error: 'Forbidden' });
     const driverAllowed = ['dispatched','loading','on_route','unloading','in_yard','delivered'];
     if (!driverAllowed.includes(status)) return res.status(403).json({ error: 'Drivers cannot set this status' });
+  } else if (!userCanAccessCompany(req.user, load.company_id)) {
+    return res.status(403).json({ error: 'Forbidden' });
   }
 
   // Build UPDATE including any extra check-in/out fields the driver submitted
@@ -1237,7 +1362,7 @@ app.post('/api/docs/attach', auth, requireRole('dispatcher', 'company_owner'), a
 
   const load = db.prepare('SELECT company_id FROM loads WHERE id = ?').get(load_id);
   if (!load) return res.status(404).json({ error: 'Load not found' });
-  if (req.user.company_id && load.company_id !== req.user.company_id)
+  if (!userCanAccessCompany(req.user, load.company_id))
     return res.status(403).json({ error: 'Forbidden' });
 
   const type = doc_type || 'BOL';
@@ -1481,19 +1606,11 @@ app.get('/api/revenue-streams', auth, (req, res) => {
 });
 
 app.get('/api/stats', auth, (req, res) => {
-  const isOwner = req.user.role === 'company_owner';
-  const cid = isOwner ? req.user.company_id : null;
-  const where = cid ? 'WHERE company_id = ?' : '';
-  const params = cid ? [cid] : [];
-
-  const loads = db.prepare(`SELECT status, COUNT(*) as count FROM loads ${where} GROUP BY status`).all(...params);
-  const drivers = isOwner
-    ? db.prepare('SELECT status, COUNT(*) as count FROM drivers WHERE company_id = ? GROUP BY status').all(cid)
-    : db.prepare('SELECT status, COUNT(*) as count FROM drivers GROUP BY status').all();
-  const trucks = isOwner
-    ? db.prepare('SELECT status, COUNT(*) as count FROM trucks WHERE company_id = ? GROUP BY status').all(cid)
-    : db.prepare('SELECT status, COUNT(*) as count FROM trucks GROUP BY status').all();
-
+  // Same company column name across all three tables, so one clause serves all.
+  const scope = companyScopeClause(req.user, 'company_id', 'WHERE');
+  const loads = db.prepare(`SELECT status, COUNT(*) as count FROM loads ${scope.clause} GROUP BY status`).all(...scope.params);
+  const drivers = db.prepare(`SELECT status, COUNT(*) as count FROM drivers ${scope.clause} GROUP BY status`).all(...scope.params);
+  const trucks = db.prepare(`SELECT status, COUNT(*) as count FROM trucks ${scope.clause} GROUP BY status`).all(...scope.params);
   res.json({ loads, drivers, trucks });
 });
 
@@ -1502,9 +1619,9 @@ app.get('/api/search', auth, requireRole('dispatcher', 'company_owner'), (req, r
   const q = (req.query.q || '').trim();
   if (!q) return res.json([]);
   const like = `%${q}%`;
-  const isOwner = req.user.role === 'company_owner';
-  const companyClause = isOwner ? 'AND l.company_id = ?' : '';
-  const companyParam = isOwner ? [req.user.company_id] : [];
+  const scope = companyScopeClause(req.user, 'l.company_id', 'AND');
+  const companyClause = scope.clause;
+  const companyParam = scope.params;
 
   const rows = db.prepare(`
     SELECT l.id, l.load_number, l.broker_name, l.pickup_city, l.pickup_state,
@@ -1544,16 +1661,14 @@ app.get('/api/payroll/week', auth, requireRole('dispatcher', 'company_owner'), (
     weekDates.push(d.toISOString().slice(0, 10));
   }
 
-  const isOwner = req.user.role === 'company_owner';
-  const drivers = isOwner
-    ? db.prepare(`SELECT d.id, d.full_name, d.rate_per_mile, d.company_id, c.name as company_name
-        FROM drivers d LEFT JOIN companies c ON d.company_id = c.id
-        WHERE d.company_id = ? AND d.is_active = 1
-        ORDER BY d.full_name`).all(req.user.company_id)
-    : db.prepare(`SELECT d.id, d.full_name, d.rate_per_mile, d.company_id, c.name as company_name
-        FROM drivers d LEFT JOIN companies c ON d.company_id = c.id
-        WHERE d.is_active = 1
-        ORDER BY c.name, d.full_name`).all();
+  const scope = companyScopeClause(req.user, 'd.company_id', 'AND');
+  const drivers = db.prepare(`SELECT d.id, d.full_name, d.rate_per_mile, d.company_id, c.name as company_name
+      FROM drivers d LEFT JOIN companies c ON d.company_id = c.id
+      WHERE d.is_active = 1 ${scope.clause}
+      ORDER BY c.name, d.full_name`).all(...scope.params);
+
+  // No drivers in scope → return an empty week (avoids an invalid `IN ()` query).
+  if (drivers.length === 0) return res.json({ week_start: start, dates: weekDates, drivers: [] });
 
   const placeholders = weekDates.map(() => '?').join(',');
   const entries = db.prepare(
@@ -1584,7 +1699,7 @@ app.put('/api/payroll/entry', auth, requireRole('dispatcher', 'company_owner'), 
   if (!driver) return res.status(404).json({ error: 'Driver not found' });
 
   // company_owner can only edit their own drivers
-  if (req.user.role === 'company_owner' && driver.company_id !== req.user.company_id)
+  if (!userCanAccessCompany(req.user, driver.company_id))
     return res.status(403).json({ error: 'Forbidden' });
 
   const m = Number(miles) || 0;
@@ -1601,6 +1716,10 @@ app.put('/api/payroll/entry', auth, requireRole('dispatcher', 'company_owner'), 
 // DELETE /api/payroll/entry?driver_id=X&date=YYYY-MM-DD
 app.delete('/api/payroll/entry', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
   const { driver_id, date } = req.query;
+  const driver = db.prepare('SELECT company_id FROM drivers WHERE id = ?').get(driver_id);
+  if (!driver) return res.status(404).json({ error: 'Driver not found' });
+  if (!userCanAccessCompany(req.user, driver.company_id))
+    return res.status(403).json({ error: 'Forbidden' });
   db.prepare('DELETE FROM payroll_entries WHERE driver_id=? AND entry_date=?').run(driver_id, date);
   res.json({ ok: true });
 });
@@ -1609,7 +1728,7 @@ app.delete('/api/payroll/entry', auth, requireRole('dispatcher', 'company_owner'
 app.put('/api/drivers/:id/toggle-active', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
   const driver = db.prepare('SELECT * FROM drivers WHERE id = ?').get(req.params.id);
   if (!driver) return res.status(404).json({ error: 'Driver not found' });
-  if (req.user.role === 'company_owner' && driver.company_id !== req.user.company_id)
+  if (!userCanAccessCompany(req.user, driver.company_id))
     return res.status(403).json({ error: 'Forbidden' });
   const newActive = driver.is_active === 0 ? 1 : 0;
   db.prepare('UPDATE drivers SET is_active=? WHERE id=?').run(newActive, req.params.id);
@@ -1625,7 +1744,7 @@ app.put('/api/drivers/:id/login', auth, requireRole('dispatcher', 'company_owner
   if (!driver) return res.status(404).json({ error: 'Driver not found' });
   if (!driver.user_id) return res.status(400).json({ error: 'Driver has no login yet' });
 
-  if (req.user.role === 'company_owner' && driver.company_id !== req.user.company_id)
+  if (!userCanAccessCompany(req.user, driver.company_id))
     return res.status(403).json({ error: 'Forbidden' });
 
   const hash = bcrypt.hashSync(password, 10);
@@ -1642,7 +1761,7 @@ app.post('/api/drivers/:id/login', auth, requireRole('dispatcher', 'company_owne
   if (!driver) return res.status(404).json({ error: 'Driver not found' });
   if (driver.user_id) return res.status(400).json({ error: 'Driver already has a login' });
 
-  if (req.user.role === 'company_owner' && driver.company_id !== req.user.company_id)
+  if (!userCanAccessCompany(req.user, driver.company_id))
     return res.status(403).json({ error: 'Forbidden' });
 
   const hash = bcrypt.hashSync(password, 10);
@@ -1671,7 +1790,7 @@ app.put('/api/drivers/:id/notes', auth, requireRole('dispatcher', 'company_owner
   const notes = typeof req.body.notes === 'string' ? req.body.notes.slice(0, 2000) : '';
   const driver = db.prepare('SELECT company_id FROM drivers WHERE id = ?').get(req.params.id);
   if (!driver) return res.status(404).json({ error: 'Driver not found' });
-  if (req.user.company_id && driver.company_id !== req.user.company_id)
+  if (!userCanAccessCompany(req.user, driver.company_id))
     return res.status(403).json({ error: 'Forbidden' });
   db.prepare('UPDATE drivers SET notes=? WHERE id=?').run(notes, req.params.id);
   res.json({ ok: true, notes });
@@ -1679,9 +1798,10 @@ app.put('/api/drivers/:id/notes', auth, requireRole('dispatcher', 'company_owner
 
 // ── Lane recommendations ──────────────────────────────────────────────────────
 app.get('/api/recommendations', auth, (req, res) => {
-  const isOwner = req.user.role === 'company_owner';
-  const companyClause = isOwner ? 'AND l.company_id = ?' : '';
-  const companyParam = isOwner ? [req.user.company_id] : [];
+  // The activeDestinations query is unaliased (FROM loads), so scope the bare column.
+  const scope = companyScopeClause(req.user, 'company_id', 'AND');
+  const companyClause = scope.clause;
+  const companyParam = scope.params;
 
   // Active delivery destinations — where trucks are heading right now
   const activeDestinations = db.prepare(`
@@ -1777,11 +1897,14 @@ app.put('/api/loads/:id/change-driver', auth, requireRole('dispatcher', 'company
 
   const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
   if (!load) return res.status(404).json({ error: 'Not found' });
-  if (req.user.company_id && load.company_id !== req.user.company_id)
+  if (!userCanAccessCompany(req.user, load.company_id))
     return res.status(403).json({ error: 'Forbidden' });
 
   const newDriver = db.prepare('SELECT * FROM drivers WHERE id = ?').get(driver_id);
   if (!newDriver) return res.status(404).json({ error: 'Driver not found' });
+  // The assigned driver must belong to the same company as the load.
+  if (newDriver.company_id !== load.company_id)
+    return res.status(403).json({ error: "Driver must belong to the load's company" });
 
   // Store original driver the first time a swap happens
   const originalId = load.original_driver_id || load.driver_id;
@@ -1816,6 +1939,8 @@ app.put('/api/loads/:id/trailer', auth, (req, res) => {
   if (req.user.role === 'driver') {
     const driver = db.prepare('SELECT id FROM drivers WHERE user_id = ?').get(req.user.id);
     if (!driver || load.driver_id !== driver.id) return res.status(403).json({ error: 'Forbidden' });
+  } else if (!userCanAccessCompany(req.user, load.company_id)) {
+    return res.status(403).json({ error: 'Forbidden' });
   }
   db.prepare('UPDATE loads SET trailer_number = ? WHERE id = ?').run(trailer_number || null, req.params.id);
   res.json({ ok: true });
@@ -1827,6 +1952,8 @@ app.put('/api/loads/:id/checkin', auth, (req, res) => {
   if (req.user.role === 'driver') {
     const driver = db.prepare('SELECT id FROM drivers WHERE user_id = ?').get(req.user.id);
     if (!driver || load.driver_id !== driver.id) return res.status(403).json({ error: 'Forbidden' });
+  } else if (!userCanAccessCompany(req.user, load.company_id)) {
+    return res.status(403).json({ error: 'Forbidden' });
   }
   const time = req.body.time || new Date().toISOString();
   db.prepare('UPDATE loads SET checkin_time = ? WHERE id = ?').run(time, req.params.id);
@@ -1839,6 +1966,8 @@ app.put('/api/loads/:id/checkout', auth, (req, res) => {
   if (req.user.role === 'driver') {
     const driver = db.prepare('SELECT id FROM drivers WHERE user_id = ?').get(req.user.id);
     if (!driver || load.driver_id !== driver.id) return res.status(403).json({ error: 'Forbidden' });
+  } else if (!userCanAccessCompany(req.user, load.company_id)) {
+    return res.status(403).json({ error: 'Forbidden' });
   }
   const time = req.body.time || new Date().toISOString();
   db.prepare('UPDATE loads SET checkout_time = ? WHERE id = ?').run(time, req.params.id);
@@ -1852,7 +1981,7 @@ app.get('/api/loads/:id/docs', auth, (req, res) => {
   if (req.user.role === 'driver') {
     const driver = db.prepare('SELECT id FROM drivers WHERE user_id = ?').get(req.user.id);
     if (!driver || load.driver_id !== driver.id) return res.status(403).json({ error: 'Forbidden' });
-  } else if (req.user.company_id && load.company_id !== req.user.company_id) {
+  } else if (!userCanAccessCompany(req.user, load.company_id)) {
     return res.status(403).json({ error: 'Forbidden' });
   }
   res.json(db.prepare('SELECT * FROM load_docs WHERE load_id = ? ORDER BY uploaded_at DESC').all(req.params.id));
@@ -1866,7 +1995,7 @@ app.post('/api/loads/:id/docs', auth, upload.single('file'), async (req, res) =>
   if (req.user.role === 'driver') {
     const driver = db.prepare('SELECT id FROM drivers WHERE user_id = ?').get(req.user.id);
     if (!driver || load.driver_id !== driver.id) return res.status(403).json({ error: 'Forbidden' });
-  } else if (req.user.company_id && load.company_id !== req.user.company_id) {
+  } else if (!userCanAccessCompany(req.user, load.company_id)) {
     return res.status(403).json({ error: 'Forbidden' });
   }
   const { doc_type } = req.body;
@@ -1889,7 +2018,7 @@ app.get('/api/docs/:id/download', auth, async (req, res) => {
   if (req.user.role === 'driver') {
     const driver = db.prepare('SELECT id FROM drivers WHERE user_id = ?').get(req.user.id);
     if (!driver || doc.load_driver_id !== driver.id) return res.status(403).json({ error: 'Forbidden' });
-  } else if (req.user.company_id && doc.load_company_id !== req.user.company_id) {
+  } else if (!userCanAccessCompany(req.user, doc.load_company_id)) {
     return res.status(403).json({ error: 'Forbidden' });
   }
   res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(doc.original_name)}"`);
@@ -1915,7 +2044,7 @@ app.delete('/api/docs/:id', auth, requireRole('dispatcher', 'company_owner'), as
     FROM load_docs ld JOIN loads l ON ld.load_id = l.id WHERE ld.id = ?
   `).get(req.params.id);
   if (!doc) return res.status(404).json({ error: 'Not found' });
-  if (req.user.company_id && doc.load_company_id !== req.user.company_id)
+  if (!userCanAccessCompany(req.user, doc.load_company_id))
     return res.status(403).json({ error: 'Forbidden' });
   if (doc.drive_file_id) await drive.remove(doc.drive_file_id);
   try { fs.unlinkSync(path.join(UPLOADS_DIR, doc.filename)); } catch {}
@@ -1927,7 +2056,7 @@ app.delete('/api/docs/:id', auth, requireRole('dispatcher', 'company_owner'), as
 app.get('/api/trucks/:id/docs', auth, (req, res) => {
   const truck = db.prepare('SELECT company_id FROM trucks WHERE id = ?').get(req.params.id);
   if (!truck) return res.status(404).json({ error: 'Truck not found' });
-  if (req.user.company_id && truck.company_id !== req.user.company_id)
+  if (!userCanAccessCompany(req.user, truck.company_id))
     return res.status(403).json({ error: 'Forbidden' });
   res.json(db.prepare('SELECT * FROM truck_docs WHERE truck_id = ? ORDER BY uploaded_at DESC').all(req.params.id));
 });
@@ -1937,7 +2066,7 @@ app.post('/api/trucks/:id/docs', auth, requireRole('dispatcher', 'company_owner'
   if (!req.file) return res.status(400).json({ error: 'No file' });
   const truck = db.prepare('SELECT * FROM trucks WHERE id = ?').get(req.params.id);
   if (!truck) return res.status(404).json({ error: 'Truck not found' });
-  if (req.user.role === 'company_owner' && truck.company_id !== req.user.company_id)
+  if (!userCanAccessCompany(req.user, truck.company_id))
     return res.status(403).json({ error: 'Forbidden' });
   const { doc_type } = req.body;
   const type = doc_type || 'Other';
@@ -1957,7 +2086,7 @@ app.get('/api/truck-docs/:id/download', auth, async (req, res) => {
     FROM truck_docs td JOIN trucks t ON td.truck_id = t.id WHERE td.id = ?
   `).get(req.params.id);
   if (!doc) return res.status(404).json({ error: 'Not found' });
-  if (req.user.company_id && doc.truck_company_id !== req.user.company_id)
+  if (!userCanAccessCompany(req.user, doc.truck_company_id))
     return res.status(403).json({ error: 'Forbidden' });
   res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(doc.original_name)}"`);
   if (doc.drive_file_id) {
@@ -1975,7 +2104,7 @@ app.delete('/api/truck-docs/:id', auth, requireRole('dispatcher', 'company_owner
     FROM truck_docs td JOIN trucks t ON td.truck_id = t.id WHERE td.id = ?
   `).get(req.params.id);
   if (!doc) return res.status(404).json({ error: 'Not found' });
-  if (req.user.company_id && doc.truck_company_id !== req.user.company_id)
+  if (!userCanAccessCompany(req.user, doc.truck_company_id))
     return res.status(403).json({ error: 'Forbidden' });
   if (doc.drive_file_id) await drive.remove(doc.drive_file_id);
   try { fs.unlinkSync(path.join(UPLOADS_DIR, doc.filename)); } catch {}
@@ -1991,7 +2120,7 @@ app.put('/api/loads/:id/detention', auth, requireRole('dispatcher', 'company_own
     return res.status(400).json({ error: 'detention_rate must be between 0 and 9999' });
   const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
   if (!load) return res.status(404).json({ error: 'Not found' });
-  if (req.user.company_id && load.company_id !== req.user.company_id) return res.status(403).json({ error: 'Forbidden' });
+  if (!userCanAccessCompany(req.user, load.company_id)) return res.status(403).json({ error: 'Forbidden' });
   db.prepare('UPDATE loads SET detention_start=?, detention_end=?, detention_rate=? WHERE id=?')
     .run(detention_start || null, detention_end || null, rate, req.params.id);
   res.json({ ok: true });
@@ -1999,13 +2128,8 @@ app.put('/api/loads/:id/detention', auth, requireRole('dispatcher', 'company_own
 
 // ── Compliance data ──────────────────────────────────────────────────────────
 app.get('/api/compliance', auth, (req, res) => {
-  const isOwner = req.user.role === 'company_owner';
-  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
-  const cid = isOwner ? req.user.company_id : (!isAdmin && req.user.company_id) ? req.user.company_id : null;
-
-  const driverWhere = cid ? 'WHERE d.company_id = ?' : '';
-  const truckWhere  = cid ? 'WHERE t.company_id = ?' : '';
-  const params = cid ? [cid] : [];
+  const dScope = companyScopeClause(req.user, 'd.company_id', 'WHERE');
+  const tScope = companyScopeClause(req.user, 't.company_id', 'WHERE');
 
   const drivers = db.prepare(`
     SELECT d.id, d.full_name, d.cdl_class, d.license_state,
@@ -2013,34 +2137,38 @@ app.get('/api/compliance', auth, (req, res) => {
            d.drug_test_date, d.drug_test_expiry, d.is_active,
            c.name as company_name
     FROM drivers d LEFT JOIN companies c ON d.company_id = c.id
-    ${driverWhere}
+    ${dScope.clause}
     ORDER BY d.full_name
-  `).all(...params);
+  `).all(...dScope.params);
 
   const trucks = db.prepare(`
     SELECT t.id, t.tractor_number, t.trailer_number, t.plate,
            t.registration_expiry, t.insurance_expiry,
            c.name as company_name
     FROM trucks t LEFT JOIN companies c ON t.company_id = c.id
-    ${truckWhere}
+    ${tScope.clause}
     ORDER BY t.tractor_number
-  `).all(...params);
+  `).all(...tScope.params);
 
   res.json({ drivers, trucks });
 });
 
 // ── Maintenance records ──────────────────────────────────────────────────────
 app.get('/api/maintenance', auth, (req, res) => {
-  const isOwner = req.user.role === 'company_owner';
-  const clause = isOwner ? 'WHERE m.company_id = ?' : (req.query.truck_id ? 'WHERE m.truck_id = ?' : '');
-  const param = isOwner ? req.user.company_id : (req.query.truck_id ? req.query.truck_id : undefined);
+  const scope = companyScopeClause(req.user, 'm.company_id', 'WHERE');
+  let clause = scope.clause;
+  const params = [...scope.params];
+  if (req.query.truck_id) {
+    clause = clause ? `${clause} AND m.truck_id = ?` : 'WHERE m.truck_id = ?';
+    params.push(req.query.truck_id);
+  }
   const rows = db.prepare(`
     SELECT m.*, t.tractor_number, t.trailer_number as truck_trailer
     FROM maintenance_records m
     LEFT JOIN trucks t ON m.truck_id = t.id
     ${clause}
     ORDER BY m.service_date DESC
-  `).all(...(param !== undefined ? [param] : []));
+  `).all(...params);
   res.json(rows);
 });
 
@@ -2049,7 +2177,7 @@ app.post('/api/maintenance', auth, requireRole('dispatcher', 'company_owner'), (
   if (!truck_id || !service_type || !service_date) return res.status(400).json({ error: 'truck_id, service_type, service_date required' });
   const truck = db.prepare('SELECT * FROM trucks WHERE id = ?').get(truck_id);
   if (!truck) return res.status(404).json({ error: 'Truck not found' });
-  if (req.user.role === 'company_owner' && truck.company_id !== req.user.company_id)
+  if (!userCanAccessCompany(req.user, truck.company_id))
     return res.status(403).json({ error: 'Forbidden' });
   const cid = truck.company_id;
   const r = db.prepare('INSERT INTO maintenance_records (truck_id,service_type,service_date,mileage,notes,next_due_date,next_due_mileage,company_id,created_by) VALUES (?,?,?,?,?,?,?,?,?)')

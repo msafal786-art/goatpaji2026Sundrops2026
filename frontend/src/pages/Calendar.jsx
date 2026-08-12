@@ -4,9 +4,6 @@ import { api } from '../api.js'
 import { T, STATUS, carrierColor, carrierKey, ACTIVE_CARRIERS } from '../theme.js'
 import { useAuth } from '../AuthContext.jsx'
 
-// Statuses worth showing on a planning calendar — completed loads are noise.
-const LEGEND_STATUSES = ['open', 'covered', 'dispatched', 'loading', 'on_route', 'unloading', 'in_yard', 'delivered']
-
 function ymd(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
@@ -124,15 +121,18 @@ export default function Calendar() {
   function Entry({ entry, size = 'sm' }) {
     const { load, kind, city, state } = entry
     const st = STATUS[load.status] || { color: T.text3, label: load.status }
+    // Color encodes the CARRIER — one hue per trucking company. Status is kept
+    // only in the tooltip and the "no driver" cue; brokers show as text below.
+    const cColor = carrierColor(load.company_name)
     const isDel = kind === 'DEL'
     const unassigned = !load.driver_name
     return (
       <div
         onClick={e => { e.stopPropagation(); navigate(`/loads/${load.id}`) }}
-        title={`${load.load_number || load.id} · ${st.label} · ${kind === 'PU' ? 'Pick up' : 'Deliver'} ${[city, state].filter(Boolean).join(', ')}${load.driver_name ? ` · ${load.driver_name}` : ' · no driver'}`}
+        title={`${load.load_number || load.id} · ${load.company_name || 'Unknown carrier'} · ${st.label} · ${kind === 'PU' ? 'Pick up' : 'Deliver'} ${[city, state].filter(Boolean).join(', ')}${load.broker_name ? ` · broker ${load.broker_name}` : ''}${load.driver_name ? ` · ${load.driver_name}` : ' · no driver'}`}
         style={{
-          background: st.color + (isDel ? '14' : '22'),
-          borderLeft: `${isDel ? 2 : 3}px ${isDel ? 'dashed' : 'solid'} ${st.color}`,
+          background: cColor + (isDel ? '14' : '22'),
+          borderLeft: `${isDel ? 2 : 3}px ${isDel ? 'dashed' : 'solid'} ${cColor}`,
           borderRadius: 4, padding: size === 'sm' ? '2px 5px' : '6px 8px',
           marginBottom: size === 'sm' ? 2 : 6, cursor: 'pointer',
           fontSize: size === 'sm' ? 10 : 11.5, lineHeight: 1.35,
@@ -141,15 +141,21 @@ export default function Calendar() {
       >
         <span style={{
           fontWeight: 800, fontSize: size === 'sm' ? 8 : 9, letterSpacing: 0.4,
-          color: st.color, marginRight: 4,
+          color: cColor, marginRight: 4,
         }}>{kind}</span>
         <span style={{ fontWeight: 700, color: T.text }}>{load.load_number || `#${load.id}`}</span>
         <span style={{ color: T.text2 }}> {[city, state].filter(Boolean).join(', ')}</span>
         {size !== 'sm' && (
-          <div style={{ fontSize: 10.5, color: unassigned ? T.orange : T.text3, marginTop: 2 }}>
-            {load.driver_name || 'No driver assigned'}
-            {load.company_name && <span style={{ color: carrierColor(load.company_name) }}> · {load.company_name}</span>}
-          </div>
+          <>
+            <div style={{ fontSize: 10.5, color: unassigned ? T.orange : T.text3, marginTop: 2 }}>
+              {load.driver_name || 'No driver assigned'}
+            </div>
+            {load.broker_name && (
+              <div style={{ fontSize: 10, color: T.text3, marginTop: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {load.broker_name}
+              </div>
+            )}
+          </>
         )}
       </div>
     )
@@ -290,16 +296,17 @@ export default function Calendar() {
         </div>
       )}
 
-      {/* Legend */}
+      {/* Legend — color = carrier. Only carriers present in the loads are shown,
+          so a company-scoped user sees a single, unambiguous swatch. */}
       <div style={{ display: 'flex', gap: 14, marginTop: 16, flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center' }}>
-        {LEGEND_STATUSES.map(key => (
-          <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-            <div style={{ width: 10, height: 10, borderRadius: 2, background: STATUS[key].color }} />
-            <span style={{ fontSize: 11, color: T.text3 }}>{STATUS[key].label}</span>
+        {carrierNames.map(name => (
+          <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <div style={{ width: 10, height: 10, borderRadius: 2, background: carrierColor(name) }} />
+            <span style={{ fontSize: 11, color: T.text3 }}>{carrierLabel(name)}</span>
           </div>
         ))}
-        <span style={{ fontSize: 11, color: T.text3, borderLeft: `1px solid ${T.sep}`, paddingLeft: 14 }}>
-          <b style={{ color: T.text2 }}>PU</b> pickup · <b style={{ color: T.text2 }}>DEL</b> delivery (dashed)
+        <span style={{ fontSize: 11, color: T.text3, borderLeft: carrierNames.length ? `1px solid ${T.sep}` : 'none', paddingLeft: carrierNames.length ? 14 : 0 }}>
+          <b style={{ color: T.text2 }}>PU</b> pickup · <b style={{ color: T.text2 }}>DEL</b> delivery (dashed) · <b style={{ color: T.orange }}>orange text</b> = no driver
         </span>
       </div>
 
