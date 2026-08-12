@@ -47,7 +47,7 @@ export default function Calendar() {
     api.loads().then(setLoads).catch(() => {}).finally(() => setLoading(false))
   }, [])
 
-  const isDispatcher = user.role === 'dispatcher'
+  const isAdmin = user.role === 'dispatcher' && !user.company_id && !user.allowed_company_ids
   const carrierNames = ACTIVE_CARRIERS.filter(name =>
     loads.some(l => carrierKey(l.company_name) === carrierKey(name)))
 
@@ -118,12 +118,21 @@ export default function Calendar() {
   const monthPickups = visible.filter(l => (l.pickup_date || '').slice(0, 7) === monthKey).length
   const monthDrops = visible.filter(l => finalDrop(l).date.slice(0, 7) === monthKey).length
 
+  // Legend mirrors the entry coloring: carriers for admins, statuses (only the
+  // ones actually present) for scoped users.
+  const legendItems = isAdmin
+    ? carrierNames.map(name => ({ key: name, color: carrierColor(name), label: carrierLabel(name) }))
+    : CALENDAR_STATUSES
+        .filter(s => visible.some(l => l.status === s))
+        .map(s => ({ key: s, color: STATUS[s].color, label: STATUS[s].label }))
+
   function Entry({ entry, size = 'sm' }) {
     const { load, kind, city, state } = entry
     const st = STATUS[load.status] || { color: T.text3, label: load.status }
-    // Color encodes the CARRIER — one hue per trucking company. Status is kept
-    // only in the tooltip and the "no driver" cue; brokers show as text below.
-    const cColor = carrierColor(load.company_name)
+    // Admins work across carriers, so color encodes the CARRIER (one hue per
+    // company). A scoped user has only one carrier — carrier-color would make
+    // every entry identical — so for them color encodes STATUS instead.
+    const cColor = isAdmin ? carrierColor(load.company_name) : st.color
     const isDel = kind === 'DEL'
     const unassigned = !load.driver_name
     return (
@@ -194,8 +203,9 @@ export default function Calendar() {
         </div>
       </div>
 
-      {/* Carrier filter — mirrors the load board chips */}
-      {isDispatcher && carrierNames.length > 0 && (
+      {/* Carrier filter — admin-only, mirrors the load board chips. Scoped users
+          only see their own carrier, so there is nothing to filter between. */}
+      {isAdmin && carrierNames.length > 0 && (
         <div style={{ display: 'flex', gap: 6, marginBottom: 14, flexWrap: 'wrap' }}>
           <button onClick={() => setCarrier(null)} style={chip(!carrier, T.blue)}>All</button>
           {carrierNames.map(name => {
@@ -296,16 +306,15 @@ export default function Calendar() {
         </div>
       )}
 
-      {/* Legend — color = carrier. Only carriers present in the loads are shown,
-          so a company-scoped user sees a single, unambiguous swatch. */}
+      {/* Legend — color = carrier for admins, color = status for scoped users. */}
       <div style={{ display: 'flex', gap: 14, marginTop: 16, flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center' }}>
-        {carrierNames.map(name => (
-          <div key={name} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-            <div style={{ width: 10, height: 10, borderRadius: 2, background: carrierColor(name) }} />
-            <span style={{ fontSize: 11, color: T.text3 }}>{carrierLabel(name)}</span>
+        {legendItems.map(item => (
+          <div key={item.key} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+            <div style={{ width: 10, height: 10, borderRadius: 2, background: item.color }} />
+            <span style={{ fontSize: 11, color: T.text3 }}>{item.label}</span>
           </div>
         ))}
-        <span style={{ fontSize: 11, color: T.text3, borderLeft: carrierNames.length ? `1px solid ${T.sep}` : 'none', paddingLeft: carrierNames.length ? 14 : 0 }}>
+        <span style={{ fontSize: 11, color: T.text3, borderLeft: legendItems.length ? `1px solid ${T.sep}` : 'none', paddingLeft: legendItems.length ? 14 : 0 }}>
           <b style={{ color: T.text2 }}>PU</b> pickup · <b style={{ color: T.text2 }}>DEL</b> delivery (dashed) · <b style={{ color: T.orange }}>orange text</b> = no driver
         </span>
       </div>
@@ -342,6 +351,10 @@ export default function Calendar() {
     </div>
   )
 }
+
+// Statuses shown in the scoped-user legend, in workflow order (completed is
+// filtered out of the calendar entirely).
+const CALENDAR_STATUSES = ['open', 'covered', 'dispatched', 'loading', 'on_route', 'unloading', 'in_yard', 'delivered']
 
 // Short chip label — skip filler words so "THE FRONTLINE FREIGHT INC" reads
 // as FRONTLINE rather than THE.
