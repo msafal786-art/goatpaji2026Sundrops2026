@@ -628,6 +628,7 @@ const CARRIER_SHORT = {
 
 export default function Loads() {
   const { user } = useAuth()
+  const isAdmin = user.role === 'dispatcher' && !user.company_id && !user.allowed_company_ids
   const mobile = useIsMobile()
   const density = useDensity()
   const compact = density === 'compact'
@@ -688,7 +689,9 @@ export default function Loads() {
 
   useEffect(() => {
     fetchLoads()
-    if (user.role === 'dispatcher') api.companies().then(setCompanies)
+    // Carrier filter chips are an admin-only feature — scoped users only ever
+    // see their own company, so there is nothing to filter between.
+    if (isAdmin) api.companies().then(setCompanies)
   }, [fetchLoads])
 
   useEffect(() => {
@@ -853,7 +856,7 @@ export default function Loads() {
       )}
 
       {/* Carrier quick-filter chips */}
-      {user.role === 'dispatcher' && activeCarrierCompanies.length > 0 && (
+      {isAdmin && activeCarrierCompanies.length > 0 && (
         <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
           <button
             onClick={() => setCompanyFilter('')}

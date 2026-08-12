@@ -187,6 +187,9 @@ ${load.company_name || 'Dispatch'}`
   if (!load) return <div style={{ padding: 40, color: T.text2 }}>Loading…</div>
 
   const canEdit = user.role !== 'driver'
+  // Only admins work across carriers, so only they need the company badge —
+  // for a scoped user every load is their own company.
+  const isAdmin = user.role === 'dispatcher' && !user.company_id && !user.allowed_company_ids
   const s = STATUS[load.status] || STATUS.open
 
   const fmtTime = (iso) => {
@@ -232,7 +235,7 @@ ${load.company_name || 'Dispatch'}`
               background: s.color + '22', color: s.color, textTransform: 'uppercase', letterSpacing: 0.5,
             }}>{s.label}</span>
             {load.dispatch_sent && <span style={{ fontSize: 11, color: T.green }}>✓ Dispatched {load.dispatch_sent_at?.slice(0,10)}</span>}
-            {load.company_name && (
+            {isAdmin && load.company_name && (
               <span style={{ fontSize: 11, background: T.blue + '22', color: T.blue, padding: '3px 10px', borderRadius: 20 }}>
                 {load.company_name}
               </span>

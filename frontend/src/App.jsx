@@ -157,7 +157,7 @@ function TopNav({ user, onLogout }) {
       }}>
         <div>
           <div style={{ fontSize: 12, fontWeight: 800, color: T.text, letterSpacing: 0.5, textTransform: 'uppercase', lineHeight: 1.2 }}>
-            {user.company_name || (isAdmin ? 'Goat Inc' : 'Dispatch Portal')}
+            {user.portal_name || user.company_name || (isAdmin ? 'Goat Inc' : 'Dispatch Portal')}
           </div>
           <div style={{ fontSize: 10, color: T.text3, lineHeight: 1 }}>
             {isAdmin ? (user.full_name || 'Safal Madaan') : 'Freight Mgmt'}

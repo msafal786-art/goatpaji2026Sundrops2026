@@ -343,6 +343,19 @@ app.get('/api/me', auth, (req, res) => {
   if (user.role === 'driver') {
     user.driver = db.prepare('SELECT * FROM drivers WHERE user_id = ?').get(user.id);
   }
+  // Header/branding name: admin runs the whole operation (GOAT INC); a scoped
+  // user (company_owner or scoped dispatcher) sees their own carrier's name,
+  // which company_name can't provide when they're scoped via allowed_company_ids.
+  const scope = scopeCompanyIds(req.user);
+  if (scope === null) {
+    user.portal_name = 'Goat Inc';
+  } else if (scope.length > 0) {
+    const names = db.prepare(`SELECT name FROM companies WHERE id IN (${scope.map(() => '?').join(',')}) ORDER BY name`)
+      .all(...scope).map(r => r.name);
+    user.portal_name = names.join(' · ') || user.company_name || 'Dispatch Portal';
+  } else {
+    user.portal_name = user.company_name || 'Dispatch Portal';
+  }
   res.json(user);
 });
 
