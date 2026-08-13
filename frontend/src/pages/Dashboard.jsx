@@ -160,6 +160,7 @@ export default function Dashboard() {
   const [stats, setStats] = useState(null)
   const [dash, setDash] = useState(null)
   const [loads, setLoads] = useState([])
+  const [maint, setMaint] = useState([])
   const [now, setNow] = useState(new Date())
 
   // company_owner always sees revenue; admin dispatcher always sees revenue;
@@ -172,6 +173,7 @@ export default function Dashboard() {
     api.stats().then(setStats)
     api.dashboardStats().then(setDash)
     api.loads().then(setLoads)
+    api.maintenance().then(setMaint).catch(() => {})
   }
 
   useEffect(() => {
@@ -197,6 +199,13 @@ export default function Dashboard() {
   const dat = new Date(now); dat.setDate(now.getDate() + 2)
   const delivTomorrow = loads.filter(l => l.delivery_date === tom.toISOString().slice(0,10) && !['completed'].includes(l.status))
   const delivDayAfter = loads.filter(l => l.delivery_date === dat.toISOString().slice(0,10) && !['completed'].includes(l.status))
+
+  // Maintenance due soon (next_due_date within 30 days, or overdue) — most urgent first
+  const maintDue = maint
+    .filter(m => m.next_due_date)
+    .map(m => ({ ...m, days: Math.ceil((new Date(m.next_due_date + 'T00:00') - now) / 864e5) }))
+    .filter(m => m.days <= 30)
+    .sort((a, b) => a.days - b.days)
 
   const greeting = now.getHours() < 12 ? 'Good morning' : now.getHours() < 17 ? 'Good afternoon' : 'Good evening'
   const dateLabel = now.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric' })
@@ -243,6 +252,33 @@ export default function Dashboard() {
                 <span style={{ color: T.red, fontWeight: 600, whiteSpace: 'nowrap' }}>{l.pickup_date}</span>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Maintenance due */}
+      {maintDue.length > 0 && (
+        <div style={{ background: T.bg1, border: `1px solid ${T.orange}55`, borderLeft: `4px solid ${T.orange}`, borderRadius: 12, padding: '12px 16px', marginBottom: 20 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+            <span style={{ fontSize: 14 }}>🔧</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: T.orange }}>
+              {maintDue.length} maintenance item{maintDue.length > 1 ? 's' : ''} due soon
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {maintDue.map(m => {
+              const overdue = m.days < 0
+              const label = overdue ? `${Math.abs(m.days)}d overdue` : m.days === 0 ? 'due today' : `in ${m.days}d`
+              return (
+                <div key={m.id} onClick={() => navigate('/trucks')}
+                  style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', padding: '7px 10px', borderRadius: 8, background: T.bg2, fontSize: 12 }}>
+                  <span style={{ fontWeight: 700, color: T.text, minWidth: 80 }}>#{m.tractor_number}</span>
+                  <span style={{ color: T.text2, flex: 1 }}>{m.service_type}</span>
+                  <span style={{ color: T.text3 }}>{m.next_due_date}{m.next_due_mileage ? ` · ${Number(m.next_due_mileage).toLocaleString()} mi` : ''}</span>
+                  <span style={{ color: overdue ? T.red : T.orange, fontWeight: 600, whiteSpace: 'nowrap' }}>{label}</span>
+                </div>
+              )
+            })}
           </div>
         </div>
       )}

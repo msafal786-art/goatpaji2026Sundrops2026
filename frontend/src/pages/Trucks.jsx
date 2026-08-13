@@ -10,7 +10,7 @@ const EMPTY = {
 }
 
 const MAINT_EMPTY = { service_type: 'Oil Change', service_date: '', mileage: '', notes: '', next_due_date: '', next_due_mileage: '' }
-const SERVICE_TYPES = ['Oil Change', 'Annual Inspection', 'Tire Rotation', 'Brake Service', 'Transmission', 'Coolant Flush', 'Air Filter', 'Other']
+const SERVICE_TYPES = ['Oil Change', 'Annual Inspection', 'Tire Rotation', 'Brake Service', 'Transmission', 'Coolant Flush', 'Air Filter', 'Fuel Filter', 'Other']
 const TRUCK_DOC_TYPES = ['Cab Card', 'Insurance Certificate', 'Registration', 'Title', 'Inspection Report', 'Other']
 
 function daysUntil(dateStr) {
