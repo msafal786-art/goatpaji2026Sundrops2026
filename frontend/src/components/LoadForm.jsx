@@ -1,7 +1,24 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, createContext, useContext } from 'react'
 import { api } from '../api.js'
 import { useAuth } from '../AuthContext.jsx'
 import { T } from '../theme.js'
+
+// Below this width we drop to the single-column "bottom sheet" phone layout;
+// at/above it we use the wide, centered two-column desktop dialog.
+const MOBILE_BP = 820
+
+function useViewportWidth() {
+  const [w, setW] = useState(() => (typeof window !== 'undefined' ? window.innerWidth : 1280))
+  useEffect(() => {
+    const onResize = () => setW(window.innerWidth)
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+  return w
+}
+
+// Lets the small layout helpers (Row/Field) know whether to stack.
+const LayoutCtx = createContext({ isMobile: false })
 
 const EMPTY = {
   company_id: '', load_number: '', broker_name: '', broker_order: '', broker_contact: '',
@@ -21,6 +38,8 @@ const EMPTY_STOP = { name: '', address: '', city: '', state: '', zip: '', date: 
 export default function LoadForm({ load, initial, onClose, onSave }) {
   const { user } = useAuth()
   const isAdmin = user.role === 'dispatcher' && !user.company_id && !user.allowed_company_ids
+  const vw = useViewportWidth()
+  const isMobile = vw < MOBILE_BP
   const [form, setForm] = useState(load
     ? { ...EMPTY, ...load, driver_id: load.driver_id || '', truck_id: load.truck_id || '' }
     : { ...EMPTY, ...(initial || {}) })
@@ -200,8 +219,9 @@ export default function LoadForm({ load, initial, onClose, onSave }) {
   )
 
   return (
-    <div style={modalBg} onClick={handleClose}>
-      <div style={modalBox} onClick={e => e.stopPropagation()}>
+    <LayoutCtx.Provider value={{ isMobile }}>
+    <div style={modalBg(isMobile)} onClick={handleClose}>
+      <div style={modalBox(isMobile)} onClick={e => e.stopPropagation()}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, marginBottom: 20 }}>
           <h2 style={{ fontSize: 18, fontWeight: 700, color: T.text }}>{load ? 'Edit Load' : 'Add Load'}</h2>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
@@ -231,7 +251,7 @@ export default function LoadForm({ load, initial, onClose, onSave }) {
           {parseError && <div style={{ color: T.red, fontSize: 12, marginTop: 8 }}>{parseError}</div>}
         </div>
 
-        <form id="load-form" onSubmit={handleSubmit}>
+        <form id="load-form" onSubmit={handleSubmit} style={isMobile ? undefined : formGrid}>
           <Section title="Assign Driver & Truck">
             <Row>
               <Field label="Driver">
@@ -326,7 +346,7 @@ export default function LoadForm({ load, initial, onClose, onSave }) {
             </Row>
           </Section>
 
-          <SectionWithAdd title="Pickup" label="+ Add Pick" onAdd={() => setExtraPickups(s => [...s, { ...EMPTY_STOP }])}>
+          <SectionWithAdd title="Pickup" label="+ Add Pick" single onAdd={() => setExtraPickups(s => [...s, { ...EMPTY_STOP }])}>
             {extraPickups.length > 0 && <div style={{ fontSize: 12, fontWeight: 600, color: T.text2, marginBottom: 8 }}>Pick 1</div>}
             <Row>
               <Field label="Shipper Name"><input style={inputS} value={form.pickup_name} onChange={e => set('pickup_name', e.target.value)} /></Field>
@@ -377,7 +397,7 @@ export default function LoadForm({ load, initial, onClose, onSave }) {
 
           </SectionWithAdd>
 
-          <SectionWithAdd title="Delivery" label="+ Add Drop" onAdd={() => setExtraStops(s => [...s, { ...EMPTY_STOP }])}>
+          <SectionWithAdd title="Delivery" label="+ Add Drop" single onAdd={() => setExtraStops(s => [...s, { ...EMPTY_STOP }])}>
             {extraStops.length > 0 && <div style={{ fontSize: 12, fontWeight: 600, color: T.text2, marginBottom: 8 }}>Drop 1</div>}
             <Row>
               <Field label="Consignee Name"><input style={inputS} value={form.delivery_name} onChange={e => set('delivery_name', e.target.value)} /></Field>
@@ -440,9 +460,9 @@ export default function LoadForm({ load, initial, onClose, onSave }) {
               placeholder="Internal notes — not sent to driver…" />
           </Section>
 
-          {error && <div style={{ color: T.red, fontSize: 13, marginBottom: 12, padding: '8px 12px', background: T.red + '18', borderRadius: 6 }}>{error}</div>}
+          {error && <div style={{ gridColumn: '1 / -1', color: T.red, fontSize: 13, marginBottom: 12, padding: '8px 12px', background: T.red + '18', borderRadius: 6 }}>{error}</div>}
 
-          <div style={{ display: 'flex', gap: 10, justifyContent: 'space-between', alignItems: 'center' }}>
+          <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 10, justifyContent: 'space-between', alignItems: 'center' }}>
             <div>{deleteBtn}</div>
             <div style={{ display: 'flex', gap: 10 }}>
               <button type="button" style={secBtn} onClick={handleClose}>Cancel</button>
@@ -452,21 +472,25 @@ export default function LoadForm({ load, initial, onClose, onSave }) {
         </form>
       </div>
     </div>
+    </LayoutCtx.Provider>
   )
 }
 
-function Section({ title, children }) {
+// `single` sections take one grid column on desktop (Pickup/Delivery sit
+// side-by-side); everything else spans the full width. Ignored on mobile,
+// where the form is a plain single column.
+function Section({ title, children, single }) {
   return (
-    <div style={{ marginBottom: 20 }}>
+    <div style={{ marginBottom: 20, gridColumn: single ? 'auto' : '1 / -1' }}>
       <div style={{ fontSize: 11, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 1, marginBottom: 10, paddingBottom: 6, borderBottom: `1px solid ${T.sep}` }}>{title}</div>
       {children}
     </div>
   )
 }
 
-function SectionWithAdd({ title, children, label, onAdd }) {
+function SectionWithAdd({ title, children, label, onAdd, single }) {
   return (
-    <div style={{ marginBottom: 20 }}>
+    <div style={{ marginBottom: 20, gridColumn: single ? 'auto' : '1 / -1' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, paddingBottom: 6, borderBottom: `1px solid ${T.sep}` }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 1 }}>{title}</div>
         <button type="button" onClick={onAdd} style={{ padding: '4px 12px', background: T.blue, color: '#fff', border: 'none', borderRadius: 7, cursor: 'pointer', fontWeight: 700, fontSize: 12 }}>
@@ -479,7 +503,12 @@ function SectionWithAdd({ title, children, label, onAdd }) {
 }
 
 function Row({ children }) {
-  return <div style={{ display: 'flex', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>{children}</div>
+  const { isMobile } = useContext(LayoutCtx)
+  return (
+    <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 12, marginBottom: 10, flexWrap: 'wrap' }}>
+      {children}
+    </div>
+  )
 }
 
 function Field({ label, children }) {
@@ -492,7 +521,24 @@ function Field({ label, children }) {
 }
 
 const inputS = { width: '100%', padding: '9px 11px', border: `1px solid ${T.sep}`, borderRadius: 8, fontSize: 13, background: T.bg2, color: T.text, outline: 'none', boxSizing: 'border-box' }
-const modalBg = { position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', zIndex: 1000, overflowY: 'auto' }
-const modalBox = { background: T.bg1, borderRadius: '18px 18px 0 0', padding: '24px', width: '100%', maxWidth: 700, border: `1px solid ${T.sep}`, maxHeight: '94vh', overflowY: 'auto' }
+
+// Mobile: bottom sheet anchored to the bottom edge, full width.
+// Desktop: centered dialog with breathing room.
+const modalBg = (isMobile) => ({
+  position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex',
+  alignItems: isMobile ? 'flex-end' : 'center', justifyContent: 'center',
+  zIndex: 1000, overflowY: 'auto', padding: isMobile ? 0 : '24px',
+})
+const modalBox = (isMobile) => ({
+  background: T.bg1,
+  borderRadius: isMobile ? '18px 18px 0 0' : 18,
+  padding: isMobile ? 20 : 28,
+  width: '100%',
+  maxWidth: isMobile ? 700 : 1120,
+  border: `1px solid ${T.sep}`,
+  maxHeight: isMobile ? '94vh' : '92vh',
+  overflowY: 'auto',
+})
+const formGrid = { display: 'grid', gridTemplateColumns: '1fr 1fr', columnGap: 28, alignItems: 'start' }
 const primaryBtn = { padding: '10px 22px', background: T.blue, color: '#fff', border: 'none', borderRadius: 9, cursor: 'pointer', fontWeight: 600, fontSize: 14 }
 const secBtn = { padding: '10px 18px', background: T.bg2, color: T.text2, border: `1px solid ${T.sep}`, borderRadius: 9, cursor: 'pointer', fontWeight: 600, fontSize: 14 }

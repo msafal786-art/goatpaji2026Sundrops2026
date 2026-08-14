@@ -146,6 +146,7 @@ export default function Calendar() {
           marginBottom: size === 'sm' ? 2 : 6, cursor: 'pointer',
           fontSize: size === 'sm' ? 10 : 11.5, lineHeight: 1.35,
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: size === 'sm' ? 'nowrap' : 'normal',
+          overflowWrap: size === 'sm' ? undefined : 'anywhere',
         }}
       >
         <span style={{
@@ -223,12 +224,12 @@ export default function Calendar() {
         <div style={{ color: T.text3, padding: 20 }}>Loading loads…</div>
       ) : view === 'month' ? (
         <div style={{ background: T.bg1, borderRadius: 14, border: `1px solid ${T.sep}`, overflow: 'hidden' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', borderBottom: `1px solid ${T.sep}` }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', borderBottom: `1px solid ${T.sep}` }}>
             {dayNames.map(d => (
               <div key={d} style={{ padding: '8px 0', textAlign: 'center', fontSize: 11, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.6 }}>{d}</div>
             ))}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))' }}>
             {cells.map((dateStr, i) => {
               const entries = dateStr ? (byDate[dateStr] || []) : []
               const isToday = dateStr === today
@@ -244,6 +245,7 @@ export default function Calendar() {
                     background: isToday ? T.blue + '0a' : isWeekend && dateStr ? T.bg2 + '60' : 'transparent',
                     opacity: !dateStr ? 0.3 : isPast ? 0.7 : 1,
                     cursor: dateStr && entries.length ? 'pointer' : 'default',
+                    minWidth: 0, overflow: 'hidden',
                   }}
                 >
                   {dateStr && (
@@ -277,7 +279,7 @@ export default function Calendar() {
         </div>
       ) : (
         <div style={{ background: T.bg1, borderRadius: 14, border: `1px solid ${T.sep}`, overflow: 'hidden' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', borderBottom: `1px solid ${T.sep}` }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', borderBottom: `1px solid ${T.sep}` }}>
             {weekDays.map(dateStr => {
               const d = new Date(dateStr + 'T00:00:00')
               const isToday = dateStr === today
@@ -292,11 +294,11 @@ export default function Calendar() {
               )
             })}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', minHeight: 200 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', minHeight: 200 }}>
             {weekDays.map((dateStr, i) => {
               const entries = byDate[dateStr] || []
               return (
-                <div key={dateStr} style={{ padding: 8, borderRight: i < 6 ? `1px solid ${T.sep}` : 'none', minHeight: 170 }}>
+                <div key={dateStr} style={{ padding: 8, borderRight: i < 6 ? `1px solid ${T.sep}` : 'none', minHeight: 170, minWidth: 0, overflow: 'hidden' }}>
                   {entries.map((e, k) => <Entry key={k} entry={e} size="md" />)}
                   {entries.length === 0 && <div style={{ fontSize: 11, color: T.text3, padding: '8px 0' }}>—</div>}
                 </div>
