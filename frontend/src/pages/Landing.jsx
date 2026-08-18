@@ -59,11 +59,14 @@ export default function Landing() {
         backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)', zIndex: 50,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div style={{
-            width: 36, height: 36, background: C.blue, borderRadius: 9,
-            display: 'flex', alignItems: 'center', justifyContent: 'center',
-            fontSize: 17, fontWeight: 900, color: '#fff', letterSpacing: -1,
-          }}>G</div>
+          <svg width="36" height="36" viewBox="0 0 64 64" style={{ flexShrink: 0 }} aria-hidden="true">
+            <rect width="64" height="64" rx="15" fill="#f0b429" />
+            <g transform="translate(32,34)" fill="#151922">
+              <path d="M0 20 C0 8 1.7 0 11 -14 C14 -11.5 14.9 -6.6 11.5 -0.8 C8.3 5.8 5.8 11.5 7.5 20 Z" />
+              <path d="M0 20 C0 8 -1.7 0 -11 -14 C-14 -11.5 -14.9 -6.6 -11.5 -0.8 C-8.3 5.8 -5.8 11.5 -7.5 20 Z" />
+              <circle cx="0" cy="15.5" r="3.8" />
+            </g>
+          </svg>
           <div>
             <div style={{ fontSize: 15, fontWeight: 800, color: C.text, letterSpacing: -0.3 }}>GOAT INC</div>
             <div style={{ fontSize: 10, color: C.text3, letterSpacing: 0.6, textTransform: 'uppercase' }}>Freight Dispatch</div>

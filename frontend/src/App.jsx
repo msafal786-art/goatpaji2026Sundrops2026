@@ -155,6 +155,14 @@ function TopNav({ user, onLogout }) {
         padding: '0 20px', display: 'flex', alignItems: 'center', gap: 8,
         borderRight: `1px solid ${T.sep}`, flexShrink: 0,
       }}>
+        <svg width="28" height="28" viewBox="0 0 64 64" style={{ flexShrink: 0 }} aria-hidden="true">
+          <rect width="64" height="64" rx="15" fill="#f0b429" />
+          <g transform="translate(32,34)" fill="#151922">
+            <path d="M0 20 C0 8 1.7 0 11 -14 C14 -11.5 14.9 -6.6 11.5 -0.8 C8.3 5.8 5.8 11.5 7.5 20 Z" />
+            <path d="M0 20 C0 8 -1.7 0 -11 -14 C-14 -11.5 -14.9 -6.6 -11.5 -0.8 C-8.3 5.8 -5.8 11.5 -7.5 20 Z" />
+            <circle cx="0" cy="15.5" r="3.8" />
+          </g>
+        </svg>
         <div>
           <div style={{ fontSize: 12, fontWeight: 800, color: T.text, letterSpacing: 0.5, textTransform: 'uppercase', lineHeight: 1.2 }}>
             {user.portal_name || user.company_name || (isAdmin ? 'Goat Inc' : 'Dispatch Portal')}
@@ -345,7 +353,14 @@ export default function App() {
 
   if (loading) return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, height: '100vh', background: T.bg, color: T.text2, fontSize: 14 }}>
-      <div style={{ width: 36, height: 36, background: T.blue, borderRadius: 9, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 17, fontWeight: 900, color: '#fff' }}>G</div>
+      <svg width="36" height="36" viewBox="0 0 64 64" aria-hidden="true">
+        <rect width="64" height="64" rx="15" fill="#f0b429" />
+        <g transform="translate(32,34)" fill="#151922">
+          <path d="M0 20 C0 8 1.7 0 11 -14 C14 -11.5 14.9 -6.6 11.5 -0.8 C8.3 5.8 5.8 11.5 7.5 20 Z" />
+          <path d="M0 20 C0 8 -1.7 0 -11 -14 C-14 -11.5 -14.9 -6.6 -11.5 -0.8 C-8.3 5.8 -5.8 11.5 -7.5 20 Z" />
+          <circle cx="0" cy="15.5" r="3.8" />
+        </g>
+      </svg>
       <div>{slowLoad ? 'Server is waking up…' : 'Loading…'}</div>
       {slowLoad && <div style={{ fontSize: 11, color: T.text3 }}>This can take 10–20 s on a cold start</div>}
     </div>

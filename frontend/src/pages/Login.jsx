@@ -41,6 +41,14 @@ export default function Login({ onLogin }) {
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: T.bg }}>
       <div style={{ background: T.bg1, borderRadius: 20, padding: '40px 36px', width: 360, border: `1px solid ${T.sep}` }}>
         <div style={{ textAlign: 'center', marginBottom: 32 }}>
+          <svg width="48" height="48" viewBox="0 0 64 64" style={{ marginBottom: 14 }} aria-hidden="true">
+            <rect width="64" height="64" rx="15" fill="#f0b429" />
+            <g transform="translate(32,34)" fill="#151922">
+              <path d="M0 20 C0 8 1.7 0 11 -14 C14 -11.5 14.9 -6.6 11.5 -0.8 C8.3 5.8 5.8 11.5 7.5 20 Z" />
+              <path d="M0 20 C0 8 -1.7 0 -11 -14 C-14 -11.5 -14.9 -6.6 -11.5 -0.8 C-8.3 5.8 -5.8 11.5 -7.5 20 Z" />
+              <circle cx="0" cy="15.5" r="3.8" />
+            </g>
+          </svg>
           <div style={{ fontSize: 13, fontWeight: 700, color: T.text3, letterSpacing: 1.5, textTransform: 'uppercase', marginBottom: 8 }}>Dispatch Portal</div>
           <h1 style={{ fontSize: 26, fontWeight: 700, color: T.text, letterSpacing: -0.5 }}>Sign In</h1>
         </div>
