@@ -946,6 +946,27 @@ app.get('/api/loads/:id/dispatch-message', auth, (req, res) => {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
+  // WhatsApp bolding helpers: *text* renders bold. We only bold the things that
+  // matter most — appointment TIMES (never dates), PO/reference numbers, the
+  // BOL/POD reminders, and any fines/penalties in the broker notes.
+  const bold = (t) => (t == null || t === '') ? t : `*${t}*`
+  // "On: <date> @ <time>" — bold only the time portion, leave the date plain.
+  const onLine = (date, time) => `On: ${date}${time ? ' @ ' + bold(time) : ''}`
+  // "PO: BM: X, PO: Y, IX: Z" — bold each value after a label, keep labels plain.
+  const boldRefs = (refs) => String(refs).split(',').map(p => p.trim()).map(part => {
+    const idx = part.indexOf(':')
+    if (idx === -1) return bold(part)
+    return `${part.slice(0, idx + 1)} ${bold(part.slice(idx + 1).trim())}`
+  }).join(', ')
+  // Bold any note line that mentions a fine/penalty or a $ amount; leave the
+  // rest of the broker notes (auto-tracking, RXO, accessorials) plain.
+  const boldFines = (text) => String(text).split('\n').map(line =>
+    /\b(fine|penalt|late\s*fee|chargeback|\$\s?\d)/i.test(line) ? bold(line.trim()) : line
+  ).join('\n')
+
+  const BOL_REMINDER = `Send ${bold('BOL and Picture of seal before leaving Shipper')}`
+  const POD_REMINDER = `Send ${bold('POD right after delivery')}`
+
   const lines = []
   lines.push(`Hello ${load.driver_name || 'Driver'},`)
   lines.push('')
@@ -960,18 +981,20 @@ app.get('/api/loads/:id/dispatch-message', auth, (req, res) => {
   lines.push(`${totalPickups > 1 ? 'Pick 1' : 'Pick'}: ${load.pickup_name || ''}`)
   const puAddr = [load.pickup_address, load.pickup_city, load.pickup_state, load.pickup_zip].filter(Boolean).join(', ')
   if (puAddr) lines.push(`At: ${puAddr}`)
-  if (load.pickup_date) lines.push(`On: ${load.pickup_date}${load.pickup_time ? ' @ ' + load.pickup_time : ''}`)
-  if (load.pickup_refs) lines.push(`PO: ${load.pickup_refs}`)
+  if (load.pickup_date) lines.push(onLine(load.pickup_date, load.pickup_time))
+  if (load.pickup_refs) lines.push(`PO: ${boldRefs(load.pickup_refs)}`)
   if (load.pickup_phone) lines.push(`Call: ${load.pickup_phone}`)
+  lines.push(BOL_REMINDER)
 
   extraPickups.forEach((pick, i) => {
     lines.push('')
     lines.push(`Pick ${i + 2}: ${pick.name || ''}`)
     const addr = [pick.address, pick.city, pick.state, pick.zip].filter(Boolean).join(', ')
     if (addr) lines.push(`At: ${addr}`)
-    if (pick.date) lines.push(`On: ${pick.date}${pick.time ? ' @ ' + pick.time : ''}`)
-    if (pick.refs) lines.push(`PO: ${pick.refs}`)
+    if (pick.date) lines.push(onLine(pick.date, pick.time))
+    if (pick.refs) lines.push(`PO: ${boldRefs(pick.refs)}`)
     if (pick.phone) lines.push(`Call: ${pick.phone}`)
+    lines.push(BOL_REMINDER)
   })
 
   // Delivery block
@@ -979,9 +1002,10 @@ app.get('/api/loads/:id/dispatch-message', auth, (req, res) => {
   lines.push(`Drop 1: ${load.delivery_name || ''}`)
   const delAddr = [load.delivery_address, load.delivery_city, load.delivery_state, load.delivery_zip].filter(Boolean).join(', ')
   if (delAddr) lines.push(`At: ${delAddr}`)
-  if (load.delivery_date) lines.push(`On: ${load.delivery_date}${load.delivery_time ? ' @ ' + load.delivery_time : ''}`)
-  lines.push(`PO: ${load.delivery_refs || ''}`)
-  lines.push(`Call: ${load.delivery_phone || ''}`)
+  if (load.delivery_date) lines.push(onLine(load.delivery_date, load.delivery_time))
+  if (load.delivery_refs) lines.push(`PO: ${boldRefs(load.delivery_refs)}`)
+  if (load.delivery_phone) lines.push(`Call: ${load.delivery_phone}`)
+  lines.push(POD_REMINDER)
 
   // Extra stops
   let extraStops = []
@@ -991,14 +1015,18 @@ app.get('/api/loads/:id/dispatch-message', auth, (req, res) => {
     lines.push(`Drop ${i + 2}: ${stop.name || ''}`)
     const addr = [stop.address, stop.city, stop.state, stop.zip].filter(Boolean).join(', ')
     if (addr) lines.push(`At: ${addr}`)
-    if (stop.date) lines.push(`On: ${stop.date}${stop.time ? ' @ ' + stop.time : ''}`)
-    if (stop.refs) lines.push(`PO: ${stop.refs}`)
+    if (stop.date) lines.push(onLine(stop.date, stop.time))
+    if (stop.refs) lines.push(`PO: ${boldRefs(stop.refs)}`)
     if (stop.phone) lines.push(`Call: ${stop.phone}`)
+    lines.push(POD_REMINDER)
   })
 
+  // Broker notes — always included in full (fines and everything the broker sent,
+  // never the rate). Fine/penalty lines get bolded.
   if (load.special_instructions) {
     lines.push('')
-    lines.push(load.special_instructions)
+    lines.push('Notes:')
+    lines.push(boldFines(load.special_instructions))
   }
 
   res.json({ message: lines.join('\n') });
