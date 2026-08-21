@@ -276,6 +276,22 @@ if (!latestLoadCols.includes('extra_stops')) db.prepare('ALTER TABLE loads ADD C
 // Extra pickup stops (JSON array of stop objects)
 if (!latestLoadCols.includes('extra_pickups')) db.prepare('ALTER TABLE loads ADD COLUMN extra_pickups TEXT').run();
 
+// Append-only activity log for loads: created, edited, status changes,
+// dispatch, driver swaps, etc. Kept separate from the free-text `notes`
+// field (which gets overwritten on every edit) so history can never be lost.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS load_activity (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    load_id INTEGER NOT NULL REFERENCES loads(id) ON DELETE CASCADE,
+    action TEXT NOT NULL,
+    detail TEXT,
+    user_id INTEGER REFERENCES users(id),
+    user_name TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_load_activity_load ON load_activity(load_id);
+`);
+
 // Drive file ID columns for document tables
 const loadDocCols = db.prepare("PRAGMA table_info(load_docs)").all().map(r => r.name);
 if (!loadDocCols.includes('drive_file_id')) db.prepare('ALTER TABLE load_docs ADD COLUMN drive_file_id TEXT').run();

@@ -237,6 +237,26 @@ function requireRole(...roles) {
   };
 }
 
+// Append one entry to a load's activity trail. Never throws — logging must not
+// break the request it's recording. `action` is a short verb ('created',
+// 'dispatched', 'status', 'edited', 'driver_changed'); `detail` is free text.
+function logActivity(loadId, req, action, detail = '') {
+  try {
+    const name = req?.user?.full_name || (req?.user?.role === 'driver' ? 'Driver' : 'System');
+    db.prepare('INSERT INTO load_activity (load_id, action, detail, user_id, user_name) VALUES (?,?,?,?,?)')
+      .run(loadId, action, detail || null, req?.user?.id || null, name);
+  } catch (e) {
+    console.error('[activity] failed to log', action, 'for load', loadId, e.message);
+  }
+}
+
+// Human-readable labels for load statuses, used in the activity trail.
+const STATUS_LABELS = {
+  open: 'Open', covered: 'Covered', dispatched: 'Dispatched', loading: 'Loading',
+  on_route: 'On Route', unloading: 'Unloading', in_yard: 'In Yard',
+  delivered: 'Delivered', completed: 'Completed',
+};
+
 // ── Company scoping — single source of truth for data isolation ──────────────
 // Every endpoint that returns or mutates company-owned rows MUST scope through
 // these. The failure mode we guard against: a scoped user (company_owner, or a
@@ -857,6 +877,8 @@ app.post('/api/loads', auth, requireRole('dispatcher', 'company_owner'), (req, r
     db.prepare("UPDATE trucks SET status = 'on_load' WHERE id = ?").run(truck_id);
   }
 
+  logActivity(r.lastInsertRowid, req, 'created', `Load created${load_number ? ' (#' + load_number + ')' : ''}`);
+
   res.json(db.prepare('SELECT l.*, d.full_name as driver_name, t.tractor_number, t.trailer_number as truck_trailer, c.name as company_name FROM loads l LEFT JOIN drivers d ON l.driver_id = d.id LEFT JOIN trucks t ON l.truck_id = t.id LEFT JOIN companies c ON l.company_id = c.id WHERE l.id = ?').get(r.lastInsertRowid));
 });
 
@@ -915,6 +937,28 @@ app.put('/api/loads/:id', auth, requireRole('dispatcher', 'company_owner'), (req
     special_instructions, notes || null, driver_id || null, truck_id || null, newStatus, extraStopsJson, extraPickupsJson,
     req.params.id
   );
+
+  // Record which fields actually changed, so the activity trail shows real edits.
+  const editable = {
+    load_number: 'Load #', broker_name: 'Broker', broker_order: 'Broker order',
+    commodity: 'Commodity', weight: 'Weight', miles: 'Miles', trailer_type: 'Trailer',
+    bol: 'BOL', rate: 'Rate',
+    pickup_name: 'Pickup', pickup_address: 'Pickup address', pickup_city: 'Pickup city',
+    pickup_state: 'Pickup state', pickup_zip: 'Pickup zip', pickup_date: 'Pickup date',
+    pickup_time: 'Pickup time', pickup_refs: 'Pickup PO',
+    delivery_name: 'Delivery', delivery_address: 'Delivery address', delivery_city: 'Delivery city',
+    delivery_state: 'Delivery state', delivery_zip: 'Delivery zip', delivery_date: 'Delivery date',
+    delivery_time: 'Delivery time', delivery_refs: 'Delivery PO',
+    special_instructions: 'Instructions', notes: 'Notes',
+  };
+  const changed = Object.keys(editable)
+    .filter(k => (req.body[k] ?? '') !== (existing[k] ?? '') && !(!req.body[k] && !existing[k]))
+    .map(k => editable[k]);
+  if (changed.length) logActivity(req.params.id, req, 'edited', 'Edited: ' + changed.join(', '));
+  if (newStatus !== existing.status) {
+    logActivity(req.params.id, req, 'status',
+      `${STATUS_LABELS[existing.status] || existing.status} → ${STATUS_LABELS[newStatus] || newStatus}`);
+  }
 
   // Recompute both sides: the driver taken off this load may still be running
   // another, and the one put on it may have been idle.
@@ -1038,6 +1082,7 @@ app.post('/api/loads/:id/mark-dispatched', auth, requireRole('dispatcher', 'comp
   if (!userCanAccessCompany(req.user, load.company_id))
     return res.status(403).json({ error: 'Forbidden' });
   db.prepare("UPDATE loads SET dispatch_sent=1, dispatch_sent_at=datetime('now'), status='dispatched' WHERE id=?").run(req.params.id);
+  logActivity(req.params.id, req, 'dispatched', 'Dispatch message sent');
   res.json({ ok: true });
 });
 
@@ -1085,6 +1130,19 @@ app.post('/api/loads/:id/status', auth, (req, res) => {
 
   const setClauses = Object.keys(fields).map(k => `${k}=?`).join(', ');
   db.prepare(`UPDATE loads SET ${setClauses} WHERE id=?`).run(...Object.values(fields), req.params.id);
+
+  if (status !== load.status) {
+    const extras = [];
+    if (fields.checkin_time) extras.push(`in ${fields.checkin_time}`);
+    if (fields.checkout_time) extras.push(`out ${fields.checkout_time}`);
+    if (fields.trailer_number) extras.push(`trailer ${fields.trailer_number}`);
+    if (fields.bol_sent) extras.push('BOL sent');
+    if (fields.delivery_checkin_time) extras.push(`del in ${fields.delivery_checkin_time}`);
+    if (fields.delivery_checkout_time) extras.push(`del out ${fields.delivery_checkout_time}`);
+    if (fields.delivery_bol_sent) extras.push('POD sent');
+    const label = `${STATUS_LABELS[load.status] || load.status} → ${STATUS_LABELS[status] || status}`;
+    logActivity(req.params.id, req, 'status', extras.length ? `${label} (${extras.join(', ')})` : label);
+  }
 
   // Recompute on every status change, not just on delivery — a driver freed by
   // finishing this load may still be running another one.
@@ -1953,6 +2011,12 @@ app.put('/api/loads/:id/change-driver', auth, requireRole('dispatcher', 'company
   db.prepare('UPDATE loads SET driver_id=?, original_driver_id=?, status=? WHERE id=?')
     .run(driver_id, originalId || null, load.status === 'open' ? 'covered' : load.status, req.params.id);
 
+  if (load.driver_id !== driver_id) {
+    const prev = load.driver_id ? db.prepare('SELECT full_name FROM drivers WHERE id = ?').get(load.driver_id) : null;
+    logActivity(req.params.id, req, 'driver_changed',
+      prev ? `Driver: ${prev.full_name} → ${newDriver.full_name}` : `Driver assigned: ${newDriver.full_name}`);
+  }
+
   // After the swap: the previous driver may still have other work.
   syncDriverStatus(load.driver_id);
   syncDriverStatus(driver_id);
@@ -2026,6 +2090,19 @@ app.get('/api/loads/:id/docs', auth, (req, res) => {
     return res.status(403).json({ error: 'Forbidden' });
   }
   res.json(db.prepare('SELECT * FROM load_docs WHERE load_id = ? ORDER BY uploaded_at DESC').all(req.params.id));
+});
+
+// Activity trail for a load — created, edited, status changes, dispatch, driver swaps.
+app.get('/api/loads/:id/activity', auth, (req, res) => {
+  const load = db.prepare('SELECT company_id, driver_id FROM loads WHERE id = ?').get(req.params.id);
+  if (!load) return res.status(404).json({ error: 'Not found' });
+  if (req.user.role === 'driver') {
+    const driver = db.prepare('SELECT id FROM drivers WHERE user_id = ?').get(req.user.id);
+    if (!driver || load.driver_id !== driver.id) return res.status(403).json({ error: 'Forbidden' });
+  } else if (!userCanAccessCompany(req.user, load.company_id)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  res.json(db.prepare('SELECT id, action, detail, user_name, created_at FROM load_activity WHERE load_id = ? ORDER BY created_at DESC, id DESC').all(req.params.id));
 });
 
 app.post('/api/loads/:id/docs', auth, upload.single('file'), async (req, res) => {

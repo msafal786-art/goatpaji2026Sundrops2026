@@ -146,6 +146,7 @@ export const api = {
 
   // Load documents
   loadDocs: (loadId) => req('GET', `/loads/${loadId}/docs`),
+  loadActivity: (loadId) => req('GET', `/loads/${loadId}/activity`),
   // Uploads can be a 20 MB scan over a phone connection, and the server also
   // pushes to Drive. No retry — filing the same document twice is worse than
   // an error the dispatcher can act on.

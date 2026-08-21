@@ -31,6 +31,7 @@ export default function LoadDetail() {
   const [docs, setDocs] = useState([])
   const [uploading, setUploading] = useState(false)
   const [uploadType, setUploadType] = useState('BOL')
+  const [activity, setActivity] = useState([])
 
   const [detentionEdit, setDetentionEdit] = useState(false)
   const [detForm, setDetForm] = useState({ detention_start: '', detention_end: '', detention_rate: 65 })
@@ -44,7 +45,7 @@ export default function LoadDetail() {
   const [msgCopied, setMsgCopied] = useState(false)
   const [savingDriver, setSavingDriver] = useState(false)
 
-  useEffect(() => { loadData(); fetchDocs() }, [id])
+  useEffect(() => { loadData(); fetchDocs(); fetchActivity() }, [id])
   useEffect(() => {
     api.loads().then(ls => {
       const sorted = [...ls].sort((a, b) => {
@@ -63,10 +64,15 @@ export default function LoadDetail() {
       detention_end:   l.detention_end   ? l.detention_end.slice(0, 16)   : '',
       detention_rate:  l.detention_rate  ?? 65,
     })
+    fetchActivity()
   }
 
   async function fetchDocs() {
     try { setDocs(await api.loadDocs(id)) } catch { setDocs([]) }
+  }
+
+  async function fetchActivity() {
+    try { setActivity(await api.loadActivity(id)) } catch { setActivity([]) }
   }
 
   const currentIdx = allIds.indexOf(Number(id))
@@ -519,6 +525,40 @@ ${load.company_name || 'Dispatch'}`
         )
       })()}
 
+      {/* Activity trail — created, edited, status changes, dispatch, driver swaps */}
+      {canEdit && (() => {
+        const actColor = { created: T.blue, dispatched: T.orange, status: T.green, driver_changed: T.purple, edited: T.text3 }
+        const fmtAct = (ts) => {
+          if (!ts) return ''
+          // SQLite datetime('now') is UTC without a zone marker — normalize before parsing.
+          const iso = /Z|[+-]\d\d:?\d\d$/.test(ts) ? ts : ts.replace(' ', 'T') + 'Z'
+          try { return new Date(iso).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) }
+          catch { return ts }
+        }
+        return (
+          <div style={{ background: T.bg1, borderRadius: 14, padding: '16px 20px', marginTop: 14, border: `1px solid ${T.sep}` }}>
+            <h3 style={{ fontSize: 11, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 1, margin: '0 0 14px' }}>Activity</h3>
+            {activity.length === 0 ? (
+              <div style={{ fontSize: 13, color: T.text3 }}>No activity recorded yet. Changes, dispatch, and status updates will appear here.</div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {activity.map(a => (
+                  <div key={a.id} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', marginTop: 5, flexShrink: 0, background: actColor[a.action] || T.text3 }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, color: T.text, fontWeight: 600 }}>{a.detail || a.action}</div>
+                      <div style={{ fontSize: 11, color: T.text3, marginTop: 2 }}>
+                        {fmtAct(a.created_at)}{a.user_name ? ` · ${a.user_name}` : ''}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )
+      })()}
+
       {/* Change Driver modal */}
       {showChangeDriver && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}
@@ -651,7 +691,7 @@ ${load.company_name || 'Dispatch'}`
         <LoadForm
           load={load}
           onClose={() => setShowEdit(false)}
-          onSave={(updated) => { setLoad(updated); setShowEdit(false) }}
+          onSave={(updated) => { setLoad(updated); setShowEdit(false); fetchActivity() }}
         />
       )}
     </div>
