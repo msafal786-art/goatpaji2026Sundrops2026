@@ -469,11 +469,19 @@ app.post('/api/users', auth, requireAdmin, (req, res) => {
 });
 
 app.put('/api/users/:id', auth, requireRole('dispatcher'), (req, res) => {
-  const { full_name, email, phone, can_see_revenue, password, company_id, role, allowed_company_ids } = req.body;
+  const { username, full_name, email, phone, can_see_revenue, password, company_id, role, allowed_company_ids } = req.body;
   const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Not found' });
   const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
   if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
+  // username is UNIQUE; only touch it when actually changing, and reject collisions
+  // up front so the client gets a clear message instead of a raw constraint 500.
+  const newUsername = (username || '').trim();
+  if (newUsername && newUsername !== existing.username) {
+    const taken = db.prepare('SELECT id FROM users WHERE username = ? AND id != ?').get(newUsername, req.params.id);
+    if (taken) return res.status(409).json({ error: 'Username already taken' });
+    db.prepare('UPDATE users SET username = ? WHERE id = ?').run(newUsername, req.params.id);
+  }
   if (password) {
     db.prepare('UPDATE users SET password = ? WHERE id = ?').run(bcrypt.hashSync(password, 10), req.params.id);
   }
@@ -489,9 +497,28 @@ app.put('/api/users/:id', auth, requireRole('dispatcher'), (req, res) => {
 app.delete('/api/users/:id', auth, requireRole('dispatcher'), (req, res) => {
   const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
   if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
-  if (Number(req.params.id) === req.user.id) return res.status(400).json({ error: 'Cannot delete yourself' });
-  db.prepare('DELETE FROM users WHERE id = ?').run(req.params.id);
-  res.json({ ok: true });
+  const id = Number(req.params.id);
+  if (id === req.user.id) return res.status(400).json({ error: 'Cannot delete yourself' });
+  try {
+    // foreign_keys is ON and several history tables reference users(id), so a
+    // plain DELETE fails for any user who's ever uploaded a doc, logged activity,
+    // etc. Detach those references (all nullable) so the login can be removed
+    // while the history rows survive.
+    const removeUser = db.transaction((uid) => {
+      db.prepare('UPDATE drivers SET user_id = NULL WHERE user_id = ?').run(uid);
+      db.prepare('UPDATE load_docs SET uploaded_by = NULL WHERE uploaded_by = ?').run(uid);
+      db.prepare('UPDATE truck_docs SET uploaded_by = NULL WHERE uploaded_by = ?').run(uid);
+      db.prepare('UPDATE maintenance_records SET created_by = NULL WHERE created_by = ?').run(uid);
+      db.prepare('UPDATE load_activity SET user_id = NULL WHERE user_id = ?').run(uid);
+      return db.prepare('DELETE FROM users WHERE id = ?').run(uid);
+    });
+    const info = removeUser(id);
+    if (info.changes === 0) return res.status(404).json({ error: 'User not found' });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('Failed to delete user', id, e);
+    res.status(500).json({ error: 'Failed to remove user', detail: e.message });
+  }
 });
 
 // ── Drivers ──────────────────────────────────────────────────────────────────

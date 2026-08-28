@@ -69,8 +69,13 @@ export default function Users() {
 
   async function handleDelete(u) {
     if (!confirm(`Remove user "${u.username}"? This cannot be undone.`)) return
-    await api.deleteUser(u.id)
-    setUsers(us => us.filter(x => x.id !== u.id))
+    try {
+      await api.deleteUser(u.id)
+      setUsers(us => us.filter(x => x.id !== u.id))
+    } catch (err) {
+      setError(err.message)
+      alert(`Could not remove "${u.username}": ${err.message}`)
+    }
   }
 
   function set(k, v) { setForm(f => ({ ...f, [k]: v })) }
