@@ -29,12 +29,57 @@
         font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', system-ui, sans-serif;
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
+        text-rendering: optimizeLegibility;
       }
-      ::-webkit-scrollbar { width: 6px; height: 6px; }
+      html { scroll-behavior: smooth; }
+
+      /* Refined scrollbars — thin, unobtrusive, brighter on hover */
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
       ::-webkit-scrollbar-track { background: transparent; }
-      ::-webkit-scrollbar-thumb { background: rgba(84,84,88,0.6); border-radius: 3px; }
+      ::-webkit-scrollbar-thumb {
+        background: rgba(120,120,128,0.4);
+        border-radius: 8px;
+        border: 2px solid transparent;
+        background-clip: padding-box;
+      }
+      ::-webkit-scrollbar-thumb:hover { background: rgba(120,120,128,0.65); background-clip: padding-box; }
+      * { scrollbar-width: thin; scrollbar-color: rgba(120,120,128,0.4) transparent; }
+
       input, select, textarea, button { font-family: inherit; }
       select option { background: #252528; color: #f2f2f7; }
+
+      /* Text selection uses the app's blue accent */
+      ::selection { background: rgba(10,132,255,0.30); }
+
+      /* Remove the grey mobile tap flash; we provide our own press feedback */
+      * { -webkit-tap-highlight-color: transparent; }
+
+      /* Smooth, tactile interactions app-wide. Only paint/transform properties
+         are transitioned, so nothing here can shift layout. */
+      button, a, [role="button"] {
+        transition: background-color .15s ease, border-color .15s ease,
+                    box-shadow .15s ease, transform .12s ease, opacity .15s ease, color .15s ease;
+      }
+      button:not(:disabled):active,
+      [role="button"]:active { transform: translateY(1px); }
+      button:disabled { cursor: not-allowed; opacity: .5; }
+
+      input, select, textarea {
+        transition: border-color .15s ease, box-shadow .15s ease, background-color .15s ease;
+      }
+      /* Focus glow on fields — box-shadow ring layers over the inline border
+         without overriding it, so it works regardless of each field's own style */
+      input:focus, select:focus, textarea:focus {
+        box-shadow: 0 0 0 3px rgba(10,132,255,0.22);
+      }
+
+      /* Keyboard focus ring for everything else — only shows for keyboard nav,
+         never on mouse click, so it adds accessibility without visual noise */
+      :focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(10,132,255,0.35); }
+
+      @media (prefers-reduced-motion: reduce) {
+        *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; }
+      }
     </style>
   </head>
   <body>
