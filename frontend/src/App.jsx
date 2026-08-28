@@ -65,8 +65,10 @@ function NavItem({ label, to, mainTo, children }) {
 
   useEffect(() => {
     function handle(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    function onKey(e) { if (e.key === 'Escape') setOpen(false) }
     document.addEventListener('mousedown', handle)
-    return () => document.removeEventListener('mousedown', handle)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', handle); document.removeEventListener('keydown', onKey) }
   }, [])
 
   const linkStyle = {
@@ -78,29 +80,31 @@ function NavItem({ label, to, mainTo, children }) {
   }
 
   // Simple link with no dropdown
-  if (to) return <Link to={to} style={linkStyle}>{label}</Link>
+  if (to) return <Link to={to} aria-current={active ? 'page' : undefined} style={linkStyle}>{label}</Link>
 
   // Split: label navigates to mainTo, ▼ opens dropdown
   // If no mainTo, entire label+arrow is the toggle
   return (
     <div ref={ref} style={{ position: 'relative', display: 'flex', alignItems: 'stretch' }}>
       {mainTo ? (
-        <Link to={mainTo} style={{ ...linkStyle, paddingRight: 4 }}>{label}</Link>
+        <Link to={mainTo} aria-current={active ? 'page' : undefined} style={{ ...linkStyle, paddingRight: 4 }}>{label}</Link>
       ) : (
-        <button onClick={() => setOpen(o => !o)} style={{ ...linkStyle, background: 'none', border: 'none', paddingRight: 4 }}>
+        <button onClick={() => setOpen(o => !o)} aria-haspopup="menu" aria-expanded={open}
+          style={{ ...linkStyle, background: 'none', border: 'none', paddingRight: 4 }}>
           {label}
         </button>
       )}
       <button
+        aria-haspopup="menu" aria-expanded={open} aria-label={`${label} menu`}
         style={{
           height: NAV_H, padding: '0 8px', background: 'none', border: 'none',
           cursor: 'pointer', color: active ? T.blue : T.text3, fontSize: 9,
           borderBottom: active ? `2px solid ${T.blue}` : '2px solid transparent',
         }}
         onClick={() => setOpen(o => !o)}
-      >▼</button>
+      ><span aria-hidden="true">▼</span></button>
       {open && (
-        <div style={{
+        <div role="menu" style={{
           position: 'absolute', top: NAV_H, left: 0, zIndex: 1000,
           background: T.bg1, border: `1px solid ${T.sep}`,
           borderRadius: 10, overflow: 'hidden', minWidth: 180,
@@ -253,37 +257,142 @@ function TopNav({ user, onLogout }) {
 }
 
 // ── Mobile bottom nav ──────────────────────────────────────────────────────────
-const BOTTOM_NAV = [
-  { to: '/loads',    icon: '↗',  label: 'Loads' },
-  { to: '/drivers',  icon: '◉',  label: 'Drivers' },
-  { to: '/trucks',   icon: '▣',  label: 'Trucks' },
-  { to: '/payroll',  icon: '💵', label: 'Payroll' },
-  { to: '/settings', icon: '⚙',  label: 'More' },
+// Four primary tabs live in the bar; every other section is reachable through
+// the "More" sheet, so mobile now has full parity with the desktop top nav.
+const PRIMARY_NAV = [
+  { to: '/loads',     icon: '↗', label: 'Dispatch' },
+  { to: '/dashboard', icon: '▦', label: 'Dashboard' },
+  { to: '/drivers',   icon: '◉', label: 'Drivers' },
+  { to: '/trucks',    icon: '▣', label: 'Trucks' },
 ]
 
-function BottomNav({ onLogout }) {
+// Everything not on the tab bar, grouped for the More sheet. `admin` items only
+// render for the top-level admin account.
+const MORE_SECTIONS = [
+  { title: 'Operations', items: [
+    { to: '/calendar',        icon: '▤', label: 'Calendar' },
+    { to: '/search',          icon: '⌕', label: 'Search' },
+    { to: '/payroll',         icon: '💵', label: 'Payroll' },
+    { to: '/compliance',      icon: '✓', label: 'Compliance' },
+  ]},
+  { title: 'Planning', items: [
+    { to: '/recommendations', icon: '↭', label: 'Lanes' },
+    { to: '/deadhead',        icon: '⇄', label: 'Deadhead' },
+    { to: '/revenue',         icon: '$', label: 'Revenue' },
+  ]},
+  { title: 'Admin', admin: true, items: [
+    { to: '/companies',       icon: '▤', label: 'Companies' },
+    { to: '/users',           icon: '◉', label: 'Users' },
+  ]},
+  { title: 'Account', items: [
+    { to: '/settings',        icon: '⚙', label: 'Settings' },
+  ]},
+]
+
+function MoreSheet({ user, onClose, onLogout }) {
+  const isAdmin = user.role === 'dispatcher' && !user.company_id && !user.allowed_company_ids
   const loc = useLocation()
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'Escape') onClose() }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [onClose])
+  const sections = MORE_SECTIONS.filter(s => !s.admin || isAdmin)
+
   return (
-    <div style={{
-      position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 200,
-      background: T.bg1 + 'ee', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
-      borderTop: `1px solid ${T.sep}`, display: 'flex',
-      paddingBottom: 'env(safe-area-inset-bottom)',
-    }}>
-      {BOTTOM_NAV.map(l => {
-        const active = loc.pathname.startsWith(l.to)
-        return (
-          <Link key={l.to} to={l.to} style={{
-            flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
-            padding: '10px 0 8px', textDecoration: 'none', gap: 3,
-            color: active ? T.blue : T.text3,
-          }}>
-            <span style={{ fontSize: 20, lineHeight: 1 }}>{l.icon}</span>
-            <span style={{ fontSize: 9, fontWeight: active ? 700 : 500, letterSpacing: 0.3 }}>{l.label}</span>
-          </Link>
-        )
-      })}
+    <div role="dialog" aria-modal="true" aria-label="More menu"
+      onClick={onClose}
+      style={{
+        position: 'fixed', inset: 0, zIndex: 300, display: 'flex', flexDirection: 'column',
+        justifyContent: 'flex-end', background: 'rgba(0,0,0,0.45)',
+        animation: 'sheetFade .18s ease',
+      }}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: T.bg1, borderTopLeftRadius: 20, borderTopRightRadius: 20,
+        borderTop: `1px solid ${T.sep}`, boxShadow: '0 -8px 40px rgba(0,0,0,0.35)',
+        padding: '10px 16px calc(24px + env(safe-area-inset-bottom))',
+        maxHeight: '82vh', overflowY: 'auto', animation: 'sheetUp .22s cubic-bezier(.32,.72,0,1)',
+      }}>
+        {/* Grab handle */}
+        <div style={{ width: 38, height: 4, borderRadius: 4, background: T.text3, opacity: 0.5, margin: '4px auto 14px' }} />
+
+        {sections.map(sec => (
+          <div key={sec.title} style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8, paddingLeft: 4 }}>
+              {sec.title}
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              {sec.items.map(it => {
+                const active = loc.pathname.startsWith(it.to)
+                return (
+                  <Link key={it.to} to={it.to} onClick={onClose}
+                    aria-current={active ? 'page' : undefined}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10, minHeight: 52,
+                      padding: '0 14px', borderRadius: 12, textDecoration: 'none',
+                      background: active ? T.blue + '18' : T.bg2,
+                      border: `1px solid ${active ? T.blue + '55' : T.sep}`,
+                      color: active ? T.blue : T.text,
+                    }}>
+                    <span aria-hidden="true" style={{ fontSize: 18, width: 22, textAlign: 'center', flexShrink: 0 }}>{it.icon}</span>
+                    <span style={{ fontSize: 14, fontWeight: 600 }}>{it.label}</span>
+                  </Link>
+                )
+              })}
+            </div>
+          </div>
+        ))}
+
+        <button onClick={() => { onClose(); onLogout() }} style={{
+          width: '100%', minHeight: 50, marginTop: 4, background: T.red + '14',
+          border: `1px solid ${T.red}44`, borderRadius: 12, color: T.red,
+          fontSize: 14, fontWeight: 700, cursor: 'pointer',
+        }}>Sign out</button>
+      </div>
     </div>
+  )
+}
+
+function BottomNav({ user, onLogout }) {
+  const loc = useLocation()
+  const [menuOpen, setMenuOpen] = useState(false)
+  // A route change (including tapping a More-sheet item) always closes the sheet.
+  useEffect(() => { setMenuOpen(false) }, [loc.pathname])
+  const moreActive = menuOpen || !PRIMARY_NAV.some(l => loc.pathname.startsWith(l.to))
+
+  const tab = (active) => ({
+    flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
+    justifyContent: 'center', gap: 3, minHeight: 52, padding: '8px 0',
+    textDecoration: 'none', background: 'none', border: 'none', cursor: 'pointer',
+    boxShadow: active ? `inset 0 2px 0 ${T.blue}` : 'none',
+    color: active ? T.blue : T.text2,
+  })
+
+  return (
+    <>
+      {menuOpen && <MoreSheet user={user} onLogout={onLogout} onClose={() => setMenuOpen(false)} />}
+      <nav aria-label="Primary" style={{
+        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 200,
+        background: T.bg1 + 'ee', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)',
+        borderTop: `1px solid ${T.sep}`, display: 'flex',
+        paddingBottom: 'env(safe-area-inset-bottom)',
+      }}>
+        {PRIMARY_NAV.map(l => {
+          const active = loc.pathname.startsWith(l.to)
+          return (
+            <Link key={l.to} to={l.to} aria-label={l.label} aria-current={active ? 'page' : undefined} style={tab(active)}>
+              <span aria-hidden="true" style={{ fontSize: 21, lineHeight: 1 }}>{l.icon}</span>
+              <span style={{ fontSize: 10, fontWeight: active ? 700 : 500, letterSpacing: 0.2 }}>{l.label}</span>
+            </Link>
+          )
+        })}
+        <button aria-label="More" aria-haspopup="dialog" aria-expanded={menuOpen}
+          onClick={() => setMenuOpen(o => !o)} style={tab(moreActive)}>
+          <span aria-hidden="true" style={{ fontSize: 21, lineHeight: 1 }}>☰</span>
+          <span style={{ fontSize: 10, fontWeight: moreActive ? 700 : 500, letterSpacing: 0.2 }}>More</span>
+        </button>
+      </nav>
+    </>
   )
 }
 
@@ -300,13 +409,13 @@ function AppShell({ children, user, onLogout }) {
         overflowX: 'hidden',
       }}>
         {mobile && (
-          <div style={{ fontSize: 13, fontWeight: 800, color: T.text, marginBottom: 16, letterSpacing: 0.5, textTransform: 'uppercase' }}>
+          <h1 style={{ fontSize: 13, fontWeight: 800, color: T.text, marginBottom: 16, letterSpacing: 0.5, textTransform: 'uppercase' }}>
             {user.company_name || 'Dispatch Portal'}
-          </div>
+          </h1>
         )}
         {children}
       </main>
-      {mobile && <BottomNav onLogout={onLogout} />}
+      {mobile && <BottomNav user={user} onLogout={onLogout} />}
     </div>
   )
 }
