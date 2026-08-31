@@ -45,12 +45,28 @@ export default function Inbox() {
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [connecting, setConnecting] = useState(false)
+  const [notice, setNotice] = useState(null)   // { kind, text } from the OAuth return
   const [, forceUpdate] = useState(0)
 
   useEffect(() => {
     const fn = () => forceUpdate(n => n + 1)
     window.addEventListener('themechange', fn)
     return () => window.removeEventListener('themechange', fn)
+  }, [])
+
+  // Surface the result of the Google OAuth round-trip (?gmail=… on return).
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search).get('gmail')
+    if (!p) return
+    const map = {
+      connected: { kind: 'ok',  text: 'Gmail connected — syncing your broker mail now.' },
+      denied:    { kind: 'err', text: 'Sign-in was cancelled. If you saw a "Google hasn’t verified this app" screen, click Advanced → Continue to get past it.' },
+      no_refresh:{ kind: 'err', text: 'Google didn’t return a refresh token. Remove prior access at myaccount.google.com/permissions, then Connect again.' },
+      failed:    { kind: 'err', text: 'Connection failed. Please click Connect Gmail and try once more.' },
+    }
+    setNotice(map[p] || { kind: 'err', text: `Gmail: ${p}` })
+    // Clean the param out of the URL so it doesn't re-show on refresh.
+    window.history.replaceState({}, '', '/inbox')
   }, [])
 
   async function refresh() {
@@ -83,8 +99,17 @@ export default function Inbox() {
     try { setMessages(await api.gmailThread(t.thread_id)) } catch { setMessages([]) }
   }
 
+  const noticeBanner = notice && (
+    <div style={{
+      maxWidth: 560, margin: '16px auto 0', fontSize: 13, borderRadius: 10, padding: '11px 14px',
+      background: (notice.kind === 'ok' ? T.green : T.red) + '15',
+      border: `1px solid ${(notice.kind === 'ok' ? T.green : T.red)}40`,
+      color: notice.kind === 'ok' ? T.green : T.red,
+    }}>{notice.text}</div>
+  )
+
   if (loading) return <div style={{ color: T.text3, padding: '40px 0', textAlign: 'center' }}>Loading…</div>
-  if (!status?.connected) return <ConnectPrompt status={status} onConnect={connect} connecting={connecting} />
+  if (!status?.connected) return <div>{noticeBanner}<ConnectPrompt status={status} onConnect={connect} connecting={connecting} /></div>
 
   const list = (
     <div style={{ flex: mobile ? '1' : '0 0 340px', minWidth: 0, borderRight: mobile ? 'none' : `1px solid ${T.sep}` }}>

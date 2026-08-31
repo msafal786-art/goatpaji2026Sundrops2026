@@ -2208,10 +2208,10 @@ async function syncGmail(limit = 40) {
 }
 
 app.get('/api/gmail/status', auth, requireAdmin, (req, res) => {
-  const row = db.prepare('SELECT email_address, connected_at, last_synced_at, last_error, active FROM email_integration WHERE id = 1').get();
+  const row = db.prepare('SELECT email_address, refresh_token, connected_at, last_synced_at, last_error, active FROM email_integration WHERE id = 1').get();
   res.json({
     configured: gmail.isConfigured(),          // env credentials present
-    connected: !!(row && row.refresh_token !== null && row.email_address),
+    connected: !!(row && row.refresh_token),   // the token is the real signal
     email: row?.email_address || null,
     connected_at: row?.connected_at || null,
     last_synced_at: row?.last_synced_at || null,
