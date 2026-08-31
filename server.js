@@ -2231,8 +2231,10 @@ app.get('/api/gmail/auth-url', auth, requireAdmin, (req, res) => {
 // JWT header. We authorize it by verifying the signed `state` instead.
 app.get('/api/gmail/callback', async (req, res) => {
   const { code, state, error } = req.query;
-  const back = (msg) => res.redirect(`${gmail.baseUrl()}/inbox?gmail=${encodeURIComponent(msg)}`);
-  if (error) return back('denied');
+  const back = (msg, detail) => res.redirect(
+    `${gmail.baseUrl()}/inbox?gmail=${encodeURIComponent(msg)}` +
+    (detail ? `&reason=${encodeURIComponent(String(detail).slice(0, 200))}` : ''));
+  if (error) return back('denied', error);
   try {
     const claims = jwt.verify(state, process.env.JWT_SECRET);
     if (claims.purpose !== 'gmail_oauth') throw new Error('bad state');
@@ -2255,7 +2257,7 @@ app.get('/api/gmail/callback', async (req, res) => {
     return back('connected');
   } catch (e) {
     console.error('[gmail] callback error', e.message);
-    return back('failed');
+    return back('failed', e.message);
   }
 });
 

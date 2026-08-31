@@ -56,7 +56,9 @@ export default function Inbox() {
 
   // Surface the result of the Google OAuth round-trip (?gmail=… on return).
   useEffect(() => {
-    const p = new URLSearchParams(window.location.search).get('gmail')
+    const params = new URLSearchParams(window.location.search)
+    const p = params.get('gmail')
+    const reason = params.get('reason')
     if (!p) return
     const map = {
       connected: { kind: 'ok',  text: 'Gmail connected — syncing your broker mail now.' },
@@ -64,7 +66,8 @@ export default function Inbox() {
       no_refresh:{ kind: 'err', text: 'Google didn’t return a refresh token. Remove prior access at myaccount.google.com/permissions, then Connect again.' },
       failed:    { kind: 'err', text: 'Connection failed. Please click Connect Gmail and try once more.' },
     }
-    setNotice(map[p] || { kind: 'err', text: `Gmail: ${p}` })
+    const base = map[p] || { kind: 'err', text: `Gmail: ${p}` }
+    setNotice(reason ? { ...base, text: `${base.text}  (details: ${reason})` } : base)
     // Clean the param out of the URL so it doesn't re-show on refresh.
     window.history.replaceState({}, '', '/inbox')
   }, [])
