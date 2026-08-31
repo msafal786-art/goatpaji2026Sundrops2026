@@ -2,6 +2,7 @@ import React, { useEffect, useState, lazy, Suspense } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api.js'
 import { useAuth } from '../AuthContext.jsx'
+import { isAdmin } from '../permissions.js'
 import { T, STATUS } from '../theme.js'
 import { useIsMobile } from '../hooks/useIsMobile.js'
 
@@ -168,6 +169,7 @@ export default function Dashboard() {
   const canRevenue = user.role === 'company_owner'
     || (user.role === 'dispatcher' && !user.company_id)
     || !!user.can_see_revenue
+  const admin = isAdmin(user)   // "ready to invoice" strip is main-dispatch only
 
   function fetchAll() {
     api.stats().then(setStats)
@@ -311,7 +313,7 @@ export default function Dashboard() {
       )}
 
       {/* To-Do strip */}
-      {dash && (dash.needsDriver > 0 || dash.toInvoice?.count > 0) && (
+      {dash && (dash.needsDriver > 0 || (admin && dash.toInvoice?.count > 0)) && (
         <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
           {dash.needsDriver > 0 && (
             <div onClick={() => navigate('/loads')} style={{ cursor: 'pointer', background: T.orange + '15', border: `1px solid ${T.orange}40`, borderRadius: 10, padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -322,7 +324,7 @@ export default function Dashboard() {
               </div>
             </div>
           )}
-          {dash.toInvoice?.count > 0 && (
+          {admin && dash.toInvoice?.count > 0 && (
             <div onClick={() => navigate('/loads')} style={{ cursor: 'pointer', background: T.green + '12', border: `1px solid ${T.green}40`, borderRadius: 10, padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
               <span style={{ fontSize: 20 }}>📋</span>
               <div>

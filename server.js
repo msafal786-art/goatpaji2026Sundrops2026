@@ -474,20 +474,20 @@ function buildUserProfile(userId) {
   if (user.role === 'driver') {
     user.driver = db.prepare('SELECT * FROM drivers WHERE user_id = ?').get(user.id);
   }
-  // Header/branding name: admin runs the whole operation (GOAT INC); a scoped
-  // user (company_owner or scoped dispatcher) sees their own carrier's name,
-  // which company_name can't provide when they're scoped via allowed_company_ids.
+  // Company list (drives the multi-company switcher) — the scoped carriers a
+  // user belongs to. Empty for admin (sees everything).
   const scope = scopeCompanyIds(user);
-  if (scope === null) {
+  user.companies = (scope && scope.length > 0)
+    ? db.prepare(`SELECT id, name FROM companies WHERE id IN (${scope.map(() => '?').join(',')}) ORDER BY name`).all(...scope)
+    : [];
+
+  // Header/branding: every `dispatcher` is in-house Goat Inc staff (admin OR a
+  // scoped dispatcher covering carriers) → they brand as "Goat Inc". Only a
+  // `company_owner` is an external carrier, so they see their own carrier name.
+  if (user.role === 'dispatcher') {
     user.portal_name = 'Goat Inc';
-    user.companies = [];        // admin sees all; no switcher
-  } else if (scope.length > 0) {
-    // Full {id,name} list powers the multi-company switcher on the client.
-    user.companies = db.prepare(`SELECT id, name FROM companies WHERE id IN (${scope.map(() => '?').join(',')}) ORDER BY name`).all(...scope);
-    user.portal_name = user.companies.map(c => c.name).join(' · ') || user.company_name || 'Dispatch Portal';
   } else {
-    user.portal_name = user.company_name || 'Dispatch Portal';
-    user.companies = [];
+    user.portal_name = user.companies.map(c => c.name).join(' · ') || user.company_name || 'Dispatch Portal';
   }
   return user;
 }

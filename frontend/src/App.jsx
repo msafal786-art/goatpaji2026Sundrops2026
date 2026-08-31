@@ -487,7 +487,7 @@ function AppShell({ children, user, onLogout }) {
       }}>
         {mobile && (
           <h1 style={{ fontSize: 13, fontWeight: 800, color: T.text, marginBottom: 16, letterSpacing: 0.5, textTransform: 'uppercase' }}>
-            {user.company_name || 'Dispatch Portal'}
+            {user.portal_name || user.company_name || 'Dispatch Portal'}
           </h1>
         )}
         {children}
