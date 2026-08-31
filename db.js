@@ -317,6 +317,50 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action);
 `);
 
+// ── Email integration (Gmail) ────────────────────────────────────────────────
+// A single connected mailbox (the Goat Inc inbox) whose broker communication is
+// surfaced in the portal. One row, id=1. refresh_token is the long-lived grant;
+// access_token is cached and refreshed as needed.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS email_integration (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    provider TEXT DEFAULT 'gmail',
+    email_address TEXT,
+    refresh_token TEXT,
+    access_token TEXT,
+    access_token_expiry TEXT,
+    connected_by INTEGER,
+    connected_at TEXT,
+    last_synced_at TEXT,
+    last_error TEXT,
+    active INTEGER DEFAULT 1
+  );
+
+  -- Cached copy of synced messages so the inbox renders without hitting Gmail
+  -- on every view. body_text is the extracted plain text; direction marks
+  -- whether we sent it (SENT label) or received it.
+  CREATE TABLE IF NOT EXISTS emails (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    gmail_id TEXT UNIQUE,
+    thread_id TEXT,
+    direction TEXT,
+    from_name TEXT,
+    from_email TEXT,
+    to_email TEXT,
+    subject TEXT,
+    snippet TEXT,
+    body_text TEXT,
+    internal_date TEXT,
+    has_attachments INTEGER DEFAULT 0,
+    attachments_json TEXT,
+    load_id INTEGER,
+    created_at TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_emails_thread ON emails(thread_id);
+  CREATE INDEX IF NOT EXISTS idx_emails_date ON emails(internal_date);
+  CREATE INDEX IF NOT EXISTS idx_emails_from ON emails(from_email);
+`);
+
 // Drive file ID columns for document tables
 const loadDocCols = db.prepare("PRAGMA table_info(load_docs)").all().map(r => r.name);
 if (!loadDocCols.includes('drive_file_id')) db.prepare('ALTER TABLE load_docs ADD COLUMN drive_file_id TEXT').run();

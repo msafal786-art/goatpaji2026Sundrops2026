@@ -26,6 +26,7 @@ import ChangePassword from './pages/ChangePassword.jsx'
 import Compliance from './pages/Compliance.jsx'
 import Calendar from './pages/Calendar.jsx'
 import Audit from './pages/Audit.jsx'
+import Inbox from './pages/Inbox.jsx'
 
 const NAV_H = 44
 
@@ -174,7 +175,7 @@ function TopNav({ user, onLogout }) {
     // Revenue only appears for users allowed to see it — otherwise it's absent,
     // not a button that leads to a "not allowed" wall.
     ...(canSeeRevenue(user) ? [{ to: '/revenue', label: 'Revenue' }] : []),
-    ...(isAdmin ? [{ to: '/companies', label: 'Companies' }, { to: '/users', label: 'Users' }, { to: '/audit', label: 'Access Log' }] : []),
+    ...(isAdmin ? [{ to: '/inbox', label: 'Broker Inbox' }, { to: '/companies', label: 'Companies' }, { to: '/users', label: 'Users' }, { to: '/audit', label: 'Access Log' }] : []),
     { to: '/settings',        label: 'Settings' },
   ]
 
@@ -318,6 +319,7 @@ const MORE_SECTIONS = [
     { to: '/revenue',         icon: '$', label: 'Revenue' },
   ]},
   { title: 'Admin', admin: true, items: [
+    { to: '/inbox',           icon: '✉', label: 'Broker Inbox' },
     { to: '/companies',       icon: '▤', label: 'Companies' },
     { to: '/users',           icon: '◉', label: 'Users' },
     { to: '/audit',           icon: '⚑', label: 'Access Log' },
@@ -625,6 +627,7 @@ export default function App() {
                   through to the redirect below rather than showing a blocked page. */}
               {isAdminUser(effective) && <Route path="/companies" element={<Companies />} />}
               {isAdminUser(effective) && <Route path="/users" element={<Users />} />}
+              {isAdminUser(effective) && <Route path="/inbox" element={<Inbox />} />}
               {isAdminUser(effective) && <Route path="/audit" element={<Audit />} />}
               <Route path="/compliance" element={<Compliance />} />
               <Route path="/calendar" element={<Calendar />} />

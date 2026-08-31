@@ -179,6 +179,14 @@ export const api = {
   },
   // Admin: fetch a user's portal profile for "view as" (runs as the real admin).
   viewProfile: (id) => req('GET', `/users/${id}/view-profile`, null, false, { skipViewAs: true }),
+
+  // Gmail / broker inbox (admin)
+  gmailStatus: () => req('GET', '/gmail/status'),
+  gmailAuthUrl: () => req('GET', '/gmail/auth-url'),
+  gmailSync: () => req('POST', '/gmail/sync', {}, false, { timeout: 60000 }),
+  gmailDisconnect: () => req('POST', '/gmail/disconnect'),
+  gmailThreads: () => req('GET', '/gmail/threads'),
+  gmailThread: (threadId) => req('GET', `/gmail/threads/${threadId}`),
   // Uploads can be a 20 MB scan over a phone connection, and the server also
   // pushes to Drive. No retry — filing the same document twice is worse than
   // an error the dispatcher can act on.

@@ -18,6 +18,7 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const Anthropic = require('@anthropic-ai/sdk');
 const drive = require('./drive.js');
+const gmail = require('./gmail.js');
 
 // If running on Railway with a volume, seed the DB from the bundled file on first deploy
 const VOL_DB = process.env.DB_PATH;
@@ -2166,6 +2167,137 @@ app.get('/api/audit-log', auth, requireAdmin, (req, res) => {
   res.json(rows);
 });
 
+// ── Gmail integration (admin only) ───────────────────────────────────────────
+// A single connected mailbox surfaces broker communication in the portal.
+// Read-only; nothing here can send or modify mail.
+
+// Return a valid access token, refreshing via the stored refresh_token as needed.
+async function gmailAccessToken() {
+  const row = db.prepare('SELECT * FROM email_integration WHERE id = 1').get();
+  if (!row || !row.refresh_token) throw new gmail.GmailError('Gmail not connected', 'reauth');
+  if (row.access_token && row.access_token_expiry &&
+      new Date(row.access_token_expiry).getTime() - Date.now() > 120000) {
+    return row.access_token;
+  }
+  const t = await gmail.refreshAccessToken(row.refresh_token);
+  const expiry = new Date(Date.now() + (t.expires_in - 60) * 1000).toISOString();
+  db.prepare('UPDATE email_integration SET access_token=?, access_token_expiry=?, last_error=NULL WHERE id=1')
+    .run(t.access_token, expiry);
+  return t.access_token;
+}
+
+// Pull recent messages into the local cache. Idempotent (INSERT OR IGNORE on the
+// unique gmail_id), so it's safe to run on a timer and on demand.
+async function syncGmail(limit = 40) {
+  const token = await gmailAccessToken();
+  const ids = await gmail.listMessageIds(token, 'newer_than:30d -in:chats -category:promotions -category:social', limit);
+  const insert = db.prepare(`INSERT OR IGNORE INTO emails
+    (gmail_id, thread_id, direction, from_name, from_email, to_email, subject, snippet, body_text, internal_date, has_attachments, attachments_json)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+  let added = 0;
+  for (const { id } of ids) {
+    if (db.prepare('SELECT 1 FROM emails WHERE gmail_id = ?').get(id)) continue;
+    const m = await gmail.getMessage(token, id);
+    const direction = (m.label_ids || []).includes('SENT') ? 'outbound' : 'inbound';
+    insert.run(m.gmail_id, m.thread_id, direction, m.from_name, m.from_email, m.to_email,
+      m.subject, m.snippet, m.body_text, m.internal_date, m.has_attachments ? 1 : 0, JSON.stringify(m.attachments || []));
+    added++;
+  }
+  db.prepare('UPDATE email_integration SET last_synced_at=?, last_error=NULL WHERE id=1').run(new Date().toISOString());
+  return { added, scanned: ids.length };
+}
+
+app.get('/api/gmail/status', auth, requireAdmin, (req, res) => {
+  const row = db.prepare('SELECT email_address, connected_at, last_synced_at, last_error, active FROM email_integration WHERE id = 1').get();
+  res.json({
+    configured: gmail.isConfigured(),          // env credentials present
+    connected: !!(row && row.refresh_token !== null && row.email_address),
+    email: row?.email_address || null,
+    connected_at: row?.connected_at || null,
+    last_synced_at: row?.last_synced_at || null,
+    last_error: row?.last_error || null,
+  });
+});
+
+// Returns the Google consent URL. `state` is a short-lived signed token so the
+// (header-less) browser callback can prove it came from an admin-initiated flow.
+app.get('/api/gmail/auth-url', auth, requireAdmin, (req, res) => {
+  if (!gmail.isConfigured()) return res.status(400).json({ error: 'GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not set on the server yet' });
+  const state = jwt.sign({ purpose: 'gmail_oauth', admin_id: req.user.id }, process.env.JWT_SECRET, { expiresIn: '10m' });
+  res.json({ url: gmail.buildAuthUrl(state) });
+});
+
+// OAuth redirect target — a top-level browser navigation, so it can't carry the
+// JWT header. We authorize it by verifying the signed `state` instead.
+app.get('/api/gmail/callback', async (req, res) => {
+  const { code, state, error } = req.query;
+  const back = (msg) => res.redirect(`${gmail.baseUrl()}/inbox?gmail=${encodeURIComponent(msg)}`);
+  if (error) return back('denied');
+  try {
+    const claims = jwt.verify(state, process.env.JWT_SECRET);
+    if (claims.purpose !== 'gmail_oauth') throw new Error('bad state');
+    const tok = await gmail.exchangeCode(code);
+    if (!tok.refresh_token) return back('no_refresh'); // happens if user already granted; prompt=consent avoids this
+    // Identify the connected address.
+    let address = null;
+    try {
+      const prof = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/profile', { headers: { Authorization: `Bearer ${tok.access_token}` } }).then(r => r.json());
+      address = prof.emailAddress || null;
+    } catch {}
+    const expiry = new Date(Date.now() + ((tok.expires_in || 3600) - 60) * 1000).toISOString();
+    db.prepare(`INSERT INTO email_integration (id, provider, email_address, refresh_token, access_token, access_token_expiry, connected_by, connected_at, active)
+      VALUES (1,'gmail',?,?,?,?,?,?,1)
+      ON CONFLICT(id) DO UPDATE SET email_address=excluded.email_address, refresh_token=excluded.refresh_token,
+        access_token=excluded.access_token, access_token_expiry=excluded.access_token_expiry,
+        connected_by=excluded.connected_by, connected_at=excluded.connected_at, active=1, last_error=NULL`)
+      .run(address, tok.refresh_token, tok.access_token, expiry, claims.admin_id, new Date().toISOString());
+    syncGmail(40).catch(e => console.error('[gmail] initial sync failed', e.message));
+    return back('connected');
+  } catch (e) {
+    console.error('[gmail] callback error', e.message);
+    return back('failed');
+  }
+});
+
+app.post('/api/gmail/sync', auth, requireAdmin, async (req, res) => {
+  try {
+    const result = await syncGmail(Number(req.body?.limit) || 40);
+    res.json(result);
+  } catch (e) {
+    db.prepare('UPDATE email_integration SET last_error=? WHERE id=1').run(e.message);
+    res.status(e.kind === 'reauth' ? 401 : 500).json({ error: e.message, kind: e.kind });
+  }
+});
+
+app.post('/api/gmail/disconnect', auth, requireAdmin, (req, res) => {
+  db.prepare('DELETE FROM email_integration WHERE id = 1').run();
+  res.json({ ok: true });
+});
+
+// Threads = latest message per Gmail thread, most recent first.
+app.get('/api/gmail/threads', auth, requireAdmin, (req, res) => {
+  const rows = db.prepare(`
+    SELECT e.thread_id, e.from_name, e.from_email, e.to_email, e.subject, e.snippet,
+           e.internal_date, e.direction, e.has_attachments, e.load_id,
+           (SELECT COUNT(*) FROM emails x WHERE x.thread_id = e.thread_id) AS msg_count
+    FROM emails e
+    JOIN (SELECT thread_id, MAX(internal_date) md FROM emails GROUP BY thread_id) t
+      ON e.thread_id = t.thread_id AND e.internal_date = t.md
+    ORDER BY e.internal_date DESC
+    LIMIT 100
+  `).all();
+  res.json(rows);
+});
+
+app.get('/api/gmail/threads/:threadId', auth, requireAdmin, (req, res) => {
+  const rows = db.prepare(`
+    SELECT id, gmail_id, direction, from_name, from_email, to_email, subject, body_text,
+           snippet, internal_date, has_attachments, attachments_json, load_id
+    FROM emails WHERE thread_id = ? ORDER BY internal_date ASC
+  `).all(req.params.threadId);
+  res.json(rows);
+});
+
 // ── Driver change ────────────────────────────────────────────────────────────
 app.put('/api/loads/:id/change-driver', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
   const { driver_id } = req.body;
@@ -2513,6 +2645,24 @@ app.use((err, req, res, next) => {
   console.error('[server error]', err.message);
   res.status(500).json({ error: 'Internal server error' });
 });
+
+// Background Gmail sync — pulls new broker mail into the cache every few minutes
+// when a mailbox is connected. Never overlaps or throws out of the tick.
+if (process.env.GMAIL_SYNC_ENABLED !== 'false') {
+  const GMAIL_SYNC_MINUTES = Number(process.env.GMAIL_SYNC_MINUTES) || 5;
+  let gmailSyncing = false;
+  setInterval(async () => {
+    if (gmailSyncing) return;
+    const row = db.prepare('SELECT refresh_token FROM email_integration WHERE id = 1').get();
+    if (!row || !row.refresh_token) return;
+    gmailSyncing = true;
+    try { await syncGmail(40); }
+    catch (e) {
+      db.prepare('UPDATE email_integration SET last_error=? WHERE id=1').run(e.message);
+      console.error('[gmail] background sync error:', e.message);
+    } finally { gmailSyncing = false; }
+  }, GMAIL_SYNC_MINUTES * 60 * 1000);
+}
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => console.log(`Dispatch Portal running on http://localhost:${PORT}`));
