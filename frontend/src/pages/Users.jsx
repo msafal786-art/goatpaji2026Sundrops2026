@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { api } from '../api.js'
+import { api, setViewAs } from '../api.js'
 import { useAuth } from '../AuthContext.jsx'
 import { T } from '../theme.js'
 
@@ -169,6 +169,13 @@ export default function Users() {
                       </div>
                     )}
                     <div style={{ display: 'flex', gap: 6, marginTop: 8, justifyContent: 'flex-end' }}>
+                      {/* View this user's portal exactly as they see it (read-only). */}
+                      {!isMe && u.role !== 'driver' && (
+                        <button onClick={() => { setViewAs(u.id); window.location.assign('/loads') }}
+                          style={{ padding: '5px 12px', background: T.purple + '18', border: `1px solid ${T.purple}55`, color: T.purple, borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                          View portal
+                        </button>
+                      )}
                       <button onClick={() => openEdit(u)} style={{ padding: '5px 12px', background: T.bg2, border: `1px solid ${T.sep}`, color: T.text2, borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Edit</button>
                       {!isMe && (
                         <button onClick={() => handleDelete(u)} style={{ padding: '5px 12px', background: T.red + '15', border: `1px solid ${T.red}40`, color: T.red, borderRadius: 7, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Remove</button>

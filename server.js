@@ -236,6 +236,24 @@ function auth(req, res, next) {
         if (ids.includes(active)) req.user.allowed_company_ids = JSON.stringify([active]);
       } catch {}
     }
+    // View-as: an admin (only) may preview any user's portal. We swap the target
+    // user's scoping fields onto req.user so scopeCompanyIds()/requireAdmin()/etc.
+    // reflect what that user would see. Strictly read-only — the preview can
+    // never write, so no action taken here can affect real data.
+    const viewAs = Number(req.headers['x-view-as']);
+    if (viewAs && viewAs !== req.user.id) {
+      const requesterIsAdmin = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
+      if (requesterIsAdmin) {
+        if (req.method !== 'GET') return res.status(403).json({ error: 'Read-only while viewing as another user' });
+        const target = db.prepare('SELECT id, role, company_id, allowed_company_ids FROM users WHERE id = ?').get(viewAs);
+        if (target) {
+          req.viewingAs = target.id;
+          req.user.role = target.role;
+          req.user.company_id = target.company_id;
+          req.user.allowed_company_ids = target.allowed_company_ids || null;
+        }
+      }
+    }
     next();
   } catch {
     res.status(401).json({ error: 'Invalid token' });
@@ -442,20 +460,24 @@ app.post('/api/refresh', auth, (req, res) => {
   res.json({ token });
 });
 
-app.get('/api/me', auth, (req, res) => {
+// Build the /me-shaped profile for a given user id — role, scope, branding, and
+// the company list that drives client gating. Used both for the logged-in user
+// and (by admins) to preview any user's portal via "view as".
+function buildUserProfile(userId) {
   const user = db.prepare(`
     SELECT u.id, u.username, u.role, u.company_id, u.full_name, u.email, u.phone,
            u.can_see_revenue, u.must_change_password, u.allowed_company_ids, c.name as company_name
     FROM users u LEFT JOIN companies c ON u.company_id = c.id
     WHERE u.id = ?
-  `).get(req.user.id);
+  `).get(userId);
+  if (!user) return null;
   if (user.role === 'driver') {
     user.driver = db.prepare('SELECT * FROM drivers WHERE user_id = ?').get(user.id);
   }
   // Header/branding name: admin runs the whole operation (GOAT INC); a scoped
   // user (company_owner or scoped dispatcher) sees their own carrier's name,
   // which company_name can't provide when they're scoped via allowed_company_ids.
-  const scope = scopeCompanyIds(req.user);
+  const scope = scopeCompanyIds(user);
   if (scope === null) {
     user.portal_name = 'Goat Inc';
     user.companies = [];        // admin sees all; no switcher
@@ -467,7 +489,21 @@ app.get('/api/me', auth, (req, res) => {
     user.portal_name = user.company_name || 'Dispatch Portal';
     user.companies = [];
   }
+  return user;
+}
+
+app.get('/api/me', auth, (req, res) => {
+  const user = buildUserProfile(req.user.id);
+  if (!user) return res.status(404).json({ error: 'Not found' });
   res.json(user);
+});
+
+// Admin-only: fetch any user's portal profile, so an admin can preview exactly
+// what that user sees ("view as"). Read-only — the preview never mutates.
+app.get('/api/users/:id/view-profile', auth, requireAdmin, (req, res) => {
+  const profile = buildUserProfile(Number(req.params.id));
+  if (!profile) return res.status(404).json({ error: 'User not found' });
+  res.json(profile);
 });
 
 // ── Change password ───────────────────────────────────────────────────────────

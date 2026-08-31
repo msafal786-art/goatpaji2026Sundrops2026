@@ -15,6 +15,17 @@ export function setActiveCompany(id) {
 }
 export function clearActiveCompany() { localStorage.removeItem('activeCompany') }
 
+// ── View-as (admin-only, read-only portal preview) ───────────────────────────
+// When set, every request carries X-View-As so the server scopes data to the
+// target user. Control-plane calls (the profile fetch itself) pass
+// { skipViewAs: true } so they run as the real admin.
+export function getViewAs() { return localStorage.getItem('viewAs') || '' }
+export function setViewAs(id) {
+  if (id) localStorage.setItem('viewAs', String(id))
+  else localStorage.removeItem('viewAs')
+}
+export function clearViewAs() { localStorage.removeItem('viewAs') }
+
 // Silently refresh token if it expires in < 8 hours
 export async function maybeRefreshToken() {
   const token = getToken()
@@ -58,6 +69,8 @@ async function req(method, path, body, isForm = false, opts = {}) {
     if (token) headers['Authorization'] = `Bearer ${token}`
     const activeCompany = getActiveCompany()
     if (activeCompany) headers['X-Active-Company'] = activeCompany
+    const viewAs = getViewAs()
+    if (viewAs && !opts.skipViewAs) headers['X-View-As'] = viewAs
     if (!isForm) headers['Content-Type'] = 'application/json'
 
     const ctrl = new AbortController()
@@ -164,6 +177,8 @@ export const api = {
     const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString()
     return req('GET', `/audit-log${q ? `?${q}` : ''}`)
   },
+  // Admin: fetch a user's portal profile for "view as" (runs as the real admin).
+  viewProfile: (id) => req('GET', `/users/${id}/view-profile`, null, false, { skipViewAs: true }),
   // Uploads can be a 20 MB scan over a phone connection, and the server also
   // pushes to Drive. No retry — filing the same document twice is worse than
   // an error the dispatcher can act on.

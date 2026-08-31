@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, Link, useLocation, useNavigate } from 'react-router-dom'
-import { api, maybeRefreshToken, getActiveCompany, setActiveCompany, clearActiveCompany } from './api.js'
+import { api, maybeRefreshToken, getActiveCompany, setActiveCompany, clearActiveCompany, getViewAs, clearViewAs } from './api.js'
 import { isAdmin as isAdminUser, canSeeRevenue, userCompanies, isMultiCompany } from './permissions.js'
 import { T, applyTheme } from './theme.js'
 import { ThemeProvider } from './ThemeContext.jsx'
@@ -449,6 +449,30 @@ function BottomNav({ user, onLogout }) {
   )
 }
 
+// ── View-as banner (admin previewing another user's portal) ──────────────────
+function ViewAsBanner({ target, onExit }) {
+  const mobile = useIsMobile()
+  return (
+    <div role="status" style={{
+      position: 'fixed', left: '50%', transform: 'translateX(-50%)',
+      bottom: mobile ? 'calc(74px + env(safe-area-inset-bottom))' : 24,
+      zIndex: 400, display: 'flex', alignItems: 'center', gap: 12, maxWidth: '92vw',
+      background: T.purple, color: '#fff', padding: '9px 10px 9px 16px',
+      borderRadius: 999, boxShadow: '0 8px 30px rgba(0,0,0,0.38)',
+    }}>
+      <span aria-hidden="true" style={{ fontSize: 15 }}>👁</span>
+      <span style={{ fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+        Viewing as {target.full_name || target.username} · read-only
+      </span>
+      <button onClick={onExit} style={{
+        background: 'rgba(255,255,255,0.22)', border: '1px solid rgba(255,255,255,0.35)',
+        color: '#fff', fontSize: 12, fontWeight: 700, padding: '6px 14px', borderRadius: 999,
+        cursor: 'pointer', flexShrink: 0,
+      }}>Exit</button>
+    </div>
+  )
+}
+
 // ── App shell ──────────────────────────────────────────────────────────────────
 function AppShell({ children, user, onLogout }) {
   const mobile = useIsMobile()
@@ -474,7 +498,8 @@ function AppShell({ children, user, onLogout }) {
 }
 
 export default function App() {
-  const [user, setUser] = useState(null)
+  const [user, setUser] = useState(null)          // the real signed-in user
+  const [viewAs, setViewAs] = useState(null)       // admin previewing this user's portal
   const [loading, setLoading] = useState(true)
   const [slowLoad, setSlowLoad] = useState(false)
   const [, forceUpdate] = useState(0)
@@ -493,7 +518,14 @@ export default function App() {
       const slow = setTimeout(() => setSlowLoad(true), 4000)
       const bail = setTimeout(() => { localStorage.removeItem('token'); setLoading(false) }, 22000)
       maybeRefreshToken().finally(() =>
-        api.me().then(setUser)
+        api.me().then(me => {
+          setUser(me)
+          // Resume an in-progress "view as" preview after a reload/navigation.
+          const va = getViewAs()
+          if (va && isAdminUser(me)) {
+            api.viewProfile(va).then(setViewAs).catch(() => clearViewAs())
+          }
+        })
           .catch(() => localStorage.removeItem('token'))
           .finally(() => { clearTimeout(slow); clearTimeout(bail); setLoading(false) })
       )
@@ -509,8 +541,17 @@ export default function App() {
 
   function signOut() {
     clearActiveCompany()
+    clearViewAs()
     localStorage.removeItem('token')
+    setViewAs(null)
     setUser(null)
+  }
+
+  // Leave the preview and return to the admin's own portal. A full reload is the
+  // simplest way to re-fetch every page's data without the X-View-As scope.
+  function exitViewAs() {
+    clearViewAs()
+    window.location.assign('/users')
   }
 
   function handleLogout() {
@@ -551,9 +592,13 @@ export default function App() {
     </div>
   )
 
+  // While previewing, the whole portal renders as the target user; login,
+  // password-change and driver gating stay on the real signed-in admin.
+  const effective = viewAs || user
+
   return (
     <ThemeProvider>
-    <AuthContext.Provider value={{ user, setUser }}>
+    <AuthContext.Provider value={{ user: effective, setUser }}>
       <BrowserRouter>
         {!user ? (
           <Routes>
@@ -566,7 +611,8 @@ export default function App() {
         ) : user.role === 'driver' ? (
           <Routes><Route path="*" element={<DriverView user={user} onLogout={handleLogout} />} /></Routes>
         ) : (
-          <AppShell user={user} onLogout={handleLogout}>
+          <AppShell user={effective} onLogout={handleLogout}>
+            {viewAs && <ViewAsBanner target={viewAs} onExit={exitViewAs} />}
             <Routes>
               <Route path="/" element={<Navigate to="/loads" />} />
               <Route path="/dashboard" element={<Dashboard />} />
@@ -577,15 +623,15 @@ export default function App() {
               {/* Admin-only. Gated on the real admin check (not just role), so a
                   scoped dispatcher can't reach these by typing the URL — it falls
                   through to the redirect below rather than showing a blocked page. */}
-              {isAdminUser(user) && <Route path="/companies" element={<Companies />} />}
-              {isAdminUser(user) && <Route path="/users" element={<Users />} />}
-              {isAdminUser(user) && <Route path="/audit" element={<Audit />} />}
+              {isAdminUser(effective) && <Route path="/companies" element={<Companies />} />}
+              {isAdminUser(effective) && <Route path="/users" element={<Users />} />}
+              {isAdminUser(effective) && <Route path="/audit" element={<Audit />} />}
               <Route path="/compliance" element={<Compliance />} />
               <Route path="/calendar" element={<Calendar />} />
               <Route path="/search" element={<Search />} />
               <Route path="/recommendations" element={<Recommendations />} />
               <Route path="/deadhead" element={<Deadhead />} />
-              {canSeeRevenue(user) && <Route path="/revenue" element={<Revenue />} />}
+              {canSeeRevenue(effective) && <Route path="/revenue" element={<Revenue />} />}
               <Route path="/payroll" element={<Payroll />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="*" element={<Navigate to="/loads" />} />
