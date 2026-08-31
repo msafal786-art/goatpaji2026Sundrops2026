@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, Link, useLocation, useNavigate } from 'react-router-dom'
-import { api, maybeRefreshToken } from './api.js'
+import { api, maybeRefreshToken, getActiveCompany, setActiveCompany, clearActiveCompany } from './api.js'
+import { isAdmin as isAdminUser, canSeeRevenue, userCompanies, isMultiCompany } from './permissions.js'
 import { T, applyTheme } from './theme.js'
 import { ThemeProvider } from './ThemeContext.jsx'
 import { AuthContext } from './AuthContext.jsx'
@@ -24,6 +25,7 @@ import Users from './pages/Users.jsx'
 import ChangePassword from './pages/ChangePassword.jsx'
 import Compliance from './pages/Compliance.jsx'
 import Calendar from './pages/Calendar.jsx'
+import Audit from './pages/Audit.jsx'
 
 const NAV_H = 44
 
@@ -117,10 +119,36 @@ function NavItem({ label, to, mainTo, children }) {
   )
 }
 
+// ── Company switcher (multi-company scoped users) ────────────────────────────
+// Lets a user who belongs to several carriers view one at a time (or all).
+// Changing it re-fetches everything the simplest reliable way: a full reload,
+// so every page picks up the new X-Active-Company scope.
+function CompanySwitcher({ user, compact }) {
+  const companies = userCompanies(user)
+  if (!isMultiCompany(user)) return null
+  const active = getActiveCompany()
+  function onChange(e) {
+    setActiveCompany(e.target.value)
+    window.location.reload()
+  }
+  return (
+    <select value={active} onChange={onChange} aria-label="Active company"
+      style={{
+        maxWidth: compact ? '100%' : 200, height: compact ? 40 : 30,
+        padding: '0 10px', borderRadius: 8, cursor: 'pointer',
+        background: T.bg2, color: T.text, border: `1px solid ${T.sep}`,
+        fontSize: compact ? 14 : 12, fontWeight: 600, width: compact ? '100%' : 'auto',
+      }}>
+      <option value="">All companies</option>
+      {companies.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+    </select>
+  )
+}
+
 // ── Desktop top nav ────────────────────────────────────────────────────────────
 function TopNav({ user, onLogout }) {
   const loc = useLocation()
-  const isAdmin = user.role === 'dispatcher' && !user.company_id && !user.allowed_company_ids
+  const isAdmin = isAdminUser(user)
   const [onlineUsers, setOnlineUsers] = useState([])
   const [onlineOpen, setOnlineOpen] = useState(false)
   const onlineRef = useRef()
@@ -143,8 +171,10 @@ function TopNav({ user, onLogout }) {
     { to: '/compliance',      label: 'Compliance' },
     { to: '/recommendations', label: 'Lanes' },
     { to: '/deadhead',        label: 'Deadhead' },
-    { to: '/revenue',         label: 'Revenue' },
-    ...(isAdmin ? [{ to: '/companies', label: 'Companies' }, { to: '/users', label: 'Users' }] : []),
+    // Revenue only appears for users allowed to see it — otherwise it's absent,
+    // not a button that leads to a "not allowed" wall.
+    ...(canSeeRevenue(user) ? [{ to: '/revenue', label: 'Revenue' }] : []),
+    ...(isAdmin ? [{ to: '/companies', label: 'Companies' }, { to: '/users', label: 'Users' }, { to: '/audit', label: 'Access Log' }] : []),
     { to: '/settings',        label: 'Settings' },
   ]
 
@@ -195,6 +225,13 @@ function TopNav({ user, onLogout }) {
 
       {/* Right: online indicator + user */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 0, borderLeft: `1px solid ${T.sep}`, flexShrink: 0 }}>
+
+        {/* Company switcher — multi-company users only */}
+        {isMultiCompany(user) && (
+          <div style={{ padding: '0 12px', display: 'flex', alignItems: 'center' }}>
+            <CompanySwitcher user={user} />
+          </div>
+        )}
 
         {/* Who's Online — admin */}
         {isAdmin && onlineUsers.length > 0 && (
@@ -283,6 +320,7 @@ const MORE_SECTIONS = [
   { title: 'Admin', admin: true, items: [
     { to: '/companies',       icon: '▤', label: 'Companies' },
     { to: '/users',           icon: '◉', label: 'Users' },
+    { to: '/audit',           icon: '⚑', label: 'Access Log' },
   ]},
   { title: 'Account', items: [
     { to: '/settings',        icon: '⚙', label: 'Settings' },
@@ -290,14 +328,19 @@ const MORE_SECTIONS = [
 ]
 
 function MoreSheet({ user, onClose, onLogout }) {
-  const isAdmin = user.role === 'dispatcher' && !user.company_id && !user.allowed_company_ids
+  const isAdmin = isAdminUser(user)
   const loc = useLocation()
   useEffect(() => {
     function onKey(e) { if (e.key === 'Escape') onClose() }
     document.addEventListener('keydown', onKey)
     return () => document.removeEventListener('keydown', onKey)
   }, [onClose])
-  const sections = MORE_SECTIONS.filter(s => !s.admin || isAdmin)
+  // Hide admin-only sections, and drop Revenue for users not allowed to see it —
+  // the item is absent rather than a locked/"not allowed" tile.
+  const sections = MORE_SECTIONS
+    .filter(s => !s.admin || isAdmin)
+    .map(s => ({ ...s, items: s.items.filter(it => it.to !== '/revenue' || canSeeRevenue(user)) }))
+    .filter(s => s.items.length > 0)
 
   return (
     <div role="dialog" aria-modal="true" aria-label="More menu"
@@ -315,6 +358,16 @@ function MoreSheet({ user, onClose, onLogout }) {
       }}>
         {/* Grab handle */}
         <div style={{ width: 38, height: 4, borderRadius: 4, background: T.text3, opacity: 0.5, margin: '4px auto 14px' }} />
+
+        {/* Company switcher — multi-company users only */}
+        {isMultiCompany(user) && (
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.8, marginBottom: 8, paddingLeft: 4 }}>
+              Company
+            </div>
+            <CompanySwitcher user={user} compact />
+          </div>
+        )}
 
         {sections.map(sec => (
           <div key={sec.title} style={{ marginBottom: 18 }}>
@@ -454,11 +507,34 @@ export default function App() {
     api.me().then(setUser)
   }
 
-  function handleLogout() {
-    if (!window.confirm('Sign out of Dispatch Portal?')) return
+  function signOut() {
+    clearActiveCompany()
     localStorage.removeItem('token')
     setUser(null)
   }
+
+  function handleLogout() {
+    if (!window.confirm('Sign out of Dispatch Portal?')) return
+    signOut()
+  }
+
+  // Auto sign-out after 1 hour of inactivity. Any interaction resets the clock.
+  useEffect(() => {
+    if (!user) return
+    const IDLE_MS = 60 * 60 * 1000
+    let timer
+    const reset = () => {
+      clearTimeout(timer)
+      timer = setTimeout(() => {
+        signOut()
+        alert('You were signed out after 1 hour of inactivity.')
+      }, IDLE_MS)
+    }
+    const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'click']
+    events.forEach(e => window.addEventListener(e, reset, { passive: true }))
+    reset()
+    return () => { clearTimeout(timer); events.forEach(e => window.removeEventListener(e, reset)) }
+  }, [user])
 
   if (loading) return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, height: '100vh', background: T.bg, color: T.text2, fontSize: 14 }}>
@@ -498,14 +574,18 @@ export default function App() {
               <Route path="/loads/:id" element={<LoadDetail />} />
               <Route path="/drivers" element={<Drivers />} />
               <Route path="/trucks" element={<Trucks />} />
-              {user.role === 'dispatcher' && <Route path="/companies" element={<Companies />} />}
-              {user.role === 'dispatcher' && <Route path="/users" element={<Users />} />}
+              {/* Admin-only. Gated on the real admin check (not just role), so a
+                  scoped dispatcher can't reach these by typing the URL — it falls
+                  through to the redirect below rather than showing a blocked page. */}
+              {isAdminUser(user) && <Route path="/companies" element={<Companies />} />}
+              {isAdminUser(user) && <Route path="/users" element={<Users />} />}
+              {isAdminUser(user) && <Route path="/audit" element={<Audit />} />}
               <Route path="/compliance" element={<Compliance />} />
               <Route path="/calendar" element={<Calendar />} />
               <Route path="/search" element={<Search />} />
               <Route path="/recommendations" element={<Recommendations />} />
               <Route path="/deadhead" element={<Deadhead />} />
-              <Route path="/revenue" element={<Revenue />} />
+              {canSeeRevenue(user) && <Route path="/revenue" element={<Revenue />} />}
               <Route path="/payroll" element={<Payroll />} />
               <Route path="/settings" element={<Settings />} />
               <Route path="*" element={<Navigate to="/loads" />} />

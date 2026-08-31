@@ -292,6 +292,31 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_load_activity_load ON load_activity(load_id);
 `);
 
+// Persistent, append-only audit trail for security/oversight — deliberately has
+// NO foreign key to loads, so a record of *who deleted a load* survives the
+// load's deletion (load_activity cascades away with the load and can't). Also
+// holds login/access events (IP, device, coarse location) so the admin can see
+// where and how the portal is being operated.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS audit_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT DEFAULT (datetime('now')),
+    user_id INTEGER,
+    user_name TEXT,
+    role TEXT,
+    company_id INTEGER,
+    action TEXT NOT NULL,
+    detail TEXT,
+    ip TEXT,
+    user_agent TEXT,
+    device_id TEXT,
+    city TEXT,
+    country TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_audit_ts ON audit_log(ts);
+  CREATE INDEX IF NOT EXISTS idx_audit_action ON audit_log(action);
+`);
+
 // Drive file ID columns for document tables
 const loadDocCols = db.prepare("PRAGMA table_info(load_docs)").all().map(r => r.name);
 if (!loadDocCols.includes('drive_file_id')) db.prepare('ALTER TABLE load_docs ADD COLUMN drive_file_id TEXT').run();

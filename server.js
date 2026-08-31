@@ -13,6 +13,7 @@ const rateLimit = require('express-rate-limit');
 const path = require('path');
 const multer = require('multer');
 const fs = require('fs');
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const Anthropic = require('@anthropic-ai/sdk');
@@ -224,6 +225,17 @@ function auth(req, res, next) {
       if (stale) db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(new Date().toISOString(), req.user.id);
       if (u) req.user.allowed_company_ids = u.allowed_company_ids || null;
     } catch {}
+    // Company switcher: a multi-company scoped user may narrow this request to a
+    // single one of their companies via the X-Active-Company header. This flows
+    // through scopeCompanyIds()/companyScopeClause() so every scoped endpoint
+    // honors it automatically. Ignored for admins and for ids outside scope.
+    const active = Number(req.headers['x-active-company']);
+    if (active && req.user.allowed_company_ids) {
+      try {
+        const ids = JSON.parse(req.user.allowed_company_ids).map(Number);
+        if (ids.includes(active)) req.user.allowed_company_ids = JSON.stringify([active]);
+      } catch {}
+    }
     next();
   } catch {
     res.status(401).json({ error: 'Invalid token' });
@@ -248,6 +260,64 @@ function logActivity(loadId, req, action, detail = '') {
   } catch (e) {
     console.error('[activity] failed to log', action, 'for load', loadId, e.message);
   }
+}
+
+// ── Audit log (persistent oversight trail) ───────────────────────────────────
+// The client's real IP, honoring the proxy chain Railway sits behind.
+function clientIp(req) {
+  const xf = (req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  return xf || req.socket?.remoteAddress || req.ip || null;
+}
+
+// Minimal cookie-header parser (we don't pull in cookie-parser for one cookie).
+function parseCookies(req) {
+  const out = {};
+  (req.headers.cookie || '').split(';').forEach(p => {
+    const i = p.indexOf('=');
+    if (i > -1) out[p.slice(0, i).trim()] = decodeURIComponent(p.slice(i + 1).trim());
+  });
+  return out;
+}
+
+// Append an audit record. Never throws. Returns the new row id (or null) so a
+// caller can enrich it — e.g. attach coarse geo once the async lookup returns.
+function logAudit(req, action, detail = '', extra = {}) {
+  try {
+    const u = req?.user || {};
+    const r = db.prepare(`INSERT INTO audit_log
+      (user_id, user_name, role, company_id, action, detail, ip, user_agent, device_id)
+      VALUES (?,?,?,?,?,?,?,?,?)`).run(
+      extra.user_id ?? u.id ?? null,
+      extra.user_name ?? u.full_name ?? null,
+      extra.role ?? u.role ?? null,
+      extra.company_id ?? u.company_id ?? null,
+      action, detail || null,
+      clientIp(req), (req.headers['user-agent'] || '').slice(0, 400),
+      extra.device_id ?? parseCookies(req).did ?? null,
+    );
+    return r.lastInsertRowid;
+  } catch (e) {
+    console.error('[audit] failed to log', action, e.message);
+    return null;
+  }
+}
+
+// Best-effort coarse geolocation from IP. Non-blocking: the login response is
+// already sent; this just enriches the audit row when/if it resolves. Private
+// IPs and lookup failures are silently skipped.
+async function enrichAuditGeo(auditId, ip) {
+  if (!auditId || !ip) return;
+  if (/^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|::1|fc|fd)/i.test(ip)) return;
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 4000);
+    const res = await fetch(`http://ip-api.com/json/${encodeURIComponent(ip)}?fields=status,country,city`, { signal: ctrl.signal });
+    clearTimeout(timer);
+    const j = await res.json();
+    if (j.status === 'success') {
+      db.prepare('UPDATE audit_log SET city = ?, country = ? WHERE id = ?').run(j.city || null, j.country || null, auditId);
+    }
+  } catch { /* geo is best-effort */ }
 }
 
 // Human-readable labels for load statuses, used in the activity trail.
@@ -337,7 +407,26 @@ app.post('/api/login', loginLimiter, (req, res) => {
     process.env.JWT_SECRET,
     { expiresIn: '24h' }
   );
-  console.log(`[login] user=${user.id} role=${user.role} ip=${req.ip} at=${new Date().toISOString()}`);
+
+  // Persistent device cookie: correlates repeat sessions from the same browser
+  // so the admin can tell distinct devices apart in the audit log. Not used for
+  // auth (the JWT is), so it stays a plain httpOnly cookie.
+  let deviceId = parseCookies(req).did;
+  if (!deviceId) {
+    deviceId = crypto.randomUUID();
+    res.cookie('did', deviceId, {
+      httpOnly: true, sameSite: 'lax', secure: true,
+      maxAge: 1000 * 60 * 60 * 24 * 365, path: '/',
+    });
+  }
+
+  // Record where/how the portal was accessed (IP, device, coarse location).
+  const auditId = logAudit(req, 'login',
+    `${user.username} signed in`,
+    { user_id: user.id, user_name: user.full_name || user.username, role: user.role, company_id: user.company_id, device_id: deviceId });
+  enrichAuditGeo(auditId, clientIp(req)); // async, non-blocking
+
+  console.log(`[login] user=${user.id} role=${user.role} ip=${clientIp(req)} at=${new Date().toISOString()}`);
   res.json({ token, role: user.role, full_name: user.full_name, company_id: user.company_id, allowed_company_ids: user.allowed_company_ids || null });
 });
 
@@ -369,12 +458,14 @@ app.get('/api/me', auth, (req, res) => {
   const scope = scopeCompanyIds(req.user);
   if (scope === null) {
     user.portal_name = 'Goat Inc';
+    user.companies = [];        // admin sees all; no switcher
   } else if (scope.length > 0) {
-    const names = db.prepare(`SELECT name FROM companies WHERE id IN (${scope.map(() => '?').join(',')}) ORDER BY name`)
-      .all(...scope).map(r => r.name);
-    user.portal_name = names.join(' · ') || user.company_name || 'Dispatch Portal';
+    // Full {id,name} list powers the multi-company switcher on the client.
+    user.companies = db.prepare(`SELECT id, name FROM companies WHERE id IN (${scope.map(() => '?').join(',')}) ORDER BY name`).all(...scope);
+    user.portal_name = user.companies.map(c => c.name).join(' · ') || user.company_name || 'Dispatch Portal';
   } else {
     user.portal_name = user.company_name || 'Dispatch Portal';
+    user.companies = [];
   }
   res.json(user);
 });
@@ -996,13 +1087,22 @@ app.put('/api/loads/:id', auth, requireRole('dispatcher', 'company_owner'), (req
   res.json(db.prepare('SELECT l.*, d.full_name as driver_name, d.phone as driver_phone, t.tractor_number, t.trailer_number as truck_trailer, c.name as company_name FROM loads l LEFT JOIN drivers d ON l.driver_id = d.id LEFT JOIN trucks t ON l.truck_id = t.id LEFT JOIN companies c ON l.company_id = c.id WHERE l.id = ?').get(req.params.id));
 });
 
-app.delete('/api/loads/:id', auth, requireRole('dispatcher'), (req, res) => {
-  const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
-  if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
+app.delete('/api/loads/:id', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
   const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
-  if (load?.truck_id) db.prepare("UPDATE trucks SET status = 'available' WHERE id = ?").run(load.truck_id);
+  if (!load) return res.status(404).json({ error: 'Not found' });
+  // Scoped users (company owners / scoped dispatchers) may delete their own
+  // company's loads; admin may delete any. The load-scoped activity trail
+  // cascade-deletes with the load, so the permanent "who deleted this" record
+  // goes to the audit_log, which has no FK to loads.
+  if (!userCanAccessCompany(req.user, load.company_id))
+    return res.status(403).json({ error: 'Forbidden' });
+  logAudit(req, 'load_deleted',
+    `Deleted load${load.load_number ? ' #' + load.load_number : ' (ID ' + load.id + ')'}` +
+    `${load.broker_name ? ' — ' + load.broker_name : ''}`,
+    { company_id: load.company_id });
+  if (load.truck_id) db.prepare("UPDATE trucks SET status = 'available' WHERE id = ?").run(load.truck_id);
   db.prepare('DELETE FROM loads WHERE id = ?').run(req.params.id);
-  syncDriverStatus(load?.driver_id); // after the delete, so this load no longer counts
+  syncDriverStatus(load.driver_id); // after the delete, so this load no longer counts
   res.json({ ok: true });
 });
 
@@ -2016,6 +2116,20 @@ app.get('/api/active-users', auth, (req, res) => {
   res.json(users);
 });
 
+// ── Audit log (admin only) ───────────────────────────────────────────────────
+// Where/how the portal is being operated (logins + locations) and a permanent
+// record of destructive actions (load deletions). Admin-only oversight.
+app.get('/api/audit-log', auth, requireAdmin, (req, res) => {
+  const action = req.query.action;                       // optional filter
+  const limit = Math.min(Number(req.query.limit) || 200, 500);
+  const where = action ? 'WHERE action = ?' : '';
+  const rows = db.prepare(
+    `SELECT id, ts, user_id, user_name, role, company_id, action, detail, ip, user_agent, device_id, city, country
+     FROM audit_log ${where} ORDER BY ts DESC, id DESC LIMIT ?`
+  ).all(...(action ? [action, limit] : [limit]));
+  res.json(rows);
+});
+
 // ── Driver change ────────────────────────────────────────────────────────────
 app.put('/api/loads/:id/change-driver', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
   const { driver_id } = req.body;
@@ -2075,6 +2189,7 @@ app.put('/api/loads/:id/trailer', auth, (req, res) => {
     return res.status(403).json({ error: 'Forbidden' });
   }
   db.prepare('UPDATE loads SET trailer_number = ? WHERE id = ?').run(trailer_number || null, req.params.id);
+  logActivity(load.id, req, 'trailer', trailer_number ? `Trailer set to ${trailer_number}` : 'Trailer cleared');
   res.json({ ok: true });
 });
 
@@ -2089,6 +2204,7 @@ app.put('/api/loads/:id/checkin', auth, (req, res) => {
   }
   const time = req.body.time || new Date().toISOString();
   db.prepare('UPDATE loads SET checkin_time = ? WHERE id = ?').run(time, req.params.id);
+  logActivity(load.id, req, 'checkin', 'Checked in at pickup');
   res.json({ ok: true, checkin_time: time });
 });
 
@@ -2103,6 +2219,7 @@ app.put('/api/loads/:id/checkout', auth, (req, res) => {
   }
   const time = req.body.time || new Date().toISOString();
   db.prepare('UPDATE loads SET checkout_time = ? WHERE id = ?').run(time, req.params.id);
+  logActivity(load.id, req, 'checkout', 'Checked out from delivery');
   res.json({ ok: true, checkout_time: time });
 });
 
@@ -2151,6 +2268,7 @@ app.post('/api/loads/:id/docs', auth, upload.single('file'), async (req, res) =>
   const driveId = await storeDocument(localPath, docName, req.file.mimetype);
   const r = db.prepare('INSERT INTO load_docs (load_id, doc_type, original_name, filename, uploaded_by, drive_file_id) VALUES (?,?,?,?,?,?)')
     .run(req.params.id, type, docName, req.file.filename, req.user.id, driveId || null);
+  logActivity(req.params.id, req, 'document', `Uploaded ${type} document`);
   res.json(db.prepare('SELECT * FROM load_docs WHERE id = ?').get(r.lastInsertRowid));
 });
 
@@ -2268,6 +2386,7 @@ app.put('/api/loads/:id/detention', auth, requireRole('dispatcher', 'company_own
   if (!userCanAccessCompany(req.user, load.company_id)) return res.status(403).json({ error: 'Forbidden' });
   db.prepare('UPDATE loads SET detention_start=?, detention_end=?, detention_rate=? WHERE id=?')
     .run(detention_start || null, detention_end || null, rate, req.params.id);
+  logActivity(load.id, req, 'detention', `Detention updated @ $${rate}/hr`);
   res.json({ ok: true });
 });
 

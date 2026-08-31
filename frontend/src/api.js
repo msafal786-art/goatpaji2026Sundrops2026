@@ -4,6 +4,17 @@ function getToken() {
   return localStorage.getItem('token')
 }
 
+// ── Active company (multi-company switcher) ──────────────────────────────────
+// A scoped user with several companies can narrow the whole portal to one of
+// them. We stash the choice locally and send it as a header; the server checks
+// it's within their scope and filters every scoped endpoint to it. Empty = all.
+export function getActiveCompany() { return localStorage.getItem('activeCompany') || '' }
+export function setActiveCompany(id) {
+  if (id) localStorage.setItem('activeCompany', String(id))
+  else localStorage.removeItem('activeCompany')
+}
+export function clearActiveCompany() { localStorage.removeItem('activeCompany') }
+
 // Silently refresh token if it expires in < 8 hours
 export async function maybeRefreshToken() {
   const token = getToken()
@@ -45,6 +56,8 @@ async function req(method, path, body, isForm = false, opts = {}) {
     const headers = {}
     const token = getToken()
     if (token) headers['Authorization'] = `Bearer ${token}`
+    const activeCompany = getActiveCompany()
+    if (activeCompany) headers['X-Active-Company'] = activeCompany
     if (!isForm) headers['Content-Type'] = 'application/json'
 
     const ctrl = new AbortController()
@@ -147,6 +160,10 @@ export const api = {
   // Load documents
   loadDocs: (loadId) => req('GET', `/loads/${loadId}/docs`),
   loadActivity: (loadId) => req('GET', `/loads/${loadId}/activity`),
+  auditLog: (params = {}) => {
+    const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString()
+    return req('GET', `/audit-log${q ? `?${q}` : ''}`)
+  },
   // Uploads can be a 20 MB scan over a phone connection, and the server also
   // pushes to Drive. No retry — filing the same document twice is worse than
   // an error the dispatcher can act on.
