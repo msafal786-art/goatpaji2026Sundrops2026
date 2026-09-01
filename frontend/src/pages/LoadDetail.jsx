@@ -24,6 +24,8 @@ export default function LoadDetail() {
   const [load, setLoad] = useState(null)
   const [allIds, setAllIds] = useState([])
   const [dispatchMsg, setDispatchMsg] = useState('')
+  const [msgLang, setMsgLang] = useState('en')
+  const [msgLoading, setMsgLoading] = useState(false)
   const [showMsg, setShowMsg] = useState(false)
   const [showEdit, setShowEdit] = useState(false)
   const [copying, setCopying] = useState(false)
@@ -79,10 +81,31 @@ export default function LoadDetail() {
   const prevId = currentIdx > 0 ? allIds[currentIdx - 1] : null
   const nextId = currentIdx >= 0 && currentIdx < allIds.length - 1 ? allIds[currentIdx + 1] : null
 
+  async function loadDispatch(lang) {
+    setMsgLoading(true)
+    try {
+      const { message } = await api.dispatchMessage(id, lang === 'hi' ? 'hi' : undefined)
+      setDispatchMsg(message); setMsgLang(lang)
+    } catch (e) { alert(`Could not generate message: ${e.message}`) }
+    finally { setMsgLoading(false) }
+  }
+
   async function handleGetDispatch() {
-    const { message } = await api.dispatchMessage(id)
-    setDispatchMsg(message)
     setShowMsg(true)
+    await loadDispatch('en')
+  }
+
+  // Read the message aloud (Hindi or English) using the browser's speech engine.
+  function playMessage() {
+    try {
+      const plain = dispatchMsg.replace(/\*/g, '')
+      const u = new SpeechSynthesisUtterance(plain)
+      u.lang = msgLang === 'hi' ? 'hi-IN' : 'en-US'
+      const v = window.speechSynthesis.getVoices().find(x => x.lang === u.lang)
+      if (v) u.voice = v
+      window.speechSynthesis.cancel()
+      window.speechSynthesis.speak(u)
+    } catch { alert('Voice playback is not supported on this device.') }
   }
 
   async function handleCopy() {
@@ -669,14 +692,32 @@ ${load.company_name || 'Dispatch'}`
           onClick={() => setShowMsg(false)}>
           <div style={{ background: T.bg1, borderRadius: 20, padding: 24, width: '100%', maxWidth: 560, maxHeight: '90vh', overflowY: 'auto', border: `1px solid ${T.sep}` }}
             onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
               <h2 style={{ fontSize: 16, fontWeight: 700, color: T.text }}>Dispatch Message</h2>
-              <button onClick={() => setShowMsg(false)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: T.text3 }}>×</button>
+              <button onClick={() => { window.speechSynthesis?.cancel(); setShowMsg(false) }} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: T.text3 }}>×</button>
             </div>
+
+            {/* Language toggle */}
+            <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+              {[['en', 'English'], ['hi', 'हिंदी']].map(([code, label]) => (
+                <button key={code} onClick={() => loadDispatch(code)} disabled={msgLoading} style={{
+                  padding: '6px 14px', borderRadius: 999, fontSize: 13, fontWeight: 600, cursor: msgLoading ? 'wait' : 'pointer',
+                  background: msgLang === code ? T.blue : T.bg2, color: msgLang === code ? '#fff' : T.text2,
+                  border: `1px solid ${msgLang === code ? T.blue : T.sep}`,
+                }}>{label}</button>
+              ))}
+              <div style={{ flex: 1 }} />
+              <button onClick={playMessage} disabled={msgLoading || !dispatchMsg} title="Play aloud" style={{
+                padding: '6px 14px', borderRadius: 999, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                background: T.bg2, color: T.text2, border: `1px solid ${T.sep}`,
+              }}>🔊 Play</button>
+            </div>
+
             <pre style={{
               fontFamily: 'inherit', fontSize: 13, lineHeight: 1.7, whiteSpace: 'pre-wrap',
               background: T.bg2, padding: 16, borderRadius: 10, maxHeight: 340, overflowY: 'auto', color: T.text,
-            }}>{dispatchMsg}</pre>
+              opacity: msgLoading ? 0.5 : 1,
+            }}>{msgLoading ? (msgLang === 'hi' ? 'हिंदी में बना रहे हैं…' : 'Generating…') : dispatchMsg}</pre>
             <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
               <Btn color={T.blue} onClick={handleCopy}>{copying ? '✓ Copied!' : 'Copy to Clipboard'}</Btn>
               {canMarkDispatched(load) && (

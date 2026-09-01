@@ -1160,7 +1160,7 @@ app.delete('/api/loads/:id', auth, requireRole('dispatcher', 'company_owner'), (
 });
 
 // ── Dispatch message ──────────────────────────────────────────────────────────
-app.get('/api/loads/:id/dispatch-message', auth, (req, res) => {
+app.get('/api/loads/:id/dispatch-message', auth, async (req, res) => {
   const load = db.prepare('SELECT l.*, d.full_name as driver_name FROM loads l LEFT JOIN drivers d ON l.driver_id = d.id WHERE l.id = ?').get(req.params.id);
   if (!load) return res.status(404).json({ error: 'Not found' });
   if (req.user.role === 'driver') {
@@ -1253,7 +1253,30 @@ app.get('/api/loads/:id/dispatch-message', auth, (req, res) => {
     lines.push(boldFines(load.special_instructions))
   }
 
-  res.json({ message: lines.join('\n') });
+  const english = lines.join('\n');
+
+  // Optional Hindi version for drivers who prefer it. We translate the finished
+  // English message so pickup/delivery times, dates, addresses, load/reference
+  // numbers, and the *bold* markers all carry over unchanged.
+  if (req.query.lang === 'hi') {
+    try {
+      const ai = await anthropic.messages.create({
+        model: 'claude-sonnet-4-6', max_tokens: 1500,
+        messages: [{ role: 'user', content:
+`Translate this trucking dispatch message into clear, simple Hindi (Devanagari) that a driver can act on. Keep it as a WhatsApp message.
+Rules: keep ALL numbers, dates, times, addresses, city/state, load numbers and reference numbers EXACTLY as-is (do not translate or alter them). Keep the *asterisks* around bold text in the same places. Keep the line structure. Only translate the labels and instructions. Return ONLY the translated message, no preamble.
+
+${english}` }],
+      });
+      const hi = (ai.content?.[0]?.text || '').trim();
+      return res.json({ message: hi || english, english });
+    } catch (e) {
+      console.error('[dispatch] hindi translate failed', e.message);
+      return res.json({ message: english, english, translate_error: e.message });
+    }
+  }
+
+  res.json({ message: english });
 });
 
 app.post('/api/loads/:id/mark-dispatched', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
