@@ -371,6 +371,7 @@ db.exec(`
     company_id INTEGER,
     card_number TEXT,
     tran_date TEXT,
+    tran_time TEXT,
     invoice TEXT,
     unit TEXT,
     driver_name TEXT,
@@ -395,6 +396,9 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_fuel_card ON fuel_transactions(card_number);
   CREATE INDEX IF NOT EXISTS idx_fuel_company ON fuel_transactions(company_id);
 `);
+// tran_time added after the table shipped — backfill on existing databases.
+const fuelCols = db.prepare("PRAGMA table_info(fuel_transactions)").all().map(r => r.name);
+if (!fuelCols.includes('tran_time')) db.prepare('ALTER TABLE fuel_transactions ADD COLUMN tran_time TEXT').run();
 
 // Drive file ID columns for document tables
 const loadDocCols = db.prepare("PRAGMA table_info(load_docs)").all().map(r => r.name);

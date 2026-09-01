@@ -19,6 +19,7 @@ const bcrypt = require('bcryptjs');
 const Anthropic = require('@anthropic-ai/sdk');
 const drive = require('./drive.js');
 const gmail = require('./gmail.js');
+const XLSX = require('xlsx');
 
 // If running on Railway with a volume, seed the DB from the bundled file on first deploy
 const VOL_DB = process.env.DB_PATH;
@@ -97,6 +98,18 @@ const upload = multer({
     const ext = path.extname(file.originalname).toLowerCase();
     if (ALLOWED_UPLOAD_TYPES.includes(file.mimetype) || ALLOWED_EXTENSIONS.has(ext)) return cb(null, true);
     req._fileTypeError = 'Only PDF, JPG, PNG, or HEIC files are allowed';
+    cb(null, false);
+  },
+});
+// Fuel reports also come as spreadsheets (WEX "Transaction Export" / Enhanced),
+// which we parse deterministically — no AI, no size limit.
+const fuelUpload = multer({
+  dest: UPLOADS_DIR,
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (['.pdf', '.xlsx', '.xls', '.csv'].includes(ext) || /pdf|excel|spreadsheet|csv/i.test(file.mimetype || '')) return cb(null, true);
+    req._fileTypeError = 'Upload a PDF, XLSX, or CSV report';
     cb(null, false);
   },
 });
@@ -2352,86 +2365,162 @@ ${transcript}`
 
 const FUEL_ITEM_RE = /(ULSD|DSL|DEF|DIESEL|FUEL|REEFER|RFR|BIO|LNG|CNG)/i;
 
-// Flag one transaction against batch context. Rules only use fields the WEX
-// report actually provides (no time-of-day, so no idle/impossible-hour checks).
-function fuelAnomalies(tx, ctx) {
-  const flags = [];
-  const item = (tx.item || '').toUpperCase();
-  const isDEF = /DEF/.test(item);
-  const qty = Number(tx.qty) || 0;
-  const price = Number(tx.unit_price) || 0;
+// Rough state/province centroids for impossible-travel checks (deg lat,lng).
+const STATE_LL = { AL:[32.8,-86.8],AK:[64.2,-149.5],AZ:[34.3,-111.7],AR:[34.9,-92.4],CA:[37.2,-119.4],CO:[39.0,-105.5],CT:[41.6,-72.7],DE:[39.0,-75.5],FL:[28.6,-82.4],GA:[32.6,-83.4],ID:[44.4,-114.6],IL:[40.0,-89.2],IN:[39.9,-86.3],IA:[42.0,-93.5],KS:[38.5,-98.4],KY:[37.5,-85.3],LA:[31.0,-92.0],ME:[45.4,-69.2],MD:[39.0,-76.8],MA:[42.3,-71.8],MI:[44.3,-85.4],MN:[46.3,-94.3],MS:[32.7,-89.7],MO:[38.4,-92.5],MT:[47.0,-109.6],NE:[41.5,-99.8],NV:[39.3,-116.6],NH:[43.7,-71.6],NJ:[40.1,-74.7],NM:[34.4,-106.1],NY:[42.9,-75.5],NC:[35.6,-79.4],ND:[47.4,-100.5],OH:[40.3,-82.8],OK:[35.6,-97.5],OR:[44.0,-120.6],PA:[40.9,-77.8],RI:[41.7,-71.6],SC:[33.9,-80.9],SD:[44.4,-100.2],TN:[35.9,-86.4],TX:[31.5,-99.3],UT:[39.3,-111.7],VT:[44.1,-72.7],VA:[37.5,-78.9],WA:[47.4,-120.5],WV:[38.6,-80.6],WI:[44.6,-90.0],WY:[43.0,-107.6],DC:[38.9,-77.0] };
+function haversineMi(a, b) {
+  const R = 3959, d2r = Math.PI / 180;
+  const dLa = (b[0]-a[0])*d2r, dLo = (b[1]-a[1])*d2r;
+  const s = Math.sin(dLa/2)**2 + Math.cos(a[0]*d2r)*Math.cos(b[0]*d2r)*Math.sin(dLo/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(s));
+}
+function fuelTs(r) { const t = Date.parse(`${r.tran_date}T${(r.tran_time || '00:00')}:00Z`); return isNaN(t) ? null : t; }
 
-  // Non-fuel purchase (merchandise, cash advance, food) — classic personal misuse.
-  if (item && !FUEL_ITEM_RE.test(item)) flags.push({ code: 'non_fuel', severity: 'high', detail: `Non-fuel item "${tx.item}"` });
+// Anomaly flags for a whole batch (some rules need cross-row context: median
+// price, same-day multi-state, and consecutive fills per card for impossible
+// travel). Returns a flag array per input row, aligned by index.
+function computeFuelAnomalies(rows) {
+  const pricesByItem = {}, dayStates = {}, dayCount = {};
+  rows.forEach(r => {
+    const item = (r.item || '').toUpperCase();
+    if (Number(r.qty) > 5 && Number(r.unit_price) > 0) (pricesByItem[item] = pricesByItem[item] || []).push(Number(r.unit_price));
+    const k = `${r.card_number}|${r.tran_date}`;
+    (dayStates[k] = dayStates[k] || new Set()).add((r.state || '').toUpperCase());
+    dayCount[k] = (dayCount[k] || 0) + 1;
+  });
+  const medianPrice = {};
+  for (const [it, arr] of Object.entries(pricesByItem)) { arr.sort((a, b) => a - b); medianPrice[it] = arr[Math.floor(arr.length / 2)]; }
 
-  // Oversized single fill (a tractor tank is ~120–150 gal; duals ~300).
-  if (!isDEF && qty > 250) flags.push({ code: 'large_fill', severity: 'high', detail: `${qty} gal in one transaction` });
-  else if (!isDEF && qty > 200) flags.push({ code: 'large_fill', severity: 'medium', detail: `${qty} gal in one transaction` });
+  // Impossible travel: consecutive diesel fills on one card implying > 75 mph.
+  const impossible = {};
+  const byCard = {};
+  rows.forEach((r, i) => { if (fuelTs(r) != null) (byCard[r.card_number] = byCard[r.card_number] || []).push({ i, r, t: fuelTs(r) }); });
+  for (const list of Object.values(byCard)) {
+    list.sort((a, b) => a.t - b.t);
+    for (let k = 1; k < list.length; k++) {
+      const A = list[k - 1], B = list[k];
+      const sa = (A.r.state || '').toUpperCase(), sb = (B.r.state || '').toUpperCase();
+      if (sa === sb || !STATE_LL[sa] || !STATE_LL[sb]) continue;
+      const hrs = (B.t - A.t) / 3.6e6;
+      const mi = haversineMi(STATE_LL[sa], STATE_LL[sb]);
+      if (hrs > 0 && mi > 150 && mi / hrs > 75) {
+        impossible[B.i] = { code: 'impossible_travel', severity: 'high', detail: `~${Math.round(mi)} mi from prior fill (${sa}→${sb}) in ${hrs.toFixed(1)}h` };
+      }
+    }
+  }
 
-  // Price well above the report's typical price for this fuel type.
-  const med = ctx.medianPrice[item];
-  if (med && price > med * 1.15 && qty > 5) flags.push({ code: 'price_outlier', severity: 'medium', detail: `$${price}/gal vs ~$${med.toFixed(3)} typical` });
-
-  // Same card used in 2+ states on the same day — possible cloned/shared card.
-  const key = `${tx.card_number}|${tx.tran_date}`;
-  if ((ctx.dayStates[key]?.size || 0) > 1) flags.push({ code: 'multi_state_day', severity: 'medium', detail: `Card used in ${[...ctx.dayStates[key]].join(', ')} same day` });
-  else if ((ctx.dayCount[key] || 0) > 2) flags.push({ code: 'many_same_day', severity: 'low', detail: `${ctx.dayCount[key]} transactions on this card that day` });
-
-  // Declined / non-standard settlement.
-  if ((tx.db_flag || '').toUpperCase() === 'N') flags.push({ code: 'not_debited', severity: 'low', detail: 'DB flag = N' });
-
-  return flags;
+  return rows.map((tx, i) => {
+    const flags = [];
+    const item = (tx.item || '').toUpperCase();
+    const isDEF = /DEF/.test(item);
+    const qty = Number(tx.qty) || 0, price = Number(tx.unit_price) || 0;
+    if (item && !FUEL_ITEM_RE.test(item)) flags.push({ code: 'non_fuel', severity: 'high', detail: `Non-fuel item "${tx.item}"` });
+    if (!isDEF && qty > 250) flags.push({ code: 'large_fill', severity: 'high', detail: `${qty} gal in one transaction` });
+    else if (!isDEF && qty > 200) flags.push({ code: 'large_fill', severity: 'medium', detail: `${qty} gal in one transaction` });
+    const med = medianPrice[item];
+    if (med && price > med * 1.15 && qty > 5) flags.push({ code: 'price_outlier', severity: 'medium', detail: `$${price.toFixed(3)}/gal vs ~$${med.toFixed(3)} typical` });
+    if (impossible[i]) flags.push(impossible[i]);
+    const dk = `${tx.card_number}|${tx.tran_date}`;
+    if (!impossible[i] && (dayStates[dk]?.size || 0) > 1) flags.push({ code: 'multi_state_day', severity: 'medium', detail: `Card used in ${[...dayStates[dk]].filter(Boolean).join(', ')} same day` });
+    else if ((dayCount[dk] || 0) > 2) flags.push({ code: 'many_same_day', severity: 'low', detail: `${dayCount[dk]} fills on this card that day` });
+    if ((tx.db_flag || '').toUpperCase() === 'N') flags.push({ code: 'not_debited', severity: 'low', detail: 'Not debited (DB=N)' });
+    return flags;
+  });
 }
 
-app.post('/api/fuel/upload', auth, requireRole('dispatcher', 'company_owner'), upload.single('file'), async (req, res) => {
+// Normalize a date cell to YYYY-MM-DD.
+function normFuelDate(v) {
+  const s = String(v == null ? '' : v).trim();
+  let m = /^(\d{4})-(\d{1,2})-(\d{1,2})/.exec(s);
+  if (m) return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`;
+  m = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/.exec(s);
+  if (m) { let [, mo, d, y] = m; if (y.length === 2) y = '20' + y; return `${y}-${mo.padStart(2, '0')}-${d.padStart(2, '0')}`; }
+  return s || null;
+}
+
+// Deterministic parse of a WEX spreadsheet export (XLSX/CSV). No AI, no size cap.
+function parseFuelSpreadsheet(buf) {
+  const wb = XLSX.read(buf, { type: 'buffer' });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, blankrows: false, raw: false, defval: '' });
+  const hi = aoa.findIndex(row => row.some(c => /card/i.test(c)) && row.some(c => /date/i.test(c)));
+  if (hi < 0) throw new Error('could not find a header row with Card + Date columns');
+  const header = aoa[hi].map(c => String(c || '').toLowerCase());
+  const find = (...keys) => header.findIndex(h => keys.some(k => h.includes(k)));
+  const col = {
+    date: find('transaction date', 'tran date', 'date'), card: find('card'),
+    id: find('transaction id', 'tran id', 'invoice'), time: find('time'),
+    loc: find('location name', 'merchant', 'location'), city: find('city'),
+    state: find('state', 'prov'), item: find('product', 'category', 'item', 'description'),
+    amount: find('amount', 'amt'), qty: find('quantity', 'qty', 'gallons'),
+    price: find('unit price', 'ppu', 'price per'),
+  };
+  const num = v => { const n = Number(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n; };
+  const get = (row, i) => (i >= 0 ? String(row[i] == null ? '' : row[i]).trim() : '');
+  const out = [];
+  for (let i = hi + 1; i < aoa.length; i++) {
+    const row = aoa[i];
+    const card = get(row, col.card);
+    const date = normFuelDate(row[col.date]);
+    const amount = num(row[col.amount]);
+    if (!card || !date) continue;            // skip subtotal / blank rows
+    const qty = num(row[col.qty]);
+    const price = col.price >= 0 && num(row[col.price]) ? num(row[col.price]) : (qty ? amount / qty : 0);
+    out.push({
+      card_number: card.replace(/^\*+/, ''),  // WEX masks as *0125
+      tran_date: date, tran_time: get(row, col.time) || null,
+      invoice: get(row, col.id) || null, location_name: get(row, col.loc) || null,
+      city: get(row, col.city) || null, state: get(row, col.state) || null,
+      item: get(row, col.item) || null, unit_price: price, qty, fees: 0, amount,
+      db_flag: null, currency: null, unit: null, driver_name: null, odometer: null,
+    });
+  }
+  return out;
+}
+
+// Fallback for the PDF report — Claude extracts the rows (subject to output size).
+async function parseFuelPdf(base64) {
+  const ai = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6', max_tokens: 8000,
+    messages: [{ role: 'user', content: [
+      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
+      { type: 'text', text:
+`Extract EVERY fuel-card transaction row (all pages). Ignore per-card subtotal/summary blocks — only line items.
+Return ONLY a JSON array, each element exactly:
+{"card_number":"","tran_date":"YYYY-MM-DD","tran_time":"","invoice":"","unit":"","location_name":"","city":"","state":"","item":"","unit_price":0,"qty":0,"fees":0,"amount":0,"db_flag":""}
+Numbers (not strings) for unit_price, qty, fees, amount. Empty string for missing text. No prose, no fences.` }
+    ] }],
+  });
+  let text = (ai.content?.[0]?.text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+  const rows = JSON.parse(text);
+  if (!Array.isArray(rows)) throw new Error('parser did not return an array');
+  return rows;
+}
+
+app.post('/api/fuel/upload', auth, requireRole('dispatcher', 'company_owner'), fuelUpload.single('file'), async (req, res) => {
   if (req._fileTypeError) return res.status(400).json({ error: req._fileTypeError });
   if (!req.file) return res.status(400).json({ error: 'No file' });
-  const companyId = scopeCompanyIds(req.user) === null ? (req.body.company_id || null) : (scopeCompanyIds(req.user)[0] || null);
+  const scoped = scopeCompanyIds(req.user);
+  const companyId = scoped === null ? (req.body.company_id || null) : (scoped[0] || null);
   try {
-    const base64 = fs.readFileSync(req.file.path).toString('base64');
-    const isPdf = (req.file.mimetype || '').includes('pdf');
-    if (!isPdf) return res.status(400).json({ error: 'Please upload the PDF report' });
+    const buf = fs.readFileSync(req.file.path);
+    const ext = path.extname(req.file.originalname || '').toLowerCase();
+    const rows = (ext === '.pdf' || (req.file.mimetype || '').includes('pdf'))
+      ? await parseFuelPdf(buf.toString('base64'))
+      : parseFuelSpreadsheet(buf);
+    if (!rows.length) throw new Error('no transactions found in the report');
 
-    const ai = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 8000,
-      messages: [{ role: 'user', content: [
-        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
-        { type: 'text', text:
-`Extract EVERY fuel-card transaction row from this report (all pages). Ignore the per-card subtotal/group summary blocks — only the individual transaction line items.
-Return ONLY a JSON array, each element exactly:
-{"card_number":"","tran_date":"YYYY-MM-DD","invoice":"","unit":"","driver_name":"","odometer":"","location_name":"","city":"","state":"","item":"","unit_price":0,"qty":0,"fees":0,"amount":0,"db_flag":"","currency":""}
-Use numbers (not strings) for unit_price, qty, fees, amount. Empty string for missing text fields. No prose, no markdown fences.` }
-      ] }],
-    });
-    let text = (ai.content?.[0]?.text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
-    const rows = JSON.parse(text);
-    if (!Array.isArray(rows)) throw new Error('parser did not return an array');
-
-    // Batch context for anomaly rules.
-    const pricesByItem = {}; const dayStates = {}; const dayCount = {};
-    for (const r of rows) {
-      const item = (r.item || '').toUpperCase();
-      if (Number(r.qty) > 5 && Number(r.unit_price) > 0) (pricesByItem[item] = pricesByItem[item] || []).push(Number(r.unit_price));
-      const key = `${r.card_number}|${r.tran_date}`;
-      (dayStates[key] = dayStates[key] || new Set()).add((r.state || '').toUpperCase());
-      dayCount[key] = (dayCount[key] || 0) + 1;
-    }
-    const medianPrice = {};
-    for (const [it, arr] of Object.entries(pricesByItem)) { arr.sort((a, b) => a - b); medianPrice[it] = arr[Math.floor(arr.length / 2)]; }
-    const ctx = { medianPrice, dayStates, dayCount };
-
+    const flagsByRow = computeFuelAnomalies(rows);
     const insert = db.prepare(`INSERT OR IGNORE INTO fuel_transactions
-      (company_id, card_number, tran_date, invoice, unit, driver_name, odometer, location_name, city, state, item, unit_price, qty, fees, amount, db_flag, currency, anomaly_flags, source_file, uploaded_by)
-      VALUES (@company_id,@card_number,@tran_date,@invoice,@unit,@driver_name,@odometer,@location_name,@city,@state,@item,@unit_price,@qty,@fees,@amount,@db_flag,@currency,@anomaly_flags,@source_file,@uploaded_by)`);
+      (company_id, card_number, tran_date, tran_time, invoice, unit, driver_name, odometer, location_name, city, state, item, unit_price, qty, fees, amount, db_flag, currency, anomaly_flags, source_file, uploaded_by)
+      VALUES (@company_id,@card_number,@tran_date,@tran_time,@invoice,@unit,@driver_name,@odometer,@location_name,@city,@state,@item,@unit_price,@qty,@fees,@amount,@db_flag,@currency,@anomaly_flags,@source_file,@uploaded_by)`);
     let added = 0, flagged = 0;
-    const tx = db.transaction(() => {
-      for (const r of rows) {
-        const flags = fuelAnomalies(r, ctx);
+    db.transaction(() => {
+      rows.forEach((r, i) => {
+        const flags = flagsByRow[i];
         const info = insert.run({
           company_id: companyId,
-          card_number: r.card_number || null, tran_date: r.tran_date || null, invoice: r.invoice || null,
-          unit: r.unit || null, driver_name: r.driver_name || null, odometer: r.odometer || null,
+          card_number: r.card_number || null, tran_date: r.tran_date || null, tran_time: r.tran_time || null,
+          invoice: r.invoice || null, unit: r.unit || null, driver_name: r.driver_name || null, odometer: r.odometer || null,
           location_name: r.location_name || null, city: r.city || null, state: r.state || null,
           item: r.item || null, unit_price: Number(r.unit_price) || 0, qty: Number(r.qty) || 0,
           fees: Number(r.fees) || 0, amount: Number(r.amount) || 0, db_flag: r.db_flag || null,
@@ -2439,13 +2528,13 @@ Use numbers (not strings) for unit_price, qty, fees, amount. Empty string for mi
           source_file: req.file.originalname || null, uploaded_by: req.user.id,
         });
         if (info.changes) { added++; if (flags.length) flagged++; }
-      }
-    });
-    tx();
+      });
+    })();
     try { fs.unlinkSync(req.file.path); } catch {}
     res.json({ parsed: rows.length, added, duplicates: rows.length - added, flagged });
   } catch (e) {
     console.error('[fuel] upload failed', e.message);
+    try { fs.unlinkSync(req.file.path); } catch {}
     res.status(500).json({ error: 'Could not read the fuel report', detail: e.message });
   }
 });

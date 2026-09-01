@@ -7,7 +7,8 @@ const fmt$ = n => '$' + Number(n || 0).toLocaleString(undefined, { maximumFracti
 const SEV = { high: T.red, medium: T.orange, low: T.text3 }
 const CODE_LABEL = {
   non_fuel: 'Non-fuel', large_fill: 'Large fill', price_outlier: 'Overpriced',
-  multi_state_day: 'Multi-state day', many_same_day: 'Many same day', not_debited: 'Not debited',
+  impossible_travel: 'Impossible travel', multi_state_day: 'Multi-state day',
+  many_same_day: 'Many same day', not_debited: 'Not debited',
 }
 
 function Stat({ label, value, color }) {
@@ -66,11 +67,11 @@ export default function Fuel() {
           <div style={{ fontSize: 13, color: T.text3 }}>Upload the daily card report — transactions are mapped and checked for anomalies.</div>
         </div>
         <div>
-          <input ref={fileRef} type="file" accept="application/pdf" style={{ display: 'none' }} onChange={e => onFile(e.target.files[0])} />
+          <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv,application/pdf" style={{ display: 'none' }} onChange={e => onFile(e.target.files[0])} />
           <button onClick={() => fileRef.current?.click()} disabled={uploading} style={{
             padding: '10px 18px', background: T.blue, color: '#fff', border: 'none', borderRadius: 10,
             fontSize: 14, fontWeight: 700, cursor: uploading ? 'wait' : 'pointer',
-          }}>{uploading ? 'Reading report…' : '⬆ Upload report (PDF)'}</button>
+          }}>{uploading ? 'Reading report…' : '⬆ Upload report (XLSX/PDF)'}</button>
         </div>
       </div>
 
@@ -108,7 +109,7 @@ export default function Fuel() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 720 }}>
             <thead>
               <tr style={{ background: T.bg2, color: T.text3, textAlign: 'left' }}>
-                {['Date', 'Card', 'Unit', 'Fuel', 'Location', 'Gal', '$/gal', 'Amount', 'Flags'].map(h => (
+                {['Date', 'Time', 'Card', 'Fuel', 'Location', 'Gal', '$/gal', 'Amount', 'Flags'].map(h => (
                   <th key={h} style={{ padding: '9px 12px', fontWeight: 600, whiteSpace: 'nowrap' }}>{h}</th>
                 ))}
               </tr>
@@ -120,8 +121,8 @@ export default function Fuel() {
                 return (
                   <tr key={r.id} style={{ borderTop: `1px solid ${T.sep}`, background: worst ? worst + '0d' : 'transparent' }}>
                     <td style={{ padding: '9px 12px', whiteSpace: 'nowrap', color: T.text2 }}>{r.tran_date}</td>
+                    <td style={{ padding: '9px 12px', whiteSpace: 'nowrap', color: T.text3 }}>{r.tran_time || '—'}</td>
                     <td style={{ padding: '9px 12px', color: T.text }}>{r.card_number}</td>
-                    <td style={{ padding: '9px 12px', color: T.text2 }}>{r.unit || '—'}</td>
                     <td style={{ padding: '9px 12px', color: T.text2 }}>{r.item}</td>
                     <td style={{ padding: '9px 12px', color: T.text2, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.location_name}{r.state ? `, ${r.state}` : ''}</td>
                     <td style={{ padding: '9px 12px', color: T.text2 }}>{r.qty}</td>
