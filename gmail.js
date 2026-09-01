@@ -161,6 +161,13 @@ async function getMessage(accessToken, id) {
   };
 }
 
+// Download one attachment's bytes. Returns a Buffer.
+async function getAttachment(accessToken, messageId, attachmentId) {
+  const data = await apiGet(accessToken, `/messages/${messageId}/attachments/${attachmentId}`);
+  if (!data.data) throw new GmailError('attachment had no data', 'api');
+  return Buffer.from(data.data.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+}
+
 // "Name <email@x.com>" → { name, email }
 function parseAddress(raw) {
   if (!raw) return { name: '', email: '' };
@@ -172,5 +179,5 @@ function parseAddress(raw) {
 module.exports = {
   SCOPE, isConfigured, redirectUri, baseUrl,
   buildAuthUrl, exchangeCode, refreshAccessToken,
-  listMessageIds, getMessage, parseAddress, GmailError,
+  listMessageIds, getMessage, getAttachment, parseAddress, GmailError,
 };

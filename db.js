@@ -400,6 +400,29 @@ db.exec(`
 const fuelCols = db.prepare("PRAGMA table_info(fuel_transactions)").all().map(r => r.name);
 if (!fuelCols.includes('tran_time')) db.prepare('ALTER TABLE fuel_transactions ADD COLUMN tran_time TEXT').run();
 
+// ── Load review queue ────────────────────────────────────────────────────────
+// Rate cons parsed from broker emails land here as drafts; a human approves
+// before a real load is created on the board. parsed_json is the extracted load.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS load_drafts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER,
+    source TEXT DEFAULT 'email',
+    gmail_id TEXT,
+    thread_id TEXT,
+    from_email TEXT,
+    subject TEXT,
+    attachment_name TEXT,
+    parsed_json TEXT,
+    status TEXT DEFAULT 'pending',
+    created_load_id INTEGER,
+    created_by INTEGER,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(gmail_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_drafts_status ON load_drafts(status);
+`);
+
 // Drive file ID columns for document tables
 const loadDocCols = db.prepare("PRAGMA table_info(load_docs)").all().map(r => r.name);
 if (!loadDocCols.includes('drive_file_id')) db.prepare('ALTER TABLE load_docs ADD COLUMN drive_file_id TEXT').run();

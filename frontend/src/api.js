@@ -188,6 +188,12 @@ export const api = {
   gmailThreads: () => req('GET', '/gmail/threads'),
   gmailThread: (threadId) => req('GET', `/gmail/threads/${threadId}`),
   gmailAssist: (threadId) => req('POST', `/gmail/threads/${threadId}/assist`, {}, false, { timeout: 45000 }),
+  gmailDraftLoad: (threadId) => req('POST', `/gmail/threads/${threadId}/draft-load`, {}, false, { timeout: 60000 }),
+
+  // Load review queue (rate cons from email)
+  loadDrafts: () => req('GET', '/load-drafts'),
+  approveDraft: (id, company_id) => req('POST', `/load-drafts/${id}/approve`, { company_id }),
+  rejectDraft: (id) => req('POST', `/load-drafts/${id}/reject`),
 
   // Fuel card reports
   fuelUpload: (file) => {

@@ -49,6 +49,7 @@ export default function Inbox() {
   const [assist, setAssist] = useState(null)    // AI summary + draft reply for the open thread
   const [assisting, setAssisting] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [drafting, setDrafting] = useState(false)
   const [, forceUpdate] = useState(0)
 
   useEffect(() => {
@@ -118,6 +119,15 @@ export default function Inbox() {
     catch { alert('Copy failed — select the text and copy manually.') }
   }
 
+  async function draftLoad() {
+    setDrafting(true)
+    try {
+      await api.gmailDraftLoad(selected)
+      alert('Rate con extracted → it\'s in Load Review (More → Load Review) waiting for your approval.')
+    } catch (e) { alert(`Could not draft a load: ${e.message}`) }
+    finally { setDrafting(false) }
+  }
+
   const noticeBanner = notice && (
     <div style={{
       maxWidth: 560, margin: '16px auto 0', fontSize: 13, borderRadius: 10, padding: '11px 14px',
@@ -173,10 +183,18 @@ export default function Inbox() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
             <div style={{ fontSize: 16, fontWeight: 800, color: T.text, flex: 1, minWidth: 0 }}>{messages[messages.length - 1].subject || '(no subject)'}</div>
-            <button onClick={runAssist} disabled={assisting} style={{
-              flexShrink: 0, padding: '7px 14px', borderRadius: 8, cursor: assisting ? 'wait' : 'pointer',
-              background: T.purple + '18', border: `1px solid ${T.purple}55`, color: T.purple, fontSize: 13, fontWeight: 700,
-            }}>{assisting ? 'Thinking…' : '✨ AI Assist'}</button>
+            <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+              {messages.some(m => m.has_attachments) && (
+                <button onClick={draftLoad} disabled={drafting} style={{
+                  padding: '7px 14px', borderRadius: 8, cursor: drafting ? 'wait' : 'pointer',
+                  background: T.green + '18', border: `1px solid ${T.green}55`, color: T.green, fontSize: 13, fontWeight: 700,
+                }}>{drafting ? 'Reading…' : '📋 Draft load'}</button>
+              )}
+              <button onClick={runAssist} disabled={assisting} style={{
+                padding: '7px 14px', borderRadius: 8, cursor: assisting ? 'wait' : 'pointer',
+                background: T.purple + '18', border: `1px solid ${T.purple}55`, color: T.purple, fontSize: 13, fontWeight: 700,
+              }}>{assisting ? 'Thinking…' : '✨ AI Assist'}</button>
+            </div>
           </div>
 
           {assist && (
