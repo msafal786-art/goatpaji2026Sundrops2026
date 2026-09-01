@@ -46,6 +46,9 @@ export default function Inbox() {
   const [syncing, setSyncing] = useState(false)
   const [connecting, setConnecting] = useState(false)
   const [notice, setNotice] = useState(null)   // { kind, text } from the OAuth return
+  const [assist, setAssist] = useState(null)    // AI summary + draft reply for the open thread
+  const [assisting, setAssisting] = useState(false)
+  const [copied, setCopied] = useState(false)
   const [, forceUpdate] = useState(0)
 
   useEffect(() => {
@@ -99,7 +102,20 @@ export default function Inbox() {
   async function openThread(t) {
     setSelected(t.thread_id)
     setMessages([])
+    setAssist(null); setCopied(false)
     try { setMessages(await api.gmailThread(t.thread_id)) } catch { setMessages([]) }
+  }
+
+  async function runAssist() {
+    setAssisting(true); setCopied(false)
+    try { setAssist(await api.gmailAssist(selected)) }
+    catch (e) { alert(`AI assist failed: ${e.message}`) }
+    finally { setAssisting(false) }
+  }
+
+  async function copyReply(text) {
+    try { await navigator.clipboard.writeText(text); setCopied(true); setTimeout(() => setCopied(false), 2000) }
+    catch { alert('Copy failed — select the text and copy manually.') }
   }
 
   const noticeBanner = notice && (
@@ -155,7 +171,41 @@ export default function Inbox() {
         <div style={{ color: T.text3, fontSize: 14, padding: '40px 0', textAlign: 'center' }}>Loading…</div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ fontSize: 16, fontWeight: 800, color: T.text }}>{messages[messages.length - 1].subject || '(no subject)'}</div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10 }}>
+            <div style={{ fontSize: 16, fontWeight: 800, color: T.text, flex: 1, minWidth: 0 }}>{messages[messages.length - 1].subject || '(no subject)'}</div>
+            <button onClick={runAssist} disabled={assisting} style={{
+              flexShrink: 0, padding: '7px 14px', borderRadius: 8, cursor: assisting ? 'wait' : 'pointer',
+              background: T.purple + '18', border: `1px solid ${T.purple}55`, color: T.purple, fontSize: 13, fontWeight: 700,
+            }}>{assisting ? 'Thinking…' : '✨ AI Assist'}</button>
+          </div>
+
+          {assist && (
+            <div style={{ background: T.purple + '10', border: `1px solid ${T.purple}40`, borderRadius: 12, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              {assist.category && (
+                <span style={{ alignSelf: 'flex-start', fontSize: 11, fontWeight: 700, color: T.purple, background: T.purple + '20', padding: '2px 9px', borderRadius: 999, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                  {assist.category.replace(/_/g, ' ')}
+                </span>
+              )}
+              {assist.summary && <div style={{ fontSize: 13, color: T.text, lineHeight: 1.5 }}><b>Summary:</b> {assist.summary}</div>}
+              {assist.action_needed && assist.action_needed !== 'None' && (
+                <div style={{ fontSize: 13, color: T.orange }}><b>Action:</b> {assist.action_needed}</div>
+              )}
+              {assist.suggested_reply ? (
+                <div>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>Suggested reply</div>
+                  <div style={{ fontSize: 13, color: T.text, background: T.bg2, border: `1px solid ${T.sep}`, borderRadius: 8, padding: '10px 12px', whiteSpace: 'pre-wrap', lineHeight: 1.5 }}>{assist.suggested_reply}</div>
+                  <button onClick={() => copyReply(assist.suggested_reply)} style={{
+                    marginTop: 8, padding: '7px 14px', borderRadius: 8, cursor: 'pointer',
+                    background: copied ? T.green : T.blue, color: '#fff', border: 'none', fontSize: 13, fontWeight: 700,
+                  }}>{copied ? '✓ Copied' : 'Copy reply'}</button>
+                  <span style={{ fontSize: 11, color: T.text3, marginLeft: 10 }}>Paste into Gmail to send — nothing is sent for you.</span>
+                </div>
+              ) : (
+                <div style={{ fontSize: 13, color: T.text3 }}>No reply needed.</div>
+              )}
+            </div>
+          )}
+
           {messages.map(m => (
             <div key={m.id} style={{
               background: m.direction === 'outbound' ? T.blue + '10' : T.bg1,
