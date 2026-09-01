@@ -6,7 +6,8 @@ import { useAuth } from '../AuthContext.jsx'
 
 export default function Search() {
   const { user } = useAuth()
-  const [query, setQuery] = useState('')
+  // Seed from ?q= so the top-nav search bar lands here already searching.
+  const [query, setQuery] = useState(() => new URLSearchParams(window.location.search).get('q') || '')
   const [results, setResults] = useState(null)
   const [loading, setLoading] = useState(false)
   const [, forceUpdate] = useState(0)

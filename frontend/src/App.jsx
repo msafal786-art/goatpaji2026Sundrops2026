@@ -148,6 +148,26 @@ function CompanySwitcher({ user, compact }) {
   )
 }
 
+// ── Nav search bar — type and go to the search page with the query ───────────
+function NavSearch() {
+  const navigate = useNavigate()
+  const [q, setQ] = useState('')
+  function submit(e) {
+    e.preventDefault()
+    const v = q.trim()
+    if (v) navigate(`/search?q=${encodeURIComponent(v)}`)
+  }
+  return (
+    <form onSubmit={submit} style={{ padding: '0 14px', display: 'flex', alignItems: 'center' }}>
+      <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search…" aria-label="Search"
+        style={{
+          width: 190, height: 30, padding: '0 12px', borderRadius: 8, fontSize: 13,
+          background: T.bg2, color: T.text, border: `1px solid ${T.sep}`, outline: 'none',
+        }} />
+    </form>
+  )
+}
+
 // ── Desktop top nav ────────────────────────────────────────────────────────────
 function TopNav({ user, onLogout }) {
   const loc = useLocation()
@@ -170,16 +190,26 @@ function TopNav({ user, onLogout }) {
     return () => document.removeEventListener('mousedown', handle)
   }, [])
 
-  const moreItems = [
-    { to: '/compliance',      label: 'Compliance' },
-    { to: '/fuel',            label: 'Fuel Cards' },
-    { to: '/recommendations', label: 'Lanes' },
-    { to: '/deadhead',        label: 'Deadhead' },
-    // Revenue only appears for users allowed to see it — otherwise it's absent,
-    // not a button that leads to a "not allowed" wall.
+  // Compliance groups the fleet/finance views. Revenue only for those allowed.
+  const complianceKids = [
+    { to: '/compliance', label: 'Compliance' },
+    { to: '/fuel',       label: 'Fuel Cards' },
+    { to: '/trucks',     label: 'Equipment' },
     ...(canSeeRevenue(user) ? [{ to: '/revenue', label: 'Revenue' }] : []),
-    ...(isAdmin ? [{ to: '/inbox', label: 'Broker Inbox' }, { to: '/load-review', label: 'Load Review' }, { to: '/companies', label: 'Companies' }, { to: '/users', label: 'Users' }, { to: '/audit', label: 'Access Log' }] : []),
-    { to: '/settings',        label: 'Settings' },
+  ]
+  // Broker Inbox groups the freight-sourcing / communication tools (admin only).
+  const inboxKids = [
+    { to: '/inbox',           label: 'Broker Inbox' },
+    { to: '/load-review',     label: 'Load Review' },
+    { to: '/recommendations', label: 'Lanes' },
+  ]
+  // More = rarely-used only.
+  const moreItems = [
+    { to: '/calendar', label: 'Calendar' },
+    { to: '/deadhead', label: 'Deadhead' },
+    ...(!isAdmin ? [{ to: '/recommendations', label: 'Lanes' }] : []),
+    ...(isAdmin ? [{ to: '/companies', label: 'Companies' }, { to: '/users', label: 'Users' }, { to: '/audit', label: 'Access Log' }] : []),
+    { to: '/settings', label: 'Settings' },
   ]
 
   return (
@@ -214,21 +244,20 @@ function TopNav({ user, onLogout }) {
       {/* Nav items */}
       <nav style={{ display: 'flex', alignItems: 'stretch', flex: 1 }}>
         <NavItem label="Dispatch" to="/loads" />
-        <NavItem label="Calendar" to="/calendar" />
         <NavItem label="Dashboard" to="/dashboard" />
+        <NavItem label="Compliance" mainTo="/compliance" children={complianceKids} />
         <NavItem label="Drivers" mainTo="/drivers" children={[
           { to: '/drivers', label: 'Driver List' },
           { to: '/payroll', label: 'Payroll' },
         ]} />
-        <NavItem label="Equipment" mainTo="/trucks" children={[
-          { to: '/trucks', label: 'Trucks & Trailers' },
-        ]} />
-        <NavItem label="Search" to="/search" />
+        {isAdmin && <NavItem label="Broker Inbox" mainTo="/inbox" children={inboxKids} />}
         <NavItem label="More" children={moreItems} />
       </nav>
 
-      {/* Right: online indicator + user */}
+      {/* Right: search + online + user */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 0, borderLeft: `1px solid ${T.sep}`, flexShrink: 0 }}>
+
+        <NavSearch />
 
         {/* Company switcher — multi-company users only */}
         {isMultiCompany(user) && (
