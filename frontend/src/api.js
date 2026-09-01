@@ -185,6 +185,7 @@ export const api = {
   gmailAuthUrl: () => req('GET', '/gmail/auth-url'),
   gmailSync: () => req('POST', '/gmail/sync', {}, false, { timeout: 60000 }),
   gmailDisconnect: () => req('POST', '/gmail/disconnect'),
+  gmailSetCompany: (company_id) => req('PUT', '/gmail/company', { company_id }),
   gmailThreads: () => req('GET', '/gmail/threads'),
   gmailThread: (threadId) => req('GET', `/gmail/threads/${threadId}`),
   gmailAssist: (threadId) => req('POST', `/gmail/threads/${threadId}/assist`, {}, false, { timeout: 45000 }),

@@ -325,6 +325,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS email_integration (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     provider TEXT DEFAULT 'gmail',
+    company_id INTEGER,
     email_address TEXT,
     refresh_token TEXT,
     access_token TEXT,
@@ -399,6 +400,9 @@ db.exec(`
 // tran_time added after the table shipped — backfill on existing databases.
 const fuelCols = db.prepare("PRAGMA table_info(fuel_transactions)").all().map(r => r.name);
 if (!fuelCols.includes('tran_time')) db.prepare('ALTER TABLE fuel_transactions ADD COLUMN tran_time TEXT').run();
+// email_integration.company_id added later — the inbox belongs to one carrier.
+const eiCols = db.prepare("PRAGMA table_info(email_integration)").all().map(r => r.name);
+if (!eiCols.includes('company_id')) db.prepare('ALTER TABLE email_integration ADD COLUMN company_id INTEGER').run();
 
 // ── Load review queue ────────────────────────────────────────────────────────
 // Rate cons parsed from broker emails land here as drafts; a human approves

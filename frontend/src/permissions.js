@@ -22,3 +22,9 @@ export function userCompanies(user) {
 export function isMultiCompany(user) {
   return userCompanies(user).length > 1
 }
+
+// Broker Inbox is scoped to the carrier whose mailbox is connected (plus admin).
+// The server decides and sets can_see_inbox on the profile.
+export function canSeeInbox(user) {
+  return !!user?.can_see_inbox
+}

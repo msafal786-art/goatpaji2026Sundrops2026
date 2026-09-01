@@ -100,6 +100,11 @@ export default function Inbox() {
     finally { setSyncing(false) }
   }
 
+  async function setOwner(e) {
+    try { await api.gmailSetCompany(e.target.value || ''); setStatus(await api.gmailStatus()) }
+    catch (err) { alert(err.message) }
+  }
+
   async function openThread(t) {
     setSelected(t.thread_id)
     setMessages([])
@@ -263,6 +268,18 @@ export default function Inbox() {
       {status.last_error && (
         <div style={{ fontSize: 12, color: T.red, background: T.red + '12', border: `1px solid ${T.red}40`, borderRadius: 8, padding: '8px 12px', marginBottom: 12 }}>
           Last sync error: {status.last_error}{/invalid_grant|reauth/i.test(status.last_error) ? ' — reconnect Gmail in Settings.' : ''}
+        </div>
+      )}
+      {/* Admin: which carrier owns this inbox (scopes who can see it). */}
+      {status.manageable && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', fontSize: 13, color: T.text2, background: T.bg2, border: `1px solid ${T.sep}`, borderRadius: 10, padding: '10px 14px', marginBottom: 12 }}>
+          <span>Inbox belongs to:</span>
+          <select value={status.company_id || ''} onChange={setOwner}
+            style={{ padding: '6px 10px', borderRadius: 8, background: T.bg1, color: T.text, border: `1px solid ${T.sep}`, fontSize: 13 }}>
+            <option value="">— select carrier —</option>
+            {(status.companies || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          {!status.company_id && <span style={{ color: T.orange }}>Pick a carrier so its team can see this inbox.</span>}
         </div>
       )}
       <div style={{ display: 'flex', background: T.bg1, border: `1px solid ${T.sep}`, borderRadius: 14, overflow: 'hidden', minHeight: 400 }}>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, Link, useLocation, useNavigate } from 'react-router-dom'
 import { api, maybeRefreshToken, getActiveCompany, setActiveCompany, clearActiveCompany, getViewAs, clearViewAs } from './api.js'
-import { isAdmin as isAdminUser, canSeeRevenue, userCompanies, isMultiCompany } from './permissions.js'
+import { isAdmin as isAdminUser, canSeeRevenue, userCompanies, isMultiCompany, canSeeInbox } from './permissions.js'
 import { T, applyTheme } from './theme.js'
 import { ThemeProvider } from './ThemeContext.jsx'
 import { AuthContext } from './AuthContext.jsx'
@@ -203,11 +203,13 @@ function TopNav({ user, onLogout }) {
     { to: '/load-review',     label: 'Load Review' },
     { to: '/recommendations', label: 'Lanes' },
   ]
-  // More = rarely-used only.
+  const showInbox = canSeeInbox(user)
+  // More = rarely-used only. Lanes lives in the Broker Inbox group for users who
+  // have it; everyone else finds it here.
   const moreItems = [
     { to: '/calendar', label: 'Calendar' },
     { to: '/deadhead', label: 'Deadhead' },
-    ...(!isAdmin ? [{ to: '/recommendations', label: 'Lanes' }] : []),
+    ...(!showInbox ? [{ to: '/recommendations', label: 'Lanes' }] : []),
     ...(isAdmin ? [{ to: '/companies', label: 'Companies' }, { to: '/users', label: 'Users' }, { to: '/audit', label: 'Access Log' }] : []),
     { to: '/settings', label: 'Settings' },
   ]
@@ -250,7 +252,7 @@ function TopNav({ user, onLogout }) {
           { to: '/drivers', label: 'Driver List' },
           { to: '/payroll', label: 'Payroll' },
         ]} />
-        {isAdmin && <NavItem label="Broker Inbox" mainTo="/inbox" children={inboxKids} />}
+        {showInbox && <NavItem label="Broker Inbox" mainTo="/inbox" children={inboxKids} />}
         <NavItem label="More" children={moreItems} />
       </nav>
 
@@ -351,9 +353,11 @@ const MORE_SECTIONS = [
     { to: '/deadhead',        icon: '⇄', label: 'Deadhead' },
     { to: '/revenue',         icon: '$', label: 'Revenue' },
   ]},
-  { title: 'Admin', admin: true, items: [
+  { title: 'Broker Inbox', inbox: true, items: [
     { to: '/inbox',           icon: '✉', label: 'Broker Inbox' },
     { to: '/load-review',     icon: '📋', label: 'Load Review' },
+  ]},
+  { title: 'Admin', admin: true, items: [
     { to: '/companies',       icon: '▤', label: 'Companies' },
     { to: '/users',           icon: '◉', label: 'Users' },
     { to: '/audit',           icon: '⚑', label: 'Access Log' },
@@ -374,7 +378,7 @@ function MoreSheet({ user, onClose, onLogout }) {
   // Hide admin-only sections, and drop Revenue for users not allowed to see it —
   // the item is absent rather than a locked/"not allowed" tile.
   const sections = MORE_SECTIONS
-    .filter(s => !s.admin || isAdmin)
+    .filter(s => (!s.admin || isAdmin) && (!s.inbox || canSeeInbox(user)))
     .map(s => ({ ...s, items: s.items.filter(it => it.to !== '/revenue' || canSeeRevenue(user)) }))
     .filter(s => s.items.length > 0)
 
@@ -661,8 +665,8 @@ export default function App() {
                   through to the redirect below rather than showing a blocked page. */}
               {isAdminUser(effective) && <Route path="/companies" element={<Companies />} />}
               {isAdminUser(effective) && <Route path="/users" element={<Users />} />}
-              {isAdminUser(effective) && <Route path="/inbox" element={<Inbox />} />}
-              {isAdminUser(effective) && <Route path="/load-review" element={<LoadReview />} />}
+              {canSeeInbox(effective) && <Route path="/inbox" element={<Inbox />} />}
+              {canSeeInbox(effective) && <Route path="/load-review" element={<LoadReview />} />}
               {isAdminUser(effective) && <Route path="/audit" element={<Audit />} />}
               <Route path="/compliance" element={<Compliance />} />
               <Route path="/calendar" element={<Calendar />} />
