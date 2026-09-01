@@ -2346,6 +2346,131 @@ ${transcript}`
   }
 });
 
+// ── Fuel card transactions ───────────────────────────────────────────────────
+// Upload a WEX-style report (PDF), extract every transaction with Claude, store
+// deduped, and flag anomalies — misuse/skimming that goes unnoticed today.
+
+const FUEL_ITEM_RE = /(ULSD|DSL|DEF|DIESEL|FUEL|REEFER|RFR|BIO|LNG|CNG)/i;
+
+// Flag one transaction against batch context. Rules only use fields the WEX
+// report actually provides (no time-of-day, so no idle/impossible-hour checks).
+function fuelAnomalies(tx, ctx) {
+  const flags = [];
+  const item = (tx.item || '').toUpperCase();
+  const isDEF = /DEF/.test(item);
+  const qty = Number(tx.qty) || 0;
+  const price = Number(tx.unit_price) || 0;
+
+  // Non-fuel purchase (merchandise, cash advance, food) — classic personal misuse.
+  if (item && !FUEL_ITEM_RE.test(item)) flags.push({ code: 'non_fuel', severity: 'high', detail: `Non-fuel item "${tx.item}"` });
+
+  // Oversized single fill (a tractor tank is ~120–150 gal; duals ~300).
+  if (!isDEF && qty > 250) flags.push({ code: 'large_fill', severity: 'high', detail: `${qty} gal in one transaction` });
+  else if (!isDEF && qty > 200) flags.push({ code: 'large_fill', severity: 'medium', detail: `${qty} gal in one transaction` });
+
+  // Price well above the report's typical price for this fuel type.
+  const med = ctx.medianPrice[item];
+  if (med && price > med * 1.15 && qty > 5) flags.push({ code: 'price_outlier', severity: 'medium', detail: `$${price}/gal vs ~$${med.toFixed(3)} typical` });
+
+  // Same card used in 2+ states on the same day — possible cloned/shared card.
+  const key = `${tx.card_number}|${tx.tran_date}`;
+  if ((ctx.dayStates[key]?.size || 0) > 1) flags.push({ code: 'multi_state_day', severity: 'medium', detail: `Card used in ${[...ctx.dayStates[key]].join(', ')} same day` });
+  else if ((ctx.dayCount[key] || 0) > 2) flags.push({ code: 'many_same_day', severity: 'low', detail: `${ctx.dayCount[key]} transactions on this card that day` });
+
+  // Declined / non-standard settlement.
+  if ((tx.db_flag || '').toUpperCase() === 'N') flags.push({ code: 'not_debited', severity: 'low', detail: 'DB flag = N' });
+
+  return flags;
+}
+
+app.post('/api/fuel/upload', auth, requireRole('dispatcher', 'company_owner'), upload.single('file'), async (req, res) => {
+  if (req._fileTypeError) return res.status(400).json({ error: req._fileTypeError });
+  if (!req.file) return res.status(400).json({ error: 'No file' });
+  const companyId = scopeCompanyIds(req.user) === null ? (req.body.company_id || null) : (scopeCompanyIds(req.user)[0] || null);
+  try {
+    const base64 = fs.readFileSync(req.file.path).toString('base64');
+    const isPdf = (req.file.mimetype || '').includes('pdf');
+    if (!isPdf) return res.status(400).json({ error: 'Please upload the PDF report' });
+
+    const ai = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 8000,
+      messages: [{ role: 'user', content: [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64 } },
+        { type: 'text', text:
+`Extract EVERY fuel-card transaction row from this report (all pages). Ignore the per-card subtotal/group summary blocks — only the individual transaction line items.
+Return ONLY a JSON array, each element exactly:
+{"card_number":"","tran_date":"YYYY-MM-DD","invoice":"","unit":"","driver_name":"","odometer":"","location_name":"","city":"","state":"","item":"","unit_price":0,"qty":0,"fees":0,"amount":0,"db_flag":"","currency":""}
+Use numbers (not strings) for unit_price, qty, fees, amount. Empty string for missing text fields. No prose, no markdown fences.` }
+      ] }],
+    });
+    let text = (ai.content?.[0]?.text || '').trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+    const rows = JSON.parse(text);
+    if (!Array.isArray(rows)) throw new Error('parser did not return an array');
+
+    // Batch context for anomaly rules.
+    const pricesByItem = {}; const dayStates = {}; const dayCount = {};
+    for (const r of rows) {
+      const item = (r.item || '').toUpperCase();
+      if (Number(r.qty) > 5 && Number(r.unit_price) > 0) (pricesByItem[item] = pricesByItem[item] || []).push(Number(r.unit_price));
+      const key = `${r.card_number}|${r.tran_date}`;
+      (dayStates[key] = dayStates[key] || new Set()).add((r.state || '').toUpperCase());
+      dayCount[key] = (dayCount[key] || 0) + 1;
+    }
+    const medianPrice = {};
+    for (const [it, arr] of Object.entries(pricesByItem)) { arr.sort((a, b) => a - b); medianPrice[it] = arr[Math.floor(arr.length / 2)]; }
+    const ctx = { medianPrice, dayStates, dayCount };
+
+    const insert = db.prepare(`INSERT OR IGNORE INTO fuel_transactions
+      (company_id, card_number, tran_date, invoice, unit, driver_name, odometer, location_name, city, state, item, unit_price, qty, fees, amount, db_flag, currency, anomaly_flags, source_file, uploaded_by)
+      VALUES (@company_id,@card_number,@tran_date,@invoice,@unit,@driver_name,@odometer,@location_name,@city,@state,@item,@unit_price,@qty,@fees,@amount,@db_flag,@currency,@anomaly_flags,@source_file,@uploaded_by)`);
+    let added = 0, flagged = 0;
+    const tx = db.transaction(() => {
+      for (const r of rows) {
+        const flags = fuelAnomalies(r, ctx);
+        const info = insert.run({
+          company_id: companyId,
+          card_number: r.card_number || null, tran_date: r.tran_date || null, invoice: r.invoice || null,
+          unit: r.unit || null, driver_name: r.driver_name || null, odometer: r.odometer || null,
+          location_name: r.location_name || null, city: r.city || null, state: r.state || null,
+          item: r.item || null, unit_price: Number(r.unit_price) || 0, qty: Number(r.qty) || 0,
+          fees: Number(r.fees) || 0, amount: Number(r.amount) || 0, db_flag: r.db_flag || null,
+          currency: r.currency || null, anomaly_flags: flags.length ? JSON.stringify(flags) : null,
+          source_file: req.file.originalname || null, uploaded_by: req.user.id,
+        });
+        if (info.changes) { added++; if (flags.length) flagged++; }
+      }
+    });
+    tx();
+    try { fs.unlinkSync(req.file.path); } catch {}
+    res.json({ parsed: rows.length, added, duplicates: rows.length - added, flagged });
+  } catch (e) {
+    console.error('[fuel] upload failed', e.message);
+    res.status(500).json({ error: 'Could not read the fuel report', detail: e.message });
+  }
+});
+
+app.get('/api/fuel/transactions', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
+  const scope = companyScopeClause(req.user, 'company_id', 'WHERE');
+  const filters = [scope.clause].filter(Boolean);
+  const params = [...scope.params];
+  if (req.query.flagged === '1') { filters.push(filters.length ? 'AND anomaly_flags IS NOT NULL' : 'WHERE anomaly_flags IS NOT NULL'); }
+  if (req.query.card) { filters.push((filters.length ? 'AND' : 'WHERE') + ' card_number = ?'); params.push(req.query.card); }
+  const where = filters.join(' ');
+  const rows = db.prepare(`SELECT * FROM fuel_transactions ${where} ORDER BY tran_date DESC, id DESC LIMIT 1000`).all(...params);
+  res.json(rows.map(r => ({ ...r, anomaly_flags: r.anomaly_flags ? JSON.parse(r.anomaly_flags) : [] })));
+});
+
+app.get('/api/fuel/summary', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
+  const scope = companyScopeClause(req.user, 'company_id', 'WHERE');
+  const totals = db.prepare(`SELECT COUNT(*) n, COALESCE(SUM(amount),0) amount, COALESCE(SUM(qty),0) qty,
+    SUM(CASE WHEN anomaly_flags IS NOT NULL THEN 1 ELSE 0 END) flagged FROM fuel_transactions ${scope.clause}`).get(...scope.params);
+  const byCard = db.prepare(`SELECT card_number, COUNT(*) n, COALESCE(SUM(amount),0) amount, COALESCE(SUM(qty),0) qty,
+    SUM(CASE WHEN anomaly_flags IS NOT NULL THEN 1 ELSE 0 END) flagged
+    FROM fuel_transactions ${scope.clause} GROUP BY card_number ORDER BY amount DESC`).all(...scope.params);
+  res.json({ totals, byCard });
+});
+
 // ── Driver change ────────────────────────────────────────────────────────────
 app.put('/api/loads/:id/change-driver', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
   const { driver_id } = req.body;

@@ -188,6 +188,18 @@ export const api = {
   gmailThreads: () => req('GET', '/gmail/threads'),
   gmailThread: (threadId) => req('GET', `/gmail/threads/${threadId}`),
   gmailAssist: (threadId) => req('POST', `/gmail/threads/${threadId}/assist`, {}, false, { timeout: 45000 }),
+
+  // Fuel card reports
+  fuelUpload: (file) => {
+    const fd = new FormData()
+    fd.append('file', file)
+    return req('POST', '/fuel/upload', fd, true, { timeout: 120000 })
+  },
+  fuelTransactions: (params = {}) => {
+    const q = new URLSearchParams(Object.entries(params).filter(([, v]) => v)).toString()
+    return req('GET', `/fuel/transactions${q ? `?${q}` : ''}`)
+  },
+  fuelSummary: () => req('GET', '/fuel/summary'),
   // Uploads can be a 20 MB scan over a phone connection, and the server also
   // pushes to Drive. No retry — filing the same document twice is worse than
   // an error the dispatcher can act on.

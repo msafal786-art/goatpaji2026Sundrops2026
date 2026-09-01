@@ -361,6 +361,41 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_emails_from ON emails(from_email);
 `);
 
+// ── Fuel card transactions ───────────────────────────────────────────────────
+// Parsed from the daily/weekly fuel-card report (WEX etc.). Deduped on the WEX
+// invoice number so re-uploading an overlapping report can't double-count.
+// anomaly_flags is a JSON array of {code, severity, detail} set at import.
+db.exec(`
+  CREATE TABLE IF NOT EXISTS fuel_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER,
+    card_number TEXT,
+    tran_date TEXT,
+    invoice TEXT,
+    unit TEXT,
+    driver_name TEXT,
+    odometer TEXT,
+    location_name TEXT,
+    city TEXT,
+    state TEXT,
+    item TEXT,
+    unit_price REAL,
+    qty REAL,
+    fees REAL,
+    amount REAL,
+    db_flag TEXT,
+    currency TEXT,
+    anomaly_flags TEXT,
+    source_file TEXT,
+    uploaded_by INTEGER,
+    created_at TEXT DEFAULT (datetime('now')),
+    UNIQUE(invoice, card_number, item, amount)
+  );
+  CREATE INDEX IF NOT EXISTS idx_fuel_date ON fuel_transactions(tran_date);
+  CREATE INDEX IF NOT EXISTS idx_fuel_card ON fuel_transactions(card_number);
+  CREATE INDEX IF NOT EXISTS idx_fuel_company ON fuel_transactions(company_id);
+`);
+
 // Drive file ID columns for document tables
 const loadDocCols = db.prepare("PRAGMA table_info(load_docs)").all().map(r => r.name);
 if (!loadDocCols.includes('drive_file_id')) db.prepare('ALTER TABLE load_docs ADD COLUMN drive_file_id TEXT').run();

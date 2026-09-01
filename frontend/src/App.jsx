@@ -27,6 +27,7 @@ import Compliance from './pages/Compliance.jsx'
 import Calendar from './pages/Calendar.jsx'
 import Audit from './pages/Audit.jsx'
 import Inbox from './pages/Inbox.jsx'
+import Fuel from './pages/Fuel.jsx'
 
 const NAV_H = 44
 
@@ -170,6 +171,7 @@ function TopNav({ user, onLogout }) {
 
   const moreItems = [
     { to: '/compliance',      label: 'Compliance' },
+    { to: '/fuel',            label: 'Fuel Cards' },
     { to: '/recommendations', label: 'Lanes' },
     { to: '/deadhead',        label: 'Deadhead' },
     // Revenue only appears for users allowed to see it — otherwise it's absent,
@@ -312,6 +314,7 @@ const MORE_SECTIONS = [
     { to: '/search',          icon: '⌕', label: 'Search' },
     { to: '/payroll',         icon: '💵', label: 'Payroll' },
     { to: '/compliance',      icon: '✓', label: 'Compliance' },
+    { to: '/fuel',            icon: '⛽', label: 'Fuel Cards' },
   ]},
   { title: 'Planning', items: [
     { to: '/recommendations', icon: '↭', label: 'Lanes' },
@@ -634,6 +637,7 @@ export default function App() {
               <Route path="/search" element={<Search />} />
               <Route path="/recommendations" element={<Recommendations />} />
               <Route path="/deadhead" element={<Deadhead />} />
+              <Route path="/fuel" element={<Fuel />} />
               {canSeeRevenue(effective) && <Route path="/revenue" element={<Revenue />} />}
               <Route path="/payroll" element={<Payroll />} />
               <Route path="/settings" element={<Settings />} />
