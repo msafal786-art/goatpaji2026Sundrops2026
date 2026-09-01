@@ -149,6 +149,7 @@ export const api = {
   updateLoad: (id, d) => req('PUT', `/loads/${id}`, d),
   deleteLoad: (id) => req('DELETE', `/loads/${id}`),
   dispatchMessage: (id, lang) => req('GET', `/loads/${id}/dispatch-message${lang ? `?lang=${lang}` : ''}`, null, false, { timeout: 45000 }),
+  tts: (text, lang) => req('POST', '/tts', { text, lang }, false, { timeout: 45000 }),
   markDispatched: (id) => req('POST', `/loads/${id}/mark-dispatched`),
   updateLoadStatus: (id, status, extra = {}) => req('POST', `/loads/${id}/status`, { status, ...extra }),
 

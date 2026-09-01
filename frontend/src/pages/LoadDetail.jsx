@@ -26,6 +26,8 @@ export default function LoadDetail() {
   const [dispatchMsg, setDispatchMsg] = useState('')
   const [msgLang, setMsgLang] = useState('en')
   const [msgLoading, setMsgLoading] = useState(false)
+  const [voiceUrl, setVoiceUrl] = useState('')
+  const [voiceLoading, setVoiceLoading] = useState(false)
   const [showMsg, setShowMsg] = useState(false)
   const [showEdit, setShowEdit] = useState(false)
   const [copying, setCopying] = useState(false)
@@ -83,11 +85,24 @@ export default function LoadDetail() {
 
   async function loadDispatch(lang) {
     setMsgLoading(true)
+    setVoiceUrl(v => { if (v) URL.revokeObjectURL(v); return '' })  // stale audio for old text
     try {
       const { message } = await api.dispatchMessage(id, lang === 'hi' ? 'hi' : undefined)
       setDispatchMsg(message); setMsgLang(lang)
     } catch (e) { alert(`Could not generate message: ${e.message}`) }
     finally { setMsgLoading(false) }
+  }
+
+  // Generate a downloadable/sendable MP3 voice note via Google TTS.
+  async function genVoice() {
+    setVoiceLoading(true)
+    try {
+      const { audio_base64 } = await api.tts(dispatchMsg, msgLang)
+      const bytes = Uint8Array.from(atob(audio_base64), c => c.charCodeAt(0))
+      const url = URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' }))
+      setVoiceUrl(prev => { if (prev) URL.revokeObjectURL(prev); return url })
+    } catch (e) { alert(e.message) }
+    finally { setVoiceLoading(false) }
   }
 
   async function handleGetDispatch() {
@@ -707,10 +722,14 @@ ${load.company_name || 'Dispatch'}`
                 }}>{label}</button>
               ))}
               <div style={{ flex: 1 }} />
-              <button onClick={playMessage} disabled={msgLoading || !dispatchMsg} title="Play aloud" style={{
-                padding: '6px 14px', borderRadius: 999, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+              <button onClick={playMessage} disabled={msgLoading || !dispatchMsg} title="Play aloud (device voice)" style={{
+                padding: '6px 12px', borderRadius: 999, fontSize: 13, fontWeight: 600, cursor: 'pointer',
                 background: T.bg2, color: T.text2, border: `1px solid ${T.sep}`,
               }}>🔊 Play</button>
+              <button onClick={genVoice} disabled={msgLoading || voiceLoading || !dispatchMsg} title="Generate a sendable MP3 voice note" style={{
+                padding: '6px 12px', borderRadius: 999, fontSize: 13, fontWeight: 600, cursor: voiceLoading ? 'wait' : 'pointer',
+                background: T.purple + '18', color: T.purple, border: `1px solid ${T.purple}55`,
+              }}>{voiceLoading ? '…' : '🎙️ Voice note'}</button>
             </div>
 
             <pre style={{
@@ -718,6 +737,14 @@ ${load.company_name || 'Dispatch'}`
               background: T.bg2, padding: 16, borderRadius: 10, maxHeight: 340, overflowY: 'auto', color: T.text,
               opacity: msgLoading ? 0.5 : 1,
             }}>{msgLoading ? (msgLang === 'hi' ? 'हिंदी में बना रहे हैं…' : 'Generating…') : dispatchMsg}</pre>
+
+            {voiceUrl && (
+              <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', background: T.bg2, borderRadius: 10, padding: '10px 12px' }}>
+                <audio controls src={voiceUrl} style={{ height: 34, flex: 1, minWidth: 180 }} />
+                <a href={voiceUrl} download={`dispatch-${load.load_number || load.id}-${msgLang}.mp3`}
+                  style={{ fontSize: 13, fontWeight: 700, color: T.blue, textDecoration: 'none' }}>⬇ Download</a>
+              </div>
+            )}
             <div style={{ display: 'flex', gap: 10, marginTop: 16 }}>
               <Btn color={T.blue} onClick={handleCopy}>{copying ? '✓ Copied!' : 'Copy to Clipboard'}</Btn>
               {canMarkDispatched(load) && (

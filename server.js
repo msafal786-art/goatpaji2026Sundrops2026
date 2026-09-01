@@ -1279,6 +1279,39 @@ ${english}` }],
   res.json({ message: english });
 });
 
+// ── Text-to-speech (Google Cloud TTS) ────────────────────────────────────────
+// Turns a dispatch message into an MP3 voice note the dispatcher can send to a
+// driver. Uses a Google API key (GOOGLE_TTS_API_KEY); dormant until it's set.
+function ttsConfigured() { return !!process.env.GOOGLE_TTS_API_KEY; }
+async function googleTTS(text, lang) {
+  const hi = lang === 'hi';
+  const body = {
+    input: { text },
+    voice: { languageCode: hi ? 'hi-IN' : 'en-US', name: hi ? 'hi-IN-Wavenet-A' : 'en-US-Wavenet-D' },
+    audioConfig: { audioEncoding: 'MP3', speakingRate: 0.95 },
+  };
+  const r = await fetch(`https://texttospeech.googleapis.com/v1/text:synthesize?key=${encodeURIComponent(process.env.GOOGLE_TTS_API_KEY)}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error?.message || `TTS ${r.status}`);
+  return data.audioContent; // base64 MP3
+}
+
+app.post('/api/tts', auth, async (req, res) => {
+  if (!ttsConfigured()) return res.status(400).json({ error: 'Voice notes are not set up yet — GOOGLE_TTS_API_KEY is missing on the server.' });
+  let text = String(req.body?.text || '').replace(/\*/g, '').trim();  // drop WhatsApp bold markers
+  if (!text) return res.status(400).json({ error: 'No text to speak' });
+  if (text.length > 5000) text = text.slice(0, 5000);
+  try {
+    const audio = await googleTTS(text, req.body?.lang === 'hi' ? 'hi' : 'en');
+    res.json({ audio_base64: audio });
+  } catch (e) {
+    console.error('[tts] failed', e.message);
+    res.status(500).json({ error: 'Voice generation failed', detail: e.message });
+  }
+});
+
 app.post('/api/loads/:id/mark-dispatched', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
   const load = db.prepare('SELECT company_id FROM loads WHERE id = ?').get(req.params.id);
   if (!load) return res.status(404).json({ error: 'Not found' });
