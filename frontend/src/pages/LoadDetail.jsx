@@ -245,10 +245,10 @@ ${load.company_name || 'Dispatch'}`
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
-        <button onClick={() => navigate('/loads')} style={{
+        <button onClick={() => (window.history.length > 1 ? navigate(-1) : navigate('/loads'))} style={{
           background: 'none', border: 'none', color: T.blue, cursor: 'pointer',
           fontSize: 13, padding: 0, fontWeight: 600,
-        }}>← Back to Loads</button>
+        }}>← Back</button>
         <div style={{ display: 'flex', gap: 6 }}>
           <button onClick={() => prevId && navigate(`/loads/${prevId}`)} disabled={!prevId} style={{
             padding: '6px 14px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: prevId ? 'pointer' : 'default',

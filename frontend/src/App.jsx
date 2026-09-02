@@ -207,7 +207,6 @@ function TopNav({ user, onLogout }) {
   // More = rarely-used only. Lanes lives in the Broker Inbox group for users who
   // have it; everyone else finds it here.
   const moreItems = [
-    { to: '/calendar', label: 'Calendar' },
     { to: '/deadhead', label: 'Deadhead' },
     ...(!showInbox ? [{ to: '/recommendations', label: 'Lanes' }] : []),
     ...(isAdmin ? [{ to: '/companies', label: 'Companies' }, { to: '/users', label: 'Users' }, { to: '/audit', label: 'Access Log' }] : []),
@@ -245,7 +244,8 @@ function TopNav({ user, onLogout }) {
 
       {/* Nav items */}
       <nav style={{ display: 'flex', alignItems: 'stretch', flex: 1 }}>
-        <NavItem label="Dispatch" to="/loads" />
+        <NavItem label="Home" to="/loads" />
+        <NavItem label="Calendar" to="/calendar" />
         <NavItem label="Dashboard" to="/dashboard" />
         <NavItem label="Compliance" mainTo="/compliance" children={complianceKids} />
         <NavItem label="Drivers" mainTo="/drivers" children={[
