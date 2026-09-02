@@ -181,13 +181,13 @@ export const api = {
   // Admin: fetch a user's portal profile for "view as" (runs as the real admin).
   viewProfile: (id) => req('GET', `/users/${id}/view-profile`, null, false, { skipViewAs: true }),
 
-  // Gmail / broker inbox (admin)
-  gmailStatus: () => req('GET', '/gmail/status'),
+  // Gmail / broker inbox — multiple mailboxes, one per carrier
+  gmailMailboxes: () => req('GET', '/gmail/mailboxes'),
   gmailAuthUrl: () => req('GET', '/gmail/auth-url'),
-  gmailSync: () => req('POST', '/gmail/sync', {}, false, { timeout: 60000 }),
-  gmailDisconnect: () => req('POST', '/gmail/disconnect'),
-  gmailSetCompany: (company_id) => req('PUT', '/gmail/company', { company_id }),
-  gmailThreads: () => req('GET', '/gmail/threads'),
+  gmailSyncMailbox: (id) => req('POST', `/gmail/mailboxes/${id}/sync`, {}, false, { timeout: 60000 }),
+  gmailDisconnectMailbox: (id) => req('DELETE', `/gmail/mailboxes/${id}`),
+  gmailSetMailboxCompany: (id, company_id) => req('PUT', `/gmail/mailboxes/${id}/company`, { company_id }),
+  gmailThreads: (integrationId) => req('GET', `/gmail/threads?integration_id=${integrationId}`),
   gmailThread: (threadId) => req('GET', `/gmail/threads/${threadId}`),
   gmailAssist: (threadId) => req('POST', `/gmail/threads/${threadId}/assist`, {}, false, { timeout: 45000 }),
   gmailDraftLoad: (threadId) => req('POST', `/gmail/threads/${threadId}/draft-load`, {}, false, { timeout: 60000 }),

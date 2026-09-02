@@ -503,9 +503,9 @@ function buildUserProfile(userId) {
   } else {
     user.portal_name = user.companies.map(c => c.name).join(' · ') || user.company_name || 'Dispatch Portal';
   }
-  // Whether to show the Broker Inbox: admin, or a user scoped to the carrier the
-  // inbox belongs to (currently WMK). Gates the nav so others don't see it.
-  user.can_see_inbox = canAccessInbox(user);
+  // Whether to show the Broker Inbox: admin always (to connect/manage), or a
+  // user who has at least one visible mailbox (their carrier's inbox).
+  user.can_see_inbox = scopeCompanyIds(user) === null || visibleMailboxes(user).length > 0;
   return user;
 }
 
@@ -2244,24 +2244,35 @@ app.get('/api/audit-log', auth, requireAdmin, (req, res) => {
 // Read-only. Visibility is scoped to the carrier the inbox belongs to (plus
 // admin): only that carrier's users see it — right now that's WMK.
 
-function inboxCompanyId() {
-  return db.prepare('SELECT company_id FROM email_integration WHERE id = 1').get()?.company_id ?? null;
+function mailboxById(id) {
+  return db.prepare('SELECT * FROM email_integration WHERE id = ?').get(id);
 }
-// True if this user may see the connected inbox: admin always; otherwise only
-// users scoped to the carrier the inbox belongs to.
-function canAccessInbox(user) {
+// Can this user see a given mailbox? Admin always; otherwise only if the mailbox
+// belongs to a carrier in the user's scope.
+function canAccessMailbox(user, m) {
+  if (!m) return false;
   if (scopeCompanyIds(user) === null) return true;      // admin
-  const cid = inboxCompanyId();
-  return cid != null && userCanAccessCompany(user, cid);
+  return m.company_id != null && userCanAccessCompany(user, m.company_id);
 }
-function requireInboxAccess(req, res, next) {
-  if (canAccessInbox(req.user)) return next();
-  return res.status(403).json({ error: 'Forbidden' });
+// Connected mailboxes this user may see.
+function visibleMailboxes(user) {
+  const all = db.prepare('SELECT * FROM email_integration WHERE refresh_token IS NOT NULL').all();
+  return all.filter(m => canAccessMailbox(user, m));
+}
+// Which mailbox a thread belongs to (for per-thread access checks).
+function threadIntegrationId(threadId) {
+  return db.prepare('SELECT integration_id FROM emails WHERE thread_id = ? LIMIT 1').get(threadId)?.integration_id ?? null;
+}
+function requireThreadAccess(req, res, next) {
+  const iid = threadIntegrationId(req.params.threadId);
+  if (!canAccessMailbox(req.user, mailboxById(iid))) return res.status(403).json({ error: 'Forbidden' });
+  req.mailboxId = iid;
+  next();
 }
 
-// Return a valid access token, refreshing via the stored refresh_token as needed.
-async function gmailAccessToken() {
-  const row = db.prepare('SELECT * FROM email_integration WHERE id = 1').get();
+// Return a valid access token for one mailbox, refreshing as needed.
+async function gmailAccessToken(integrationId) {
+  const row = mailboxById(integrationId);
   if (!row || !row.refresh_token) throw new gmail.GmailError('Gmail not connected', 'reauth');
   if (row.access_token && row.access_token_expiry &&
       new Date(row.access_token_expiry).getTime() - Date.now() > 120000) {
@@ -2269,54 +2280,68 @@ async function gmailAccessToken() {
   }
   const t = await gmail.refreshAccessToken(row.refresh_token);
   const expiry = new Date(Date.now() + (t.expires_in - 60) * 1000).toISOString();
-  db.prepare('UPDATE email_integration SET access_token=?, access_token_expiry=?, last_error=NULL WHERE id=1')
-    .run(t.access_token, expiry);
+  db.prepare('UPDATE email_integration SET access_token=?, access_token_expiry=?, last_error=NULL WHERE id=?')
+    .run(t.access_token, expiry, integrationId);
   return t.access_token;
 }
 
-// Pull recent messages into the local cache. Idempotent (INSERT OR IGNORE on the
-// unique gmail_id), so it's safe to run on a timer and on demand.
-async function syncGmail(limit = 40) {
-  const token = await gmailAccessToken();
+// Pull recent messages for one mailbox into the cache. Idempotent.
+async function syncGmail(integrationId, limit = 40) {
+  const token = await gmailAccessToken(integrationId);
   const ids = await gmail.listMessageIds(token, 'newer_than:30d -in:chats -category:promotions -category:social', limit);
   const insert = db.prepare(`INSERT OR IGNORE INTO emails
-    (gmail_id, thread_id, direction, from_name, from_email, to_email, subject, snippet, body_text, internal_date, has_attachments, attachments_json)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+    (integration_id, gmail_id, thread_id, direction, from_name, from_email, to_email, subject, snippet, body_text, internal_date, has_attachments, attachments_json)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`);
   let added = 0;
   for (const { id } of ids) {
     if (db.prepare('SELECT 1 FROM emails WHERE gmail_id = ?').get(id)) continue;
     const m = await gmail.getMessage(token, id);
     const direction = (m.label_ids || []).includes('SENT') ? 'outbound' : 'inbound';
-    insert.run(m.gmail_id, m.thread_id, direction, m.from_name, m.from_email, m.to_email,
+    insert.run(integrationId, m.gmail_id, m.thread_id, direction, m.from_name, m.from_email, m.to_email,
       m.subject, m.snippet, m.body_text, m.internal_date, m.has_attachments ? 1 : 0, JSON.stringify(m.attachments || []));
     added++;
   }
-  db.prepare('UPDATE email_integration SET last_synced_at=?, last_error=NULL WHERE id=1').run(new Date().toISOString());
+  db.prepare('UPDATE email_integration SET last_synced_at=?, last_error=NULL WHERE id=?').run(new Date().toISOString(), integrationId);
   return { added, scanned: ids.length };
 }
 
-app.get('/api/gmail/status', auth, requireInboxAccess, (req, res) => {
-  const row = db.prepare('SELECT company_id, email_address, refresh_token, connected_at, last_synced_at, last_error, active FROM email_integration WHERE id = 1').get();
+// List the mailboxes this user can see, plus admin management fields.
+app.get('/api/gmail/mailboxes', auth, (req, res) => {
   const isAdmin = scopeCompanyIds(req.user) === null;
+  const rows = db.prepare(`
+    SELECT ei.id, ei.email_address, ei.company_id, ei.connected_at, ei.last_synced_at, ei.last_error,
+           CASE WHEN ei.refresh_token IS NOT NULL THEN 1 ELSE 0 END AS connected, c.name AS company_name
+    FROM email_integration ei LEFT JOIN companies c ON ei.company_id = c.id
+    ORDER BY c.name, ei.email_address
+  `).all().filter(m => isAdmin || (m.company_id != null && userCanAccessCompany(req.user, m.company_id)));
   res.json({
-    configured: gmail.isConfigured(),          // env credentials present
-    connected: !!(row && row.refresh_token),   // the token is the real signal
-    email: row?.email_address || null,
-    company_id: row?.company_id ?? null,
-    connected_at: row?.connected_at || null,
-    last_synced_at: row?.last_synced_at || null,
-    last_error: row?.last_error || null,
-    // Admin can (re)assign which carrier owns the inbox.
+    configured: gmail.isConfigured(),
     manageable: isAdmin,
+    mailboxes: rows,
     companies: isAdmin ? db.prepare('SELECT id, name FROM companies ORDER BY name').all() : undefined,
   });
 });
 
-// Admin: set which carrier the connected inbox belongs to (scopes visibility).
-app.put('/api/gmail/company', auth, requireAdmin, (req, res) => {
+// Admin: assign a mailbox to a carrier (scopes who can see it).
+app.put('/api/gmail/mailboxes/:id/company', auth, requireAdmin, (req, res) => {
   const cid = req.body.company_id ? Number(req.body.company_id) : null;
-  db.prepare('UPDATE email_integration SET company_id = ? WHERE id = 1').run(cid);
+  db.prepare('UPDATE email_integration SET company_id = ? WHERE id = ?').run(cid, req.params.id);
   res.json({ ok: true, company_id: cid });
+});
+
+app.post('/api/gmail/mailboxes/:id/sync', auth, requireAdmin, async (req, res) => {
+  try { res.json(await syncGmail(Number(req.params.id), Number(req.body?.limit) || 40)); }
+  catch (e) {
+    db.prepare('UPDATE email_integration SET last_error=? WHERE id=?').run(e.message, req.params.id);
+    res.status(e.kind === 'reauth' ? 401 : 500).json({ error: e.message, kind: e.kind });
+  }
+});
+
+app.delete('/api/gmail/mailboxes/:id', auth, requireAdmin, (req, res) => {
+  const id = Number(req.params.id);
+  db.prepare('DELETE FROM emails WHERE integration_id = ?').run(id);
+  db.prepare('DELETE FROM email_integration WHERE id = ?').run(id);
+  res.json({ ok: true });
 });
 
 // Returns the Google consent URL. `state` is a short-lived signed token so the
@@ -2347,13 +2372,15 @@ app.get('/api/gmail/callback', async (req, res) => {
       address = prof.emailAddress || null;
     } catch {}
     const expiry = new Date(Date.now() + ((tok.expires_in || 3600) - 60) * 1000).toISOString();
-    db.prepare(`INSERT INTO email_integration (id, provider, email_address, refresh_token, access_token, access_token_expiry, connected_by, connected_at, active)
-      VALUES (1,'gmail',?,?,?,?,?,?,1)
-      ON CONFLICT(id) DO UPDATE SET email_address=excluded.email_address, refresh_token=excluded.refresh_token,
+    // One mailbox per address — reconnecting the same inbox refreshes it in place.
+    db.prepare(`INSERT INTO email_integration (provider, email_address, refresh_token, access_token, access_token_expiry, connected_by, connected_at, active)
+      VALUES ('gmail',?,?,?,?,?,?,1)
+      ON CONFLICT(email_address) DO UPDATE SET refresh_token=excluded.refresh_token,
         access_token=excluded.access_token, access_token_expiry=excluded.access_token_expiry,
         connected_by=excluded.connected_by, connected_at=excluded.connected_at, active=1, last_error=NULL`)
       .run(address, tok.refresh_token, tok.access_token, expiry, claims.admin_id, new Date().toISOString());
-    syncGmail(40).catch(e => console.error('[gmail] initial sync failed', e.message));
+    const mb = db.prepare('SELECT id FROM email_integration WHERE email_address = ?').get(address);
+    if (mb) syncGmail(mb.id, 40).catch(e => console.error('[gmail] initial sync failed', e.message));
     return back('connected');
   } catch (e) {
     console.error('[gmail] callback error', e.message);
@@ -2361,37 +2388,25 @@ app.get('/api/gmail/callback', async (req, res) => {
   }
 });
 
-app.post('/api/gmail/sync', auth, requireAdmin, async (req, res) => {
-  try {
-    const result = await syncGmail(Number(req.body?.limit) || 40);
-    res.json(result);
-  } catch (e) {
-    db.prepare('UPDATE email_integration SET last_error=? WHERE id=1').run(e.message);
-    res.status(e.kind === 'reauth' ? 401 : 500).json({ error: e.message, kind: e.kind });
-  }
-});
-
-app.post('/api/gmail/disconnect', auth, requireAdmin, (req, res) => {
-  db.prepare('DELETE FROM email_integration WHERE id = 1').run();
-  res.json({ ok: true });
-});
-
-// Threads = latest message per Gmail thread, most recent first.
-app.get('/api/gmail/threads', auth, requireInboxAccess, (req, res) => {
+// Threads for one mailbox = latest message per Gmail thread, most recent first.
+app.get('/api/gmail/threads', auth, (req, res) => {
+  const iid = Number(req.query.integration_id);
+  if (!canAccessMailbox(req.user, mailboxById(iid))) return res.status(403).json({ error: 'Forbidden' });
   const rows = db.prepare(`
     SELECT e.thread_id, e.from_name, e.from_email, e.to_email, e.subject, e.snippet,
            e.internal_date, e.direction, e.has_attachments, e.load_id,
-           (SELECT COUNT(*) FROM emails x WHERE x.thread_id = e.thread_id) AS msg_count
+           (SELECT COUNT(*) FROM emails x WHERE x.thread_id = e.thread_id AND x.integration_id = e.integration_id) AS msg_count
     FROM emails e
-    JOIN (SELECT thread_id, MAX(internal_date) md FROM emails GROUP BY thread_id) t
+    JOIN (SELECT thread_id, MAX(internal_date) md FROM emails WHERE integration_id = ? GROUP BY thread_id) t
       ON e.thread_id = t.thread_id AND e.internal_date = t.md
+    WHERE e.integration_id = ?
     ORDER BY e.internal_date DESC
     LIMIT 100
-  `).all();
+  `).all(iid, iid);
   res.json(rows);
 });
 
-app.get('/api/gmail/threads/:threadId', auth, requireInboxAccess, (req, res) => {
+app.get('/api/gmail/threads/:threadId', auth, requireThreadAccess, (req, res) => {
   const rows = db.prepare(`
     SELECT id, gmail_id, direction, from_name, from_email, to_email, subject, body_text,
            snippet, internal_date, has_attachments, attachments_json, load_id
@@ -2402,7 +2417,7 @@ app.get('/api/gmail/threads/:threadId', auth, requireInboxAccess, (req, res) => 
 
 // AI assist: summarize a broker thread and draft a brief reply to copy/send.
 // Read-only + human-in-the-loop — the draft is only ever shown, never sent.
-app.post('/api/gmail/threads/:threadId/assist', auth, requireInboxAccess, async (req, res) => {
+app.post('/api/gmail/threads/:threadId/assist', auth, requireThreadAccess, async (req, res) => {
   const msgs = db.prepare(
     'SELECT direction, from_name, from_email, subject, body_text FROM emails WHERE thread_id = ? ORDER BY internal_date ASC'
   ).all(req.params.threadId);
@@ -2707,7 +2722,7 @@ function createLoadFromParsed(d, companyId) {
 }
 
 // Parse the first PDF attachment in a thread into a draft load (pending review).
-app.post('/api/gmail/threads/:threadId/draft-load', auth, requireInboxAccess, async (req, res) => {
+app.post('/api/gmail/threads/:threadId/draft-load', auth, requireThreadAccess, async (req, res) => {
   const msgs = db.prepare('SELECT gmail_id, subject, from_email, attachments_json FROM emails WHERE thread_id = ? AND has_attachments = 1 ORDER BY internal_date DESC').all(req.params.threadId);
   let target = null, att = null;
   for (const m of msgs) {
@@ -2719,12 +2734,14 @@ app.post('/api/gmail/threads/:threadId/draft-load', auth, requireInboxAccess, as
   if (db.prepare('SELECT id FROM load_drafts WHERE gmail_id = ?').get(target.gmail_id))
     return res.status(409).json({ error: 'A draft already exists for this email' });
   try {
-    const token = await gmailAccessToken();
+    const token = await gmailAccessToken(req.mailboxId);
     const buf = await gmail.getAttachment(token, target.gmail_id, att.attachmentId);
     const parsed = await parseRateConFromBase64(buf.toString('base64'));
+    // The draft belongs to the mailbox's carrier.
+    const companyId = mailboxById(req.mailboxId)?.company_id ?? null;
     const info = db.prepare(`INSERT INTO load_drafts (company_id, source, gmail_id, thread_id, from_email, subject, attachment_name, parsed_json, status, created_by)
       VALUES (?,?,?,?,?,?,?,?, 'pending', ?)`).run(
-      null, 'email', target.gmail_id, req.params.threadId, target.from_email, target.subject, att.filename || null, JSON.stringify(parsed), req.user.id);
+      companyId, 'email', target.gmail_id, req.params.threadId, target.from_email, target.subject, att.filename || null, JSON.stringify(parsed), req.user.id);
     res.json({ id: info.lastInsertRowid, parsed });
   } catch (e) {
     console.error('[draft-load] failed', e.message);
@@ -2732,34 +2749,38 @@ app.post('/api/gmail/threads/:threadId/draft-load', auth, requireInboxAccess, as
   }
 });
 
-app.get('/api/load-drafts', auth, requireInboxAccess, (req, res) => {
-  const rows = db.prepare(`SELECT id, source, thread_id, from_email, subject, attachment_name, parsed_json, status, created_load_id, created_at
-    FROM load_drafts WHERE status = 'pending' ORDER BY created_at DESC, id DESC`).all();
+app.get('/api/load-drafts', auth, (req, res) => {
+  const isAdmin = scopeCompanyIds(req.user) === null;
+  const rows = db.prepare(`SELECT id, company_id, source, thread_id, from_email, subject, attachment_name, parsed_json, status, created_load_id, created_at
+    FROM load_drafts WHERE status = 'pending' ORDER BY created_at DESC, id DESC`).all()
+    .filter(d => isAdmin || (d.company_id != null && userCanAccessCompany(req.user, d.company_id)));
   res.json(rows.map(r => ({ ...r, parsed_json: r.parsed_json ? JSON.parse(r.parsed_json) : {} })));
 });
 
-app.post('/api/load-drafts/:id/approve', auth, requireInboxAccess, (req, res) => {
+app.post('/api/load-drafts/:id/approve', auth, (req, res) => {
   const draft = db.prepare("SELECT * FROM load_drafts WHERE id = ? AND status = 'pending'").get(req.params.id);
   if (!draft) return res.status(404).json({ error: 'Draft not found' });
+  const isAdmin = scopeCompanyIds(req.user) === null;
+  // A scoped user may only approve their own carrier's drafts.
+  if (!isAdmin && !userCanAccessCompany(req.user, draft.company_id)) return res.status(403).json({ error: 'Forbidden' });
   const parsed = JSON.parse(draft.parsed_json || '{}');
-  // Reject duplicate load numbers, like the manual create flow.
   if (parsed.load_number && parsed.load_number.trim()) {
     const dup = db.prepare('SELECT id FROM loads WHERE TRIM(load_number) = ? OR TRIM(broker_order) = ? LIMIT 1').get(parsed.load_number.trim(), parsed.load_number.trim());
     if (dup) return res.status(409).json({ error: `Load #${parsed.load_number} already exists (ID ${dup.id})` });
   }
-  // Admin may assign any carrier; a scoped user's load always goes to the
-  // inbox's own carrier (never trust the body for them).
-  const isAdmin = scopeCompanyIds(req.user) === null;
-  const companyId = isAdmin ? (req.body.company_id || inboxCompanyId() || null) : inboxCompanyId();
+  // Admin may override the carrier; a scoped user's load stays on the draft's carrier.
+  const companyId = isAdmin ? (req.body.company_id || draft.company_id || null) : draft.company_id;
   const loadId = createLoadFromParsed(parsed, companyId);
   db.prepare("UPDATE load_drafts SET status='approved', created_load_id=?, company_id=? WHERE id=?").run(loadId, companyId, draft.id);
   logActivity(loadId, req, 'created', `Load created from email rate con${parsed.load_number ? ' (#' + parsed.load_number + ')' : ''}`);
   res.json({ ok: true, load_id: loadId });
 });
 
-app.post('/api/load-drafts/:id/reject', auth, requireInboxAccess, (req, res) => {
-  const info = db.prepare("UPDATE load_drafts SET status='rejected' WHERE id = ? AND status = 'pending'").run(req.params.id);
-  if (!info.changes) return res.status(404).json({ error: 'Draft not found' });
+app.post('/api/load-drafts/:id/reject', auth, (req, res) => {
+  const draft = db.prepare("SELECT company_id FROM load_drafts WHERE id = ? AND status = 'pending'").get(req.params.id);
+  if (!draft) return res.status(404).json({ error: 'Draft not found' });
+  if (scopeCompanyIds(req.user) !== null && !userCanAccessCompany(req.user, draft.company_id)) return res.status(403).json({ error: 'Forbidden' });
+  db.prepare("UPDATE load_drafts SET status='rejected' WHERE id = ?").run(req.params.id);
   res.json({ ok: true });
 });
 
@@ -3118,14 +3139,17 @@ if (process.env.GMAIL_SYNC_ENABLED !== 'false') {
   let gmailSyncing = false;
   setInterval(async () => {
     if (gmailSyncing) return;
-    const row = db.prepare('SELECT refresh_token FROM email_integration WHERE id = 1').get();
-    if (!row || !row.refresh_token) return;
+    const boxes = db.prepare('SELECT id FROM email_integration WHERE refresh_token IS NOT NULL').all();
+    if (!boxes.length) return;
     gmailSyncing = true;
-    try { await syncGmail(40); }
-    catch (e) {
-      db.prepare('UPDATE email_integration SET last_error=? WHERE id=1').run(e.message);
-      console.error('[gmail] background sync error:', e.message);
-    } finally { gmailSyncing = false; }
+    for (const b of boxes) {
+      try { await syncGmail(b.id, 40); }
+      catch (e) {
+        db.prepare('UPDATE email_integration SET last_error=? WHERE id=?').run(e.message, b.id);
+        console.error('[gmail] background sync error (mailbox', b.id + '):', e.message);
+      }
+    }
+    gmailSyncing = false;
   }, GMAIL_SYNC_MINUTES * 60 * 1000);
 }
 

@@ -318,15 +318,15 @@ db.exec(`
 `);
 
 // ── Email integration (Gmail) ────────────────────────────────────────────────
-// A single connected mailbox (the Goat Inc inbox) whose broker communication is
-// surfaced in the portal. One row, id=1. refresh_token is the long-lived grant;
-// access_token is cached and refreshed as needed.
+// One row per connected mailbox — each belongs to a carrier (company_id) and is
+// visible to that carrier's users (plus admin). refresh_token is the long-lived
+// grant; access_token is cached and refreshed as needed.
 db.exec(`
   CREATE TABLE IF NOT EXISTS email_integration (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     provider TEXT DEFAULT 'gmail',
     company_id INTEGER,
-    email_address TEXT,
+    email_address TEXT UNIQUE,
     refresh_token TEXT,
     access_token TEXT,
     access_token_expiry TEXT,
@@ -338,10 +338,10 @@ db.exec(`
   );
 
   -- Cached copy of synced messages so the inbox renders without hitting Gmail
-  -- on every view. body_text is the extracted plain text; direction marks
-  -- whether we sent it (SENT label) or received it.
+  -- on every view. integration_id ties each message to its mailbox.
   CREATE TABLE IF NOT EXISTS emails (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    integration_id INTEGER,
     gmail_id TEXT UNIQUE,
     thread_id TEXT,
     direction TEXT,
@@ -403,6 +403,46 @@ if (!fuelCols.includes('tran_time')) db.prepare('ALTER TABLE fuel_transactions A
 // email_integration.company_id added later — the inbox belongs to one carrier.
 const eiCols = db.prepare("PRAGMA table_info(email_integration)").all().map(r => r.name);
 if (!eiCols.includes('company_id')) db.prepare('ALTER TABLE email_integration ADD COLUMN company_id INTEGER').run();
+
+// Multi-mailbox: the original table was single-row (CHECK id=1). Rebuild it
+// without that constraint so more than one carrier's inbox can be connected.
+// Preserves the existing row(s), tokens and all, via explicit column copy.
+const eiSql = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='email_integration'").get()?.sql || '';
+if (/CHECK\s*\(\s*id\s*=\s*1\s*\)/i.test(eiSql)) {
+  const cols = db.prepare("PRAGMA table_info(email_integration)").all().map(r => r.name);
+  const keep = ['id','provider','company_id','email_address','refresh_token','access_token','access_token_expiry','connected_by','connected_at','last_synced_at','last_error','active'].filter(c => cols.includes(c));
+  const list = keep.join(', ');
+  const rebuild = db.transaction(() => {
+    db.exec(`CREATE TABLE email_integration_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      provider TEXT DEFAULT 'gmail',
+      company_id INTEGER,
+      email_address TEXT UNIQUE,
+      refresh_token TEXT,
+      access_token TEXT,
+      access_token_expiry TEXT,
+      connected_by INTEGER,
+      connected_at TEXT,
+      last_synced_at TEXT,
+      last_error TEXT,
+      active INTEGER DEFAULT 1
+    );`);
+    db.exec(`INSERT INTO email_integration_new (${list}) SELECT ${list} FROM email_integration;`);
+    db.exec('DROP TABLE email_integration;');
+    db.exec('ALTER TABLE email_integration_new RENAME TO email_integration;');
+  });
+  rebuild();
+}
+
+// emails.integration_id ties each cached message to its mailbox. Existing rows
+// (before multi-mailbox) belong to the first/only mailbox.
+const emailCols = db.prepare("PRAGMA table_info(emails)").all().map(r => r.name);
+if (!emailCols.includes('integration_id')) {
+  db.prepare('ALTER TABLE emails ADD COLUMN integration_id INTEGER').run();
+  const first = db.prepare('SELECT MIN(id) id FROM email_integration').get()?.id;
+  if (first) db.prepare('UPDATE emails SET integration_id = ? WHERE integration_id IS NULL').run(first);
+  db.prepare('CREATE INDEX IF NOT EXISTS idx_emails_integration ON emails(integration_id)').run();
+}
 
 // ── Load review queue ────────────────────────────────────────────────────────
 // Rate cons parsed from broker emails land here as drafts; a human approves
