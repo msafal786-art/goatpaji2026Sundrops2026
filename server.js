@@ -2619,10 +2619,16 @@ app.post('/api/fuel/upload', auth, requireRole('dispatcher', 'company_owner'), f
     db.transaction(() => {
       rows.forEach((r, i) => {
         const flags = flagsByRow[i];
+        // Dedup key: the WEX Transaction ID (invoice) when present; otherwise a
+        // deterministic fingerprint of the transaction, so a row with no ID still
+        // can't be counted twice across re-uploads. The UNIQUE(invoice,card,item,
+        // amount) constraint then makes re-imports idempotent.
+        const dedupInvoice = r.invoice
+          || 's:' + [r.card_number, r.tran_date, r.tran_time, r.location_name, r.item, r.amount].map(x => x == null ? '' : x).join('|');
         const info = insert.run({
           company_id: companyId,
           card_number: r.card_number || null, tran_date: r.tran_date || null, tran_time: r.tran_time || null,
-          invoice: r.invoice || null, unit: r.unit || null, driver_name: r.driver_name || null, odometer: r.odometer || null,
+          invoice: dedupInvoice, unit: r.unit || null, driver_name: r.driver_name || null, odometer: r.odometer || null,
           location_name: r.location_name || null, city: r.city || null, state: r.state || null,
           item: r.item || null, unit_price: Number(r.unit_price) || 0, qty: Number(r.qty) || 0,
           fees: Number(r.fees) || 0, amount: Number(r.amount) || 0, db_flag: r.db_flag || null,
