@@ -26,7 +26,26 @@ function finalDrop(load) {
     city: last?.city || load.delivery_city,
     state: last?.state || load.delivery_state,
     date: (last?.date || load.delivery_date || '').slice(0, 10),
+    time: last?.time || load.delivery_time || '',
   }
+}
+
+// "08:00 AM" / "13:30" → "8:00a" / "1:30p"; blank stays blank.
+function shortTime(t) {
+  const m = String(t || '').match(/(\d{1,2}):(\d{2})\s*([AaPp])?/)
+  if (!m) return ''
+  let h = +m[1]; const min = m[2]; let ap = m[3] ? m[3].toLowerCase() : null
+  if (ap === null) { ap = h >= 12 ? 'p' : 'a'; h = h % 12 || 12 } else { h = h % 12 || 12 }
+  return `${h}:${min}${ap}`
+}
+// Minutes-since-midnight for chronological sorting; missing time sorts last.
+function timeMin(t) {
+  const m = String(t || '').match(/(\d{1,2}):(\d{2})\s*([AaPp])?/)
+  if (!m) return 9999
+  let h = +m[1]; const min = +m[2]; const ap = m[3] ? m[3].toLowerCase() : null
+  if (ap === 'p' && h < 12) h += 12
+  if (ap === 'a' && h === 12) h = 0
+  return h * 60 + min
 }
 
 export default function Calendar() {
@@ -36,6 +55,7 @@ export default function Calendar() {
   const [loading, setLoading] = useState(true)
   const [view, setView] = useState('week')
   const [carrier, setCarrier] = useState(null)       // company name, null = all
+  const [kindFilter, setKindFilter] = useState('all') // 'all' | 'PU' | 'DEL'
   const [dayOpen, setDayOpen] = useState(null)       // date string for the day panel
   const [cursor, setCursor] = useState(() => {
     const now = new Date()
@@ -64,16 +84,20 @@ export default function Calendar() {
     if (!dateStr) return
     ;(byDate[dateStr] ||= []).push(entry)
   }
+  const showPU = kindFilter !== 'DEL'
+  const showDEL = kindFilter !== 'PU'
   for (const load of visible) {
     const pu = (load.pickup_date || '').slice(0, 10)
     const drop = finalDrop(load)
-    push(pu, { load, kind: 'PU', city: load.pickup_city, state: load.pickup_state })
-    if (drop.date && drop.date !== pu) {
-      push(drop.date, { load, kind: 'DEL', city: drop.city, state: drop.state })
+    if (showPU) push(pu, { load, kind: 'PU', city: load.pickup_city, state: load.pickup_state, time: load.pickup_time })
+    // Show the drop on its own day (or on the pickup day when only deliveries are shown).
+    if (showDEL && drop.date && (drop.date !== pu || !showPU)) {
+      push(drop.date, { load, kind: 'DEL', city: drop.city, state: drop.state, time: drop.time })
     }
   }
+  // Chronological within a day, pickups before deliveries at the same time.
   for (const key of Object.keys(byDate)) {
-    byDate[key].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'PU' ? -1 : 1))
+    byDate[key].sort((a, b) => (timeMin(a.time) - timeMin(b.time)) || (a.kind === b.kind ? 0 : a.kind === 'PU' ? -1 : 1))
   }
 
   const today = ymd(new Date())
@@ -127,7 +151,8 @@ export default function Calendar() {
         .map(s => ({ key: s, color: STATUS[s].color, label: STATUS[s].label }))
 
   function Entry({ entry, size = 'sm' }) {
-    const { load, kind, city, state } = entry
+    const { load, kind, city, state, time } = entry
+    const tShort = shortTime(time)
     const st = STATUS[load.status] || { color: T.text3, label: load.status }
     // Admins work across carriers, so color encodes the CARRIER (one hue per
     // company). A scoped user has only one carrier — carrier-color would make
@@ -138,7 +163,7 @@ export default function Calendar() {
     return (
       <div
         onClick={e => { e.stopPropagation(); navigate(`/loads/${load.id}`) }}
-        title={`${load.load_number || load.id} · ${load.company_name || 'Unknown carrier'} · ${st.label} · ${kind === 'PU' ? 'Pick up' : 'Deliver'} ${[city, state].filter(Boolean).join(', ')}${load.broker_name ? ` · broker ${load.broker_name}` : ''}${load.driver_name ? ` · ${load.driver_name}` : ' · no driver'}`}
+        title={`${load.load_number || load.id} · ${load.company_name || 'Unknown carrier'} · ${st.label} · ${kind === 'PU' ? 'Pick up' : 'Deliver'}${time ? ' @ ' + time : ''} ${[city, state].filter(Boolean).join(', ')}${load.broker_name ? ` · broker ${load.broker_name}` : ''}${load.driver_name ? ` · ${load.driver_name}` : ' · no driver'}`}
         style={{
           background: cColor + (isDel ? '14' : '22'),
           borderLeft: `${isDel ? 2 : 3}px ${isDel ? 'dashed' : 'solid'} ${cColor}`,
@@ -153,6 +178,7 @@ export default function Calendar() {
           fontWeight: 800, fontSize: size === 'sm' ? 8 : 9, letterSpacing: 0.4,
           color: cColor, marginRight: 4,
         }}>{kind}</span>
+        {tShort && <span style={{ fontWeight: 800, color: cColor, marginRight: 4 }}>{tShort}</span>}
         <span style={{ fontWeight: 700, color: T.text }}>{load.load_number || `#${load.id}`}</span>
         <span style={{ color: T.text2 }}> {[city, state].filter(Boolean).join(', ')}</span>
         {size !== 'sm' && (
@@ -202,6 +228,13 @@ export default function Calendar() {
           </span>
           <button onClick={() => view === 'month' ? shiftMonth(1) : shiftWeek(1)} style={navBtn}>›</button>
         </div>
+      </div>
+
+      {/* Pick / Drop filter — everyone. */}
+      <div style={{ display: 'flex', gap: 6, marginBottom: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+        {[['all', 'Picks & Drops'], ['PU', 'Pickups'], ['DEL', 'Deliveries']].map(([k, label]) => (
+          <button key={k} onClick={() => setKindFilter(k)} style={chip(kindFilter === k, T.blue)}>{label}</button>
+        ))}
       </div>
 
       {/* Carrier filter — admin-only, mirrors the load board chips. Scoped users
