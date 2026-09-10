@@ -211,7 +211,9 @@ export default function LoadForm({ load, initial, onClose, onSave }) {
     catch (err) { setError(err.message); setSaving(false) }
   }
 
-  const deleteBtn = load && isAdmin && (
+  // Any user editing a load may delete it. The server still scopes deletion to
+  // the user's own carrier (admin can delete any), so this is safe to show to all.
+  const deleteBtn = load && (
     <button type="button" disabled={saving} onClick={handleDelete}
       style={{ padding: '10px 16px', background: T.red + '15', color: T.red, border: `1px solid ${T.red}40`, borderRadius: 9, cursor: 'pointer', fontWeight: 600, fontSize: 13 }}>
       Delete Load
