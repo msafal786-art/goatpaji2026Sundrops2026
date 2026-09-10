@@ -2668,6 +2668,17 @@ app.get('/api/fuel/summary', auth, requireRole('dispatcher', 'company_owner'), (
   res.json({ totals, byCard });
 });
 
+// Delete one fuel transaction — any user, but only within their own carrier's
+// scope (admin may delete any). Removing a bad/duplicate row is safe: the report
+// can always be re-uploaded, and dedup keeps a re-upload from restoring dupes.
+app.delete('/api/fuel/transactions/:id', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
+  const row = db.prepare('SELECT company_id FROM fuel_transactions WHERE id = ?').get(req.params.id);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  if (!userCanAccessCompany(req.user, row.company_id)) return res.status(403).json({ error: 'Forbidden' });
+  db.prepare('DELETE FROM fuel_transactions WHERE id = ?').run(req.params.id);
+  res.json({ ok: true });
+});
+
 // ── Load review queue (Stage 3: rate-con emails → draft loads) ───────────────
 // Same extraction schema/prompt as /api/parse-rate-con, callable on raw bytes.
 const RATECON_PROMPT = `Extract all load/dispatch information from this rate confirmation PDF. Return ONLY a valid JSON object in exactly this format:

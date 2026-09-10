@@ -208,6 +208,7 @@ export const api = {
     return req('GET', `/fuel/transactions${q ? `?${q}` : ''}`)
   },
   fuelSummary: () => req('GET', '/fuel/summary'),
+  fuelDeleteTxn: (id) => req('DELETE', `/fuel/transactions/${id}`),
   // Uploads can be a 20 MB scan over a phone connection, and the server also
   // pushes to Drive. No retry — filing the same document twice is worse than
   // an error the dispatcher can act on.

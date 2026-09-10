@@ -47,6 +47,12 @@ export default function Fuel() {
   }
   useEffect(() => { load() }, [flaggedOnly])
 
+  async function remove(r) {
+    if (!confirm(`Delete this transaction?\n${r.tran_date} · ${r.card_number} · ${r.item} · ${fmt$(r.amount)}`)) return
+    try { await api.fuelDeleteTxn(r.id); setRows(list => list.filter(x => x.id !== r.id)); api.fuelSummary().then(setSummary).catch(() => {}) }
+    catch (e) { alert(e.message) }
+  }
+
   async function onFile(file) {
     if (!file) return
     setUploading(true); setUploadMsg(null)
@@ -109,8 +115,8 @@ export default function Fuel() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 720 }}>
             <thead>
               <tr style={{ background: T.bg2, color: T.text3, textAlign: 'left' }}>
-                {['Date', 'Time', 'Card', 'Fuel', 'Location', 'Gal', '$/gal', 'Amount', 'Flags'].map(h => (
-                  <th key={h} style={{ padding: '9px 12px', fontWeight: 600, whiteSpace: 'nowrap' }}>{h}</th>
+                {['Date', 'Time', 'Card', 'Fuel', 'Location', 'Gal', '$/gal', 'Amount', 'Flags', ''].map((h, i) => (
+                  <th key={i} style={{ padding: '9px 12px', fontWeight: 600, whiteSpace: 'nowrap' }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -138,6 +144,11 @@ export default function Fuel() {
                           }}>{CODE_LABEL[f.code] || f.code}</span>
                         ))}
                       </div>
+                    </td>
+                    <td style={{ padding: '9px 12px', textAlign: 'right' }}>
+                      <button onClick={() => remove(r)} title="Delete transaction" style={{
+                        background: 'none', border: 'none', color: T.text3, cursor: 'pointer', fontSize: 15, lineHeight: 1, padding: 4,
+                      }}>✕</button>
                     </td>
                   </tr>
                 )
