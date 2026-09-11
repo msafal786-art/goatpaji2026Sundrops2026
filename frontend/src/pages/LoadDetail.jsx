@@ -264,14 +264,15 @@ ${load.company_name || 'Dispatch'}`
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 24, flexWrap: 'wrap', gap: 12 }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
-            {load.broker_order && (
-              <h1 style={{ fontSize: 24, fontWeight: 700, color: T.text, letterSpacing: -0.4, margin: 0 }}>
-                {load.broker_order}
-              </h1>
+            {/* Load number leads; the order/PO number is secondary. */}
+            <h1 style={{ fontSize: 24, fontWeight: 700, color: T.text, letterSpacing: -0.4, margin: 0 }}>
+              {load.load_number || load.broker_order || `#${load.id}`}
+            </h1>
+            {load.broker_order && load.load_number && (
+              <span style={{ fontSize: 14, fontWeight: 600, color: T.text3 }}>
+                Order #{load.broker_order}
+              </span>
             )}
-            <span style={{ fontSize: 14, fontWeight: 600, color: T.text3 }}>
-              #{load.load_number || load.id}
-            </span>
           </div>
           <div style={{ marginTop: 6, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{
