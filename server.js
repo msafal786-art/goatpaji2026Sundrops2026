@@ -985,6 +985,19 @@ app.get('/api/loads/check-duplicate', auth, (req, res) => {
   res.json({ duplicate: !!existing, load: existing || null });
 });
 
+// Guard against assigning a driver who shouldn't be assignable. Returns an error
+// string, or null when the assignment is allowed. Empty driverId = unassigning, OK.
+// Enforced server-side on every path that sets a load's driver so a stale/hidden
+// UI (or a direct API call) can't slip a deactivated or wrong-company driver in.
+function driverAssignmentError(driverId, companyId) {
+  if (!driverId) return null;
+  const d = db.prepare('SELECT company_id, is_active, full_name FROM drivers WHERE id = ?').get(driverId);
+  if (!d) return 'Driver not found';
+  if (d.is_active === 0) return `${d.full_name || 'That driver'} is deactivated — reactivate them or pick another driver`;
+  if (companyId != null && d.company_id !== Number(companyId)) return "Driver must belong to the load's company";
+  return null;
+}
+
 app.post('/api/loads', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
   // Company assignment is authoritative server-side. A scoped user may only
   // create loads for a company in their scope — never trust req.body.company_id
@@ -1016,6 +1029,9 @@ app.post('/api/loads', auth, requireRole('dispatcher', 'company_owner'), (req, r
     ).get(load_number.trim(), load_number.trim());
     if (dup) return res.status(409).json({ error: `Load #${load_number} already exists (ID ${dup.id})` });
   }
+
+  const drvErr = driverAssignmentError(driver_id, cid);
+  if (drvErr) return res.status(400).json({ error: drvErr });
 
   const extraStopsJson = Array.isArray(extra_stops) && extra_stops.length > 0
     ? JSON.stringify(extra_stops) : null;
@@ -1082,6 +1098,13 @@ app.put('/api/loads/:id', auth, requireRole('dispatcher', 'company_owner'), (req
   // Only admin dispatcher can change which company a load belongs to
   const isAdminEdit = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
   const effectiveCompanyId = isAdminEdit ? (company_id || existing.company_id) : existing.company_id;
+
+  // Only re-validate the driver when it's actually changing (an edit that keeps
+  // an already-assigned driver shouldn't fail just because they were later deactivated).
+  if (driver_id && driver_id !== existing.driver_id) {
+    const drvErr = driverAssignmentError(driver_id, effectiveCompanyId);
+    if (drvErr) return res.status(400).json({ error: drvErr });
+  }
 
   const extraStopsJson = Array.isArray(extra_stops) && extra_stops.length > 0
     ? JSON.stringify(extra_stops) : null;
@@ -2813,9 +2836,9 @@ app.put('/api/loads/:id/change-driver', auth, requireRole('dispatcher', 'company
 
   const newDriver = db.prepare('SELECT * FROM drivers WHERE id = ?').get(driver_id);
   if (!newDriver) return res.status(404).json({ error: 'Driver not found' });
-  // The assigned driver must belong to the same company as the load.
-  if (newDriver.company_id !== load.company_id)
-    return res.status(403).json({ error: "Driver must belong to the load's company" });
+  // Must belong to the load's company AND be active (not deactivated).
+  const drvErr = driverAssignmentError(driver_id, load.company_id);
+  if (drvErr) return res.status(400).json({ error: drvErr });
 
   // Store original driver the first time a swap happens
   const originalId = load.original_driver_id || load.driver_id;

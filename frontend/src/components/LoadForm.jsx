@@ -267,8 +267,12 @@ export default function LoadForm({ load, initial, onClose, onSave }) {
                   }))
                 }}>
                   <option value="">Unassigned</option>
-                  {drivers.map(d => (
-                    <option key={d.id} value={d.id}>{d.full_name} — {d.company_name}{d.status !== 'available' ? ` (${d.status})` : ''}</option>
+                  {/* Deactivated drivers are not assignable — hide them, but keep
+                      the one already on this load visible so the edit form renders. */}
+                  {drivers
+                    .filter(d => d.is_active !== 0 || String(d.id) === String(form.driver_id))
+                    .map(d => (
+                    <option key={d.id} value={d.id}>{d.full_name} — {d.company_name}{d.is_active === 0 ? ' (deactivated)' : d.status !== 'available' ? ` (${d.status})` : ''}</option>
                   ))}
                 </select>
               </Field>
