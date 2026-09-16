@@ -25,6 +25,7 @@ export default function Fuel() {
   const [summary, setSummary] = useState(null)
   const [rows, setRows] = useState([])
   const [flaggedOnly, setFlaggedOnly] = useState(false)
+  const [cardFilter, setCardFilter] = useState('')   // '' = all cards
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [uploadMsg, setUploadMsg] = useState(null)
@@ -40,12 +41,15 @@ export default function Fuel() {
   async function load() {
     setLoading(true)
     try {
-      const [s, t] = await Promise.all([api.fuelSummary(), api.fuelTransactions({ flagged: flaggedOnly ? '1' : '' })])
+      const [s, t] = await Promise.all([
+        api.fuelSummary(),
+        api.fuelTransactions({ flagged: flaggedOnly ? '1' : '', card: cardFilter }),
+      ])
       setSummary(s); setRows(t)
     } catch { /* empty state */ }
     finally { setLoading(false) }
   }
-  useEffect(() => { load() }, [flaggedOnly])
+  useEffect(() => { load() }, [flaggedOnly, cardFilter])
 
   async function remove(r) {
     if (!confirm(`Delete this transaction?\n${r.tran_date} · ${r.card_number} · ${r.item} · ${fmt$(r.amount)}`)) return
@@ -97,11 +101,26 @@ export default function Fuel() {
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
         <button onClick={() => setFlaggedOnly(false)} style={tab(!flaggedOnly)}>All transactions</button>
         <button onClick={() => setFlaggedOnly(true)} style={tab(flaggedOnly, T.red)}>
           ⚠ Anomalies{summary?.totals.flagged ? ` (${summary.totals.flagged})` : ''}
         </button>
+        <div style={{ flex: 1 }} />
+        {/* Filter to one card (options + totals come from the per-card summary). */}
+        {summary?.byCard?.length > 1 && (
+          <select value={cardFilter} onChange={e => setCardFilter(e.target.value)} style={{
+            padding: '7px 12px', borderRadius: 8, background: T.bg2, color: T.text,
+            border: `1px solid ${T.sep}`, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+          }}>
+            <option value="">All cards ({summary.byCard.length})</option>
+            {summary.byCard.map(c => (
+              <option key={c.card_number} value={c.card_number}>
+                Card {c.card_number} — {fmt$(c.amount)}{c.flagged ? ` · ${c.flagged} ⚠` : ''}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       {loading ? (
