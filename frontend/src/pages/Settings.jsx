@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { T } from '../theme.js'
 import { useTheme } from '../ThemeContext.jsx'
 import { useAuth } from '../AuthContext.jsx'
-import { api } from '../api.js'
+import { api, openSummaryPreview } from '../api.js'
 import { isAdmin as isAdminUser, canManageTeam, userCompanies } from '../permissions.js'
 
 function useThemeForce() {
@@ -12,18 +12,6 @@ function useThemeForce() {
     window.addEventListener('themechange', fn)
     return () => window.removeEventListener('themechange', fn)
   }, [])
-}
-
-// Opens the weekly summary email as it would arrive, in a new tab.
-async function openSummaryPreview(companyId) {
-  const w = window.open('', '_blank')
-  try {
-    const html = await api.summaryPreviewHtml(companyId)
-    if (w) { w.document.open(); w.document.write(html); w.document.close() }
-  } catch (e) {
-    if (w) w.close()
-    alert(e.message)
-  }
 }
 
 // ── Weekly summary email ─────────────────────────────────────────────────────
@@ -54,8 +42,8 @@ function SummarySection({ user, setUser }) {
   const btn = { padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', background: T.bg2, color: T.text2, border: `1px solid ${T.sep}` }
   const intro = (
     <div style={{ padding: '14px 16px', fontSize: 13, color: T.text2, lineHeight: 1.6, borderBottom: `1px solid ${T.sep}` }}>
-      Every Monday morning each carrier's owner and admins get an email with last week's loads, revenue,
-      idle drivers, and the paperwork and expiries that need attention.
+      Every Saturday morning each carrier's owner and admins get an email with last week's loads, revenue,
+      idle drivers, and the paperwork and expiries that need attention (week runs Saturday to Saturday).
     </div>
   )
 

@@ -1,6 +1,6 @@
 import React, { useEffect, useState, lazy, Suspense } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { api } from '../api.js'
+import { api, openSummaryPreview } from '../api.js'
 import { useAuth } from '../AuthContext.jsx'
 import { canSeeRevenue } from '../permissions.js'
 import { T, STATUS } from '../theme.js'
@@ -9,6 +9,86 @@ import { useIsMobile } from '../hooks/useIsMobile.js'
 const FleetMap = lazy(() => import('../components/FleetMap.jsx'))
 
 function fmt$(n) { return '$' + Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 }) }
+// ── Weekly summary card ──────────────────────────────────────────────────────
+// Last Saturday-to-Saturday week per carrier — the same numbers the Saturday
+// email carries. Dismissible for the week (it comes back when a new week closes).
+function fmtDay(s) {
+  return new Date(s + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' })
+}
+function Delta({ cur, prev, money }) {
+  if (!prev) return null
+  const pct = Math.round(((cur - prev) / prev) * 100)
+  return <span style={{ fontSize: 11, fontWeight: 600, color: pct >= 0 ? T.green : T.red, marginLeft: 6 }}>
+    {pct >= 0 ? '▲' : '▼'}{Math.abs(pct)}%<span style={{ color: T.text3, fontWeight: 400 }}> vs {money ? fmt$(prev) : prev}</span>
+  </span>
+}
+function WeeklySummaryCard() {
+  const [data, setData] = useState(null)
+  const [hidden, setHidden] = useState(false)
+  useEffect(() => {
+    api.weeklySummary().then(d => {
+      let dismissed = ''
+      try { dismissed = localStorage.getItem('summaryDismissed') || '' } catch {}
+      setHidden(dismissed === d.week.start)
+      setData(d)
+    }).catch(() => {})
+  }, [])
+  if (!data || hidden || data.carriers.length === 0) return null
+  function dismiss() {
+    try { localStorage.setItem('summaryDismissed', data.week.start) } catch {}
+    setHidden(true)
+  }
+  const chip = (n, label, color) => n > 0 && (
+    <span style={{ fontSize: 11, fontWeight: 600, color, background: color + '18', padding: '3px 8px', borderRadius: 20, whiteSpace: 'nowrap' }}>{n} {label}</span>
+  )
+  return (
+    <div style={{ background: T.bg1, border: `1px solid ${T.blue}40`, borderRadius: 14, padding: '14px 16px', marginBottom: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+        <span style={{ width: 8, height: 8, borderRadius: '50%', background: T.blue, flexShrink: 0 }} />
+        <div style={{ flex: 1, fontSize: 13, fontWeight: 700, color: T.text }}>
+          Weekly summary <span style={{ color: T.text3, fontWeight: 500 }}>· {fmtDay(data.week.start)} → {fmtDay(data.week.end)}</span>
+        </div>
+        <button onClick={dismiss} title="Hide until next week" style={{ background: 'none', border: 'none', color: T.text3, fontSize: 18, cursor: 'pointer', lineHeight: 1 }}>×</button>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {data.carriers.map(c => (
+          <div key={c.id} style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', padding: '10px 12px', background: T.bg2, borderRadius: 10 }}>
+            <div style={{ minWidth: 150, flex: '1 1 150px' }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: T.text }}>{c.name}</div>
+              <div style={{ fontSize: 11, color: T.text3, marginTop: 2 }}>
+                {c.pickedUp} picked up · {c.upcoming} booked next 7 days{c.cancelled ? ` · ${c.cancelled} cancelled` : ''}
+              </div>
+            </div>
+            <div style={{ minWidth: 120 }}>
+              <div style={{ fontSize: 10, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.5 }}>Delivered</div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: T.text }}>{c.delivered}<Delta cur={c.delivered} prev={c.prevDelivered} /></div>
+            </div>
+            {c.revenue !== null && (
+              <div style={{ minWidth: 150 }}>
+                <div style={{ fontSize: 10, color: T.text3, textTransform: 'uppercase', letterSpacing: 0.5 }}>Revenue</div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: T.text }}>{fmt$(c.revenue)}<Delta cur={c.revenue} prev={c.prevRevenue} money /></div>
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', flex: '2 1 200px' }}>
+              {chip(c.needDriver, 'need a driver', T.orange)}
+              {chip(c.missingPod, 'missing POD', T.orange)}
+              {chip(c.notInvoiced, 'not invoiced', T.orange)}
+              {chip(c.overdue, 'expired', T.red)}
+              {chip(c.expiries - c.overdue, 'expiring soon', T.orange)}
+              {c.idleDrivers.length > 0 && (
+                <span title={c.idleDrivers.join(', ')} style={{ fontSize: 11, fontWeight: 600, color: T.text2, background: T.bg3, padding: '3px 8px', borderRadius: 20, whiteSpace: 'nowrap' }}>
+                  {c.idleDrivers.length} idle driver{c.idleDrivers.length > 1 ? 's' : ''}
+                </span>
+              )}
+            </div>
+            <button onClick={() => openSummaryPreview(c.id)} style={{ padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', background: 'transparent', color: T.blue, border: `1px solid ${T.blue}50`, whiteSpace: 'nowrap' }}>Full report</button>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function fmtMi(n) { return Number(n || 0).toLocaleString(undefined, { maximumFractionDigits: 0 }) + ' mi' }
 function pct(a, b) { if (!b) return null; return Math.round(((a - b) / b) * 100) }
 
@@ -229,6 +309,9 @@ export default function Dashboard() {
           <span style={{ fontSize: 11, color: T.text3 }}>Live · 15s sync</span>
         </div>
       </div>
+
+      {/* Weekly summary notification (last Sat→Sat week) */}
+      <WeeklySummaryCard />
 
       {/* Urgent alert */}
       {urgentUnassigned.length > 0 && (

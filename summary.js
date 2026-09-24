@@ -5,7 +5,8 @@
 // preview), renderSummaryHtml() lays them out as an email-safe HTML page, and
 // sendMail() delivers through SMTP when SMTP_* env vars are set.
 //
-// The "week" is the last full Mon–Sun, in America/Chicago (the dispatch office).
+// The "week" is the last full Saturday-to-Saturday week (Sat through Fri), in
+// America/Chicago (the dispatch office).
 
 const nodemailer = require('nodemailer');
 
@@ -21,12 +22,13 @@ function addDays(dateStr, n) {
   return d.toISOString().slice(0, 10);
 }
 
-// The last complete Mon–Sun before `now` → { start, end } inclusive.
+// The last complete Sat→Sat week before `now` → { start: Sat, end: Fri } inclusive.
+// On a Saturday that's the week that just ended.
 function lastWeek(now = new Date()) {
   const today = ymd(now);
   const dow = new Date(today + 'T12:00:00Z').getUTCDay(); // 0 Sun … 6 Sat
-  const thisMonday = addDays(today, -((dow + 6) % 7));
-  return { start: addDays(thisMonday, -7), end: addDays(thisMonday, -1) };
+  const thisSaturday = addDays(today, -((dow + 1) % 7));
+  return { start: addDays(thisSaturday, -7), end: addDays(thisSaturday, -1) };
 }
 
 const money = n => '$' + Math.round(Number(n) || 0).toLocaleString('en-US');
@@ -170,7 +172,7 @@ function renderSummaryHtml(s, { portalUrl = 'https://goatpaji.com' } = {}) {
 <body style="margin:0;background:${C.bg};font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif">
 <table width="100%" cellpadding="0" cellspacing="0" style="background:${C.bg}"><tr><td align="center" style="padding:24px 12px">
 <table width="100%" cellpadding="0" cellspacing="0" style="max-width:620px">
-  <tr><td style="font-size:12px;color:${C.mute};text-transform:uppercase;letter-spacing:.6px">Weekly summary · ${fmtDate(s.week.start)} – ${fmtDate(s.week.end)}</td></tr>
+  <tr><td style="font-size:12px;color:${C.mute};text-transform:uppercase;letter-spacing:.6px">Weekly summary · Sat ${fmtDate(s.week.start)} – Sat ${fmtDate(addDays(s.week.end, 1))}</td></tr>
   <tr><td style="font-size:24px;font-weight:800;color:${C.text};padding:4px 0 16px">${esc(s.company.name)}</td></tr>
   <tr><td><table width="100%" cellpadding="0" cellspacing="8" style="margin:0 -8px"><tr>${tiles.join('')}</tr></table></td></tr>
   <tr><td style="font-size:13px;color:${C.mute};padding:10px 0 0">
@@ -195,7 +197,7 @@ function renderSummaryHtml(s, { portalUrl = 'https://goatpaji.com' } = {}) {
   )}
 
   <tr><td style="padding:26px 0 8px"><a href="${portalUrl}/dashboard" style="display:inline-block;background:${C.blue};color:#fff;text-decoration:none;font-weight:600;font-size:14px;padding:10px 18px;border-radius:9px">Open the portal</a></td></tr>
-  <tr><td style="font-size:11px;color:${C.mute};padding:8px 0">Sent every Monday morning. You can turn this email off under Settings in the portal.</td></tr>
+  <tr><td style="font-size:11px;color:${C.mute};padding:8px 0">Sent every Saturday morning. You can turn this email off under Settings in the portal.</td></tr>
 </table></td></tr></table></body></html>`;
 }
 
@@ -225,4 +227,4 @@ async function sendMail({ to, subject, html }) {
   });
 }
 
-module.exports = { buildSummary, renderSummaryHtml, lastWeek, ymd, mailConfigured, sendMail, TZ };
+module.exports = { addDays, buildSummary, renderSummaryHtml, lastWeek, ymd, mailConfigured, sendMail, TZ };

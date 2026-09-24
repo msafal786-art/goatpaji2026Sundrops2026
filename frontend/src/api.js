@@ -109,6 +109,18 @@ async function req(method, path, body, isForm = false, opts = {}) {
   throw lastErr
 }
 
+// Opens the weekly summary email as it would arrive, in a new tab.
+export async function openSummaryPreview(companyId) {
+  const w = window.open('', '_blank')
+  try {
+    const html = await api.summaryPreviewHtml(companyId)
+    if (w) { w.document.open(); w.document.write(html); w.document.close() }
+  } catch (e) {
+    if (w) w.close()
+    alert(e.message)
+  }
+}
+
 export const api = {
   login: (u, p, adminCode) => req('POST', '/login', { username: u, password: p, admin_code: adminCode || undefined }),
   me: () => req('GET', '/me'),
@@ -124,6 +136,7 @@ export const api = {
   updateUser: (id, d) => req('PUT', `/users/${id}`, d),
   deleteUser: (id) => req('DELETE', `/users/${id}`),
   summaryStatus: () => req('GET', '/summary/status'),
+  weeklySummary: () => req('GET', '/summary/weekly'),
   sendSummary: (companyId) => req('POST', '/summary/send', { company_id: companyId }, false, { timeout: 60000 }),
   updateMySummary: (d) => req('PUT', '/me/summary', d),
   // The preview is an HTML page, not JSON — fetch it raw with the same auth.

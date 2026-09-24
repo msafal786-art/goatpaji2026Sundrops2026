@@ -807,7 +807,7 @@ app.delete('/api/team/:id', auth, requireTeamManager, (req, res) => {
 // ── Weekly carrier summary email ─────────────────────────────────────────────
 // Goes to each carrier's owner + carrier admins who have an email and haven't
 // opted out. Built by summary.js; delivered via SMTP (SMTP_* env vars). Sent
-// Monday from 7am Chicago time; summary_log makes it once per carrier per week.
+// Saturday from 7am Chicago time; summary_log makes it once per carrier per week.
 
 function summaryRecipients(companyId) {
   const cid = Number(companyId);
@@ -857,7 +857,7 @@ if (process.env.SUMMARY_ENABLED !== 'false') {
     if (summaryRunning || !summary.mailConfigured()) return;
     const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: summary.TZ, weekday: 'short', hour: 'numeric', hour12: false })
       .formatToParts(new Date()).map(p => [p.type, p.value]));
-    if (parts.weekday !== 'Mon' || Number(parts.hour) < 7) return;
+    if (parts.weekday !== 'Sat' || Number(parts.hour) < 7) return;
     summaryRunning = true;
     for (const c of db.prepare('SELECT id FROM companies').all()) {
       try { await sendCompanySummary(c.id); }
@@ -877,6 +877,30 @@ app.get('/api/summary/preview', auth, requireRole('dispatcher', 'company_owner')
   const s = summary.buildSummary(db, cid, { canRevenue });
   if (!s) return res.status(404).json({ error: 'Carrier not found' });
   res.type('html').send(summary.renderSummaryHtml(s));
+});
+
+// Dashboard card: last Sat→Sat week at a glance for every carrier in the
+// user's view (all carriers for admin). Figures follow the user's revenue access.
+app.get('/api/summary/weekly', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
+  const scope = scopeCompanyIds(req.user);
+  const canRevenue = scope === null || req.user.role === 'company_owner'
+    || !!db.prepare('SELECT can_see_revenue FROM users WHERE id = ?').get(req.user.id)?.can_see_revenue;
+  const { clause, params } = companyScopeClause(req.user, 'id');
+  const carriers = db.prepare(`SELECT id FROM companies ${clause} ORDER BY name`).all(...params)
+    .map(c => summary.buildSummary(db, c.id, { canRevenue }))
+    .filter(s => s && (s.loads.delivered || s.loads.prevDelivered || s.loads.pickedUp || s.loads.upcoming))
+    .map(s => ({
+      id: s.company.id, name: s.company.name,
+      delivered: s.loads.delivered, prevDelivered: s.loads.prevDelivered,
+      pickedUp: s.loads.pickedUp, cancelled: s.loads.cancelled, upcoming: s.loads.upcoming, needDriver: s.loads.needDriver,
+      miles: Math.round(s.loads.miles),
+      revenue: s.revenue ? Math.round(s.revenue.total) : null, prevRevenue: s.revenue ? Math.round(s.revenue.prev) : null,
+      idleDrivers: s.idleDrivers,
+      missingPod: s.attention.missingPod.length, notInvoiced: s.attention.notInvoiced.length,
+      expiries: s.attention.expiries.length, overdue: s.attention.expiries.filter(e => e.overdue).length,
+    }));
+  const wk = summary.lastWeek();
+  res.json({ week: { start: wk.start, end: summary.addDays(wk.end, 1) }, carriers });
 });
 
 // Admin: who gets each carrier's summary, and when it last went out.
