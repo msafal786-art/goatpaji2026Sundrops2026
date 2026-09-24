@@ -19,6 +19,7 @@ const bcrypt = require('bcryptjs');
 const Anthropic = require('@anthropic-ai/sdk');
 const drive = require('./drive.js');
 const gmail = require('./gmail.js');
+const summary = require('./summary.js');
 const XLSX = require('xlsx');
 
 // If running on Railway with a volume, seed the DB from the bundled file on first deploy
@@ -481,7 +482,7 @@ function buildUserProfile(userId) {
   const user = db.prepare(`
     SELECT u.id, u.username, u.role, u.company_id, u.full_name, u.email, u.phone,
            u.can_see_revenue, u.must_change_password, u.allowed_company_ids, u.can_manage_team,
-           c.name as company_name
+           u.summary_opt_out, c.name as company_name
     FROM users u LEFT JOIN companies c ON u.company_id = c.id
     WHERE u.id = ?
   `).get(userId);
@@ -801,6 +802,115 @@ app.delete('/api/team/:id', auth, requireTeamManager, (req, res) => {
     console.error('Failed to remove team user', target.id, e);
     res.status(500).json({ error: 'Failed to remove user' });
   }
+});
+
+// ── Weekly carrier summary email ─────────────────────────────────────────────
+// Goes to each carrier's owner + carrier admins who have an email and haven't
+// opted out. Built by summary.js; delivered via SMTP (SMTP_* env vars). Sent
+// Monday from 7am Chicago time; summary_log makes it once per carrier per week.
+
+function summaryRecipients(companyId) {
+  const cid = Number(companyId);
+  return db.prepare(`SELECT id, full_name, username, email, role, company_id, allowed_company_ids,
+                            can_manage_team, can_see_revenue, summary_opt_out
+                     FROM users WHERE role IN ('company_owner','dispatcher')`).all()
+    .filter(u => {
+      const scope = scopeCompanyIds(u);
+      if (scope === null || !scope.includes(cid)) return false;   // admin / other carrier
+      return u.role === 'company_owner' || !!u.can_manage_team;
+    })
+    .map(u => ({ ...u, canRevenue: u.role === 'company_owner' || !!u.can_see_revenue,
+                 active: !!(u.email && u.email.includes('@')) && !u.summary_opt_out }));
+}
+
+// Sends one carrier's summary. Recipients with and without revenue access get
+// separate renders so figures never reach someone who can't see them in-app.
+async function sendCompanySummary(companyId, { force = false } = {}) {
+  const wk = summary.lastWeek();
+  if (!force && db.prepare('SELECT 1 FROM summary_log WHERE company_id = ? AND week_start = ? AND error IS NULL').get(companyId, wk.start))
+    return { skipped: 'already sent' };
+  const to = summaryRecipients(companyId).filter(r => r.active);
+  if (!to.length) return { skipped: 'no recipients' };
+  const sent = [];
+  let error = null;
+  for (const canRevenue of [true, false]) {
+    const group = to.filter(r => r.canRevenue === canRevenue);
+    if (!group.length) continue;
+    const s = summary.buildSummary(db, companyId, { canRevenue });
+    const subject = `${s.company.name} — week of ${s.week.start}: ${s.loads.delivered} loads delivered`
+      + (s.revenue ? `, $${Math.round(s.revenue.total).toLocaleString('en-US')}` : '');
+    try {
+      await summary.sendMail({ to: group.map(r => r.email).join(', '), subject, html: summary.renderSummaryHtml(s) });
+      sent.push(...group.map(r => r.email));
+    } catch (e) { error = e.message; }
+  }
+  db.prepare(`INSERT INTO summary_log (company_id, week_start, recipients, error) VALUES (?,?,?,?)
+              ON CONFLICT(company_id, week_start) DO UPDATE SET sent_at = datetime('now'), recipients = excluded.recipients, error = excluded.error`)
+    .run(companyId, wk.start, sent.join(', ') || null, error);
+  if (error) throw new Error(error);
+  return { sent };
+}
+
+if (process.env.SUMMARY_ENABLED !== 'false') {
+  let summaryRunning = false;
+  setInterval(async () => {
+    if (summaryRunning || !summary.mailConfigured()) return;
+    const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: summary.TZ, weekday: 'short', hour: 'numeric', hour12: false })
+      .formatToParts(new Date()).map(p => [p.type, p.value]));
+    if (parts.weekday !== 'Mon' || Number(parts.hour) < 7) return;
+    summaryRunning = true;
+    for (const c of db.prepare('SELECT id FROM companies').all()) {
+      try { await sendCompanySummary(c.id); }
+      catch (e) { console.error('[summary] carrier', c.id, e.message); }
+    }
+    summaryRunning = false;
+  }, 15 * 60 * 1000).unref();
+}
+
+// Preview the email in the browser — any user for a carrier they can access.
+app.get('/api/summary/preview', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
+  const scope = scopeCompanyIds(req.user);
+  const cid = Number(req.query.company_id) || (scope && scope[0]);
+  if (!cid || !userCanAccessCompany(req.user, cid)) return res.status(403).json({ error: 'Forbidden' });
+  const canRevenue = scope === null || req.user.role === 'company_owner'
+    || !!db.prepare('SELECT can_see_revenue FROM users WHERE id = ?').get(req.user.id)?.can_see_revenue;
+  const s = summary.buildSummary(db, cid, { canRevenue });
+  if (!s) return res.status(404).json({ error: 'Carrier not found' });
+  res.type('html').send(summary.renderSummaryHtml(s));
+});
+
+// Admin: who gets each carrier's summary, and when it last went out.
+app.get('/api/summary/status', auth, requireAdmin, (req, res) => {
+  const wk = summary.lastWeek();
+  const companies = db.prepare('SELECT id, name FROM companies ORDER BY name').all().map(c => {
+    const last = db.prepare('SELECT week_start, sent_at, recipients, error FROM summary_log WHERE company_id = ? ORDER BY sent_at DESC LIMIT 1').get(c.id);
+    return {
+      ...c, last: last || null,
+      recipients: summaryRecipients(c.id).map(r => ({ name: r.full_name || r.username, email: r.email || null, opted_out: !!r.summary_opt_out, active: r.active })),
+    };
+  }).filter(c => c.recipients.length);
+  res.json({ configured: summary.mailConfigured(), week: wk, companies });
+});
+
+app.post('/api/summary/send', auth, requireAdmin, async (req, res) => {
+  try {
+    const r = await sendCompanySummary(Number(req.body.company_id), { force: true });
+    if (r.skipped) return res.status(400).json({ error: r.skipped === 'no recipients' ? 'No one with an email address to send to' : r.skipped });
+    logAudit(req, 'summary_sent', `carrier ${req.body.company_id}: ${r.sent.join(', ')}`);
+    res.json(r);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// A recipient manages their own copy: on/off, and the address it goes to.
+app.put('/api/me/summary', auth, (req, res) => {
+  const { opt_out, email } = req.body;
+  if (email !== undefined) {
+    const e = String(email || '').trim();
+    if (e && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return res.status(400).json({ error: 'That email address looks wrong' });
+    db.prepare('UPDATE users SET email = ? WHERE id = ?').run(e || null, req.user.id);
+  }
+  if (opt_out !== undefined) db.prepare('UPDATE users SET summary_opt_out = ? WHERE id = ?').run(opt_out ? 1 : 0, req.user.id);
+  res.json(buildUserProfile(req.user.id));
 });
 
 // ── Drivers ──────────────────────────────────────────────────────────────────

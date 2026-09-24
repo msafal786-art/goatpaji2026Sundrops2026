@@ -3,6 +3,7 @@ import { T } from '../theme.js'
 import { useTheme } from '../ThemeContext.jsx'
 import { useAuth } from '../AuthContext.jsx'
 import { api } from '../api.js'
+import { isAdmin as isAdminUser, canManageTeam, userCompanies } from '../permissions.js'
 
 function useThemeForce() {
   const [, tick] = useState(0)
@@ -13,10 +14,109 @@ function useThemeForce() {
   }, [])
 }
 
+// Opens the weekly summary email as it would arrive, in a new tab.
+async function openSummaryPreview(companyId) {
+  const w = window.open('', '_blank')
+  try {
+    const html = await api.summaryPreviewHtml(companyId)
+    if (w) { w.document.open(); w.document.write(html); w.document.close() }
+  } catch (e) {
+    if (w) w.close()
+    alert(e.message)
+  }
+}
+
+// ── Weekly summary email ─────────────────────────────────────────────────────
+// Carrier owners / admins: turn their own copy on or off and set the address.
+// Main admin: see who gets each carrier's email, preview it, or send it now.
+function SummarySection({ user, setUser }) {
+  const admin = isAdminUser(user)
+  const [status, setStatus] = useState(null)
+  const [email, setEmail] = useState(user.email || '')
+  const [msg, setMsg] = useState('')
+  const [busy, setBusy] = useState(null)
+
+  useEffect(() => { if (admin) api.summaryStatus().then(setStatus).catch(() => {}) }, [admin])
+
+  async function save(d) {
+    setMsg('')
+    try { const u = await api.updateMySummary(d); setUser?.(prev => ({ ...prev, ...u })); setMsg('Saved') }
+    catch (e) { setMsg(e.message) }
+  }
+  async function sendNow(c) {
+    if (!window.confirm(`Send last week's summary for ${c.name} now?`)) return
+    setBusy(c.id); setMsg('')
+    try { const r = await api.sendSummary(c.id); setMsg(`Sent to ${r.sent.join(', ')}`); setStatus(await api.summaryStatus()) }
+    catch (e) { setMsg(e.message) }
+    setBusy(null)
+  }
+
+  const btn = { padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', background: T.bg2, color: T.text2, border: `1px solid ${T.sep}` }
+  const intro = (
+    <div style={{ padding: '14px 16px', fontSize: 13, color: T.text2, lineHeight: 1.6, borderBottom: `1px solid ${T.sep}` }}>
+      Every Monday morning each carrier's owner and admins get an email with last week's loads, revenue,
+      idle drivers, and the paperwork and expiries that need attention.
+    </div>
+  )
+
+  if (admin) return (
+    <Section title="Weekly Summary Email">
+      {intro}
+      {status && !status.configured && (
+        <div style={{ padding: '12px 16px', fontSize: 12, color: T.orange, borderBottom: `1px solid ${T.sep}` }}>
+          Sending is off until email is set up on the server (SMTP_HOST, SMTP_USER, SMTP_PASS). Previews work now.
+        </div>
+      )}
+      {status?.companies.map((c, i) => (
+        <div key={c.id} style={{ padding: '12px 16px', borderBottom: i < status.companies.length - 1 ? `1px solid ${T.sep}` : 'none', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: T.text }}>{c.name}</div>
+            <div style={{ fontSize: 11, color: T.text3, marginTop: 3 }}>
+              {c.recipients.map(r => r.active ? r.email : `${r.name} (${r.opted_out ? 'turned off' : 'no email'})`).join(' · ')}
+            </div>
+            {c.last && <div style={{ fontSize: 11, color: c.last.error ? T.red : T.text3, marginTop: 2 }}>
+              {c.last.error ? `Last attempt failed: ${c.last.error}` : `Last sent ${c.last.sent_at?.slice(0, 16)} UTC`}
+            </div>}
+          </div>
+          <button style={btn} onClick={() => openSummaryPreview(c.id)}>Preview</button>
+          {status.configured && <button style={{ ...btn, color: T.blue }} disabled={busy === c.id} onClick={() => sendNow(c)}>{busy === c.id ? 'Sending…' : 'Send now'}</button>}
+        </div>
+      ))}
+      {status && status.companies.length === 0 && (
+        <div style={{ padding: 16, fontSize: 13, color: T.text3 }}>No carrier owners or carrier admins yet.</div>
+      )}
+      {msg && <div style={{ padding: '10px 16px', fontSize: 12, color: T.text3 }}>{msg}</div>}
+    </Section>
+  )
+
+  const companies = userCompanies(user)
+  return (
+    <Section title="Weekly Summary Email">
+      {intro}
+      <div style={{ padding: '12px 16px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', borderBottom: `1px solid ${T.sep}` }}>
+        <span style={{ fontSize: 13, color: T.text2, minWidth: 90 }}>Send it to</span>
+        <input value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" type="email"
+          style={{ flex: 1, minWidth: 180, padding: '8px 10px', background: T.bg2, border: `1px solid ${T.sep}`, borderRadius: 8, color: T.text, fontSize: 13 }} />
+        <button style={btn} onClick={() => save({ email })}>Save</button>
+      </div>
+      <div style={{ padding: '12px 16px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <label style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 13, color: T.text, cursor: 'pointer', flex: 1 }}>
+          <input type="checkbox" checked={!user.summary_opt_out} onChange={e => save({ opt_out: !e.target.checked })} />
+          Email me the weekly summary
+        </label>
+        {companies.map(c => (
+          <button key={c.id} style={btn} onClick={() => openSummaryPreview(c.id)}>Preview{companies.length > 1 ? ` · ${c.name}` : ''}</button>
+        ))}
+      </div>
+      {msg && <div style={{ padding: '0 16px 12px', fontSize: 12, color: T.text3 }}>{msg}</div>}
+    </Section>
+  )
+}
+
 export default function Settings() {
   useThemeForce()
   const { mode, toggle } = useTheme()
-  const { user } = useAuth()
+  const { user, setUser } = useAuth()
   const [density, setDensity] = useState(() => localStorage.getItem('density') || 'comfortable')
   const [sessionInfo] = useState(() => {
     try {
@@ -92,6 +192,8 @@ export default function Settings() {
         {user.phone && <Row label="Phone" last><Val>{user.phone}</Val></Row>}
         {!user.phone && <Row label="Phone" last><Val style={{ color: T.text3 }}>Not set</Val></Row>}
       </Section>
+
+      {(isAdminUser(user) || canManageTeam(user)) && <SummarySection user={user} setUser={setUser} />}
 
       {/* Session & Security */}
       {(

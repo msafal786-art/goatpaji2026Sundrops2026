@@ -482,6 +482,20 @@ if (!userCols.includes('allowed_company_ids'))     db.prepare('ALTER TABLE users
 // Carrier admin: a scoped account that may add/remove its own carrier's
 // dispatcher logins (the Team page). Company owners always can.
 if (!userCols.includes('can_manage_team'))         db.prepare('ALTER TABLE users ADD COLUMN can_manage_team INTEGER DEFAULT 0').run();
+// Weekly carrier summary email: recipients can switch it off for themselves.
+if (!userCols.includes('summary_opt_out'))         db.prepare('ALTER TABLE users ADD COLUMN summary_opt_out INTEGER DEFAULT 0').run();
+// One row per carrier per week once its summary goes out (so restarts never double-send).
+db.exec(`
+  CREATE TABLE IF NOT EXISTS summary_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    company_id INTEGER NOT NULL,
+    week_start TEXT NOT NULL,
+    sent_at TEXT DEFAULT (datetime('now')),
+    recipients TEXT,
+    error TEXT,
+    UNIQUE(company_id, week_start)
+  );
+`);
 
 // ── Allow a 'cancelled' load status ──────────────────────────────────────────
 // SQLite can't alter a CHECK constraint, so rebuild the loads table from its own

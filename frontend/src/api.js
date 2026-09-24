@@ -123,6 +123,18 @@ export const api = {
   createUser: (d) => req('POST', '/users', d),
   updateUser: (id, d) => req('PUT', `/users/${id}`, d),
   deleteUser: (id) => req('DELETE', `/users/${id}`),
+  summaryStatus: () => req('GET', '/summary/status'),
+  sendSummary: (companyId) => req('POST', '/summary/send', { company_id: companyId }, false, { timeout: 60000 }),
+  updateMySummary: (d) => req('PUT', '/me/summary', d),
+  // The preview is an HTML page, not JSON — fetch it raw with the same auth.
+  summaryPreviewHtml: async (companyId) => {
+    const headers = { Authorization: `Bearer ${getToken()}` }
+    const ac = getActiveCompany()
+    if (ac) headers['X-Active-Company'] = ac
+    const res = await fetch(`${BASE}/summary/preview${companyId ? `?company_id=${companyId}` : ''}`, { headers })
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Could not load preview')
+    return res.text()
+  },
   team: () => req('GET', '/team'),
   createTeamUser: (d) => req('POST', '/team', d),
   updateTeamUser: (id, d) => req('PUT', `/team/${id}`, d),
