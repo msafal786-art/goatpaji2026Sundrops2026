@@ -66,7 +66,7 @@ export default function Trucks() {
 
   useEffect(() => {
     load()
-    if (user.role === 'dispatcher') api.companies().then(setCompanies)
+    api.companies().then(setCompanies).catch(() => {})
   }, [])
 
   async function load() { setTrucks(await api.trucks()) }
@@ -205,9 +205,7 @@ export default function Trucks() {
                 <button style={smBtn()} onClick={() => openEdit(t)}>Edit</button>
                 <button style={{ ...smBtn(), color: T.blue, borderColor: T.blue + '40' }} onClick={() => openMaintenance(t)}>Maintenance</button>
                 <button style={{ ...smBtn(), color: T.teal || T.green, borderColor: (T.teal || T.green) + '40' }} onClick={() => openDocs(t)}>Documents</button>
-                {user.role === 'dispatcher' && (
-                  <button style={{ ...smBtn(), color: T.red, borderColor: T.red + '40' }} onClick={() => handleDelete(t.id)}>Remove</button>
-                )}
+                <button style={{ ...smBtn(), color: T.red, borderColor: T.red + '40' }} onClick={() => handleDelete(t.id)}>Remove</button>
               </div>
             </div>
           )
@@ -232,7 +230,7 @@ export default function Trucks() {
               <Row>
                 <FF label="Plate"><input style={inp()} value={form.plate} onChange={e => set('plate', e.target.value)} /></FF>
                 <FF label="VIN"><input style={inp()} value={form.vin} onChange={e => set('vin', e.target.value)} /></FF>
-                {user.role === 'dispatcher' && (
+                {companies.length > 1 && (
                   <FF label="Company">
                     <select style={inp()} value={form.company_id} onChange={e => set('company_id', e.target.value)}>
                       <option value="">Select…</option>

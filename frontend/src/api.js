@@ -123,6 +123,10 @@ export const api = {
   createUser: (d) => req('POST', '/users', d),
   updateUser: (id, d) => req('PUT', `/users/${id}`, d),
   deleteUser: (id) => req('DELETE', `/users/${id}`),
+  team: () => req('GET', '/team'),
+  createTeamUser: (d) => req('POST', '/team', d),
+  updateTeamUser: (id, d) => req('PUT', `/team/${id}`, d),
+  deleteTeamUser: (id) => req('DELETE', `/team/${id}`),
   dashboardStats: () => req('GET', '/dashboard-stats'),
 
   drivers: () => req('GET', '/drivers'),
@@ -152,6 +156,14 @@ export const api = {
   tts: (text, lang) => req('POST', '/tts', { text, lang }, false, { timeout: 45000 }),
   markDispatched: (id) => req('POST', `/loads/${id}/mark-dispatched`),
   updateLoadStatus: (id, status, extra = {}) => req('POST', `/loads/${id}/status`, { status, ...extra }),
+  // Cancel keeps the load (and its history) instead of deleting it. Returns
+  // false if the user backed out of the prompt.
+  cancelLoad: async (id) => {
+    const reason = window.prompt('Cancel this load? It stays on record as Cancelled.\n\nReason (optional):', '')
+    if (reason === null) return false
+    await req('POST', `/loads/${id}/status`, { status: 'cancelled', reason })
+    return true
+  },
 
   // Reading a PDF with Claude runs 15–40s; allow well past that and retry
   // once on a timeout or an overloaded upstream.

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { api } from '../api.js'
 import { useAuth } from '../AuthContext.jsx'
+import { seesMultipleCompanies } from '../permissions.js'
 import { T, STATUS } from '../theme.js'
 import { useIsMobile } from '../hooks/useIsMobile.js'
 import LoadForm from '../components/LoadForm.jsx'
@@ -135,6 +136,10 @@ export default function LoadDetail() {
   }
 
   async function handleStatus(status) {
+    if (status === 'cancelled') {
+      if (await api.cancelLoad(id)) await loadData()
+      return
+    }
     await api.updateLoadStatus(id, status)
     await loadData()
   }
@@ -233,7 +238,7 @@ ${load.company_name || 'Dispatch'}`
   const canEdit = user.role !== 'driver'
   // Only admins work across carriers, so only they need the company badge —
   // for a scoped user every load is their own company.
-  const isAdmin = user.role === 'dispatcher' && !user.company_id && !user.allowed_company_ids
+  const isAdmin = seesMultipleCompanies(user)
   const s = STATUS[load.status] || STATUS.open
 
   const fmtTime = (iso) => {
@@ -297,6 +302,11 @@ ${load.company_name || 'Dispatch'}`
               <Btn color={T.green} onClick={() => handleStatus('completed')}>✓ Mark Invoiced</Btn>
             )}
             <Btn onClick={() => setShowEdit(true)}>Edit</Btn>
+            {load.status === 'cancelled'
+              ? <Btn color={T.blue} onClick={() => handleStatus('open')}>↺ Reopen</Btn>
+              : !['delivered', 'completed'].includes(load.status) && (
+                <Btn color={T.red} onClick={() => handleStatus('cancelled')}>Cancel Load</Btn>
+              )}
           </div>
         )}
       </div>

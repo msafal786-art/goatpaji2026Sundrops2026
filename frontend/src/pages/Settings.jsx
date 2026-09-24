@@ -93,8 +93,8 @@ export default function Settings() {
         {!user.phone && <Row label="Phone" last><Val style={{ color: T.text3 }}>Not set</Val></Row>}
       </Section>
 
-      {/* Session & Security — admin only */}
-      {user.role === 'dispatcher' && !user.company_id && (
+      {/* Session & Security */}
+      {(
         <Section title="Session & Security">
           {sessionInfo && (
             <>

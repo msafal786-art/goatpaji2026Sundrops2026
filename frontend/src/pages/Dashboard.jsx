@@ -2,7 +2,7 @@ import React, { useEffect, useState, lazy, Suspense } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { api } from '../api.js'
 import { useAuth } from '../AuthContext.jsx'
-import { isAdmin } from '../permissions.js'
+import { canSeeRevenue } from '../permissions.js'
 import { T, STATUS } from '../theme.js'
 import { useIsMobile } from '../hooks/useIsMobile.js'
 
@@ -16,7 +16,7 @@ function pct(a, b) { if (!b) return null; return Math.round(((a - b) / b) * 100)
 // A missed pickup is deliberately NOT late here — it's a separate, lesser
 // problem, and it must match the load board's definition (see isLate there).
 function isLate(load) {
-  if (['delivered', 'completed'].includes(load.status)) return false
+  if (['delivered', 'completed', 'cancelled'].includes(load.status)) return false
 
   // Multi-stop loads are judged on their final drop, not drop 1.
   let stops = []
@@ -164,12 +164,7 @@ export default function Dashboard() {
   const [maint, setMaint] = useState([])
   const [now, setNow] = useState(new Date())
 
-  // company_owner always sees revenue; admin dispatcher always sees revenue;
-  // scoped dispatcher only if can_see_revenue flag is set
-  const canRevenue = user.role === 'company_owner'
-    || (user.role === 'dispatcher' && !user.company_id)
-    || !!user.can_see_revenue
-  const admin = isAdmin(user)   // "ready to invoice" strip is main-dispatch only
+  const canRevenue = canSeeRevenue(user)
 
   function fetchAll() {
     api.stats().then(setStats)
@@ -192,15 +187,15 @@ export default function Dashboard() {
 
   const urgentUnassigned = loads.filter(l => {
     if (!l.pickup_date || l.driver_id) return false
-    if (['dispatched','loading','on_route','unloading','in_yard','delivered','completed'].includes(l.status)) return false
+    if (['dispatched','loading','on_route','unloading','in_yard','delivered','completed','cancelled'].includes(l.status)) return false
     const hrs = (new Date(l.pickup_date + 'T' + (l.pickup_time?.match(/(\d+:\d+)/)?.[1] || '06:00')) - now) / 36e5
     return hrs >= 0 && hrs <= 24
   })
 
   const tom = new Date(now); tom.setDate(now.getDate() + 1)
   const dat = new Date(now); dat.setDate(now.getDate() + 2)
-  const delivTomorrow = loads.filter(l => l.delivery_date === tom.toISOString().slice(0,10) && !['completed'].includes(l.status))
-  const delivDayAfter = loads.filter(l => l.delivery_date === dat.toISOString().slice(0,10) && !['completed'].includes(l.status))
+  const delivTomorrow = loads.filter(l => l.delivery_date === tom.toISOString().slice(0,10) && !['completed','cancelled'].includes(l.status))
+  const delivDayAfter = loads.filter(l => l.delivery_date === dat.toISOString().slice(0,10) && !['completed','cancelled'].includes(l.status))
 
   // Maintenance due soon (next_due_date within 30 days, or overdue) — most urgent first
   const maintDue = maint
@@ -313,7 +308,7 @@ export default function Dashboard() {
       )}
 
       {/* To-Do strip */}
-      {dash && (dash.needsDriver > 0 || (admin && dash.toInvoice?.count > 0)) && (
+      {dash && (dash.needsDriver > 0 || dash.toInvoice?.count > 0) && (
         <div style={{ display: 'flex', gap: 10, marginBottom: 14, flexWrap: 'wrap' }}>
           {dash.needsDriver > 0 && (
             <div onClick={() => navigate('/loads')} style={{ cursor: 'pointer', background: T.orange + '15', border: `1px solid ${T.orange}40`, borderRadius: 10, padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -324,7 +319,7 @@ export default function Dashboard() {
               </div>
             </div>
           )}
-          {admin && dash.toInvoice?.count > 0 && (
+          {dash.toInvoice?.count > 0 && (
             <div onClick={() => navigate('/loads')} style={{ cursor: 'pointer', background: T.green + '12', border: `1px solid ${T.green}40`, borderRadius: 10, padding: '10px 16px', display: 'flex', alignItems: 'center', gap: 10 }}>
               <span style={{ fontSize: 20 }}>📋</span>
               <div>

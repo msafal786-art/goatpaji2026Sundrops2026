@@ -52,6 +52,7 @@ export const STATUS = {
   in_yard:    { color: '#64d2ff', label: 'In Yard' },
   delivered:  { color: '#34c759', label: 'Delivered' },
   completed:  { color: 'rgba(120,120,128,0.55)', label: 'Completed' },
+  cancelled:  { color: '#ff453a', label: 'Cancelled' },
   // legacy aliases so old JWT loads still render
   pending:    { color: '#ff9f0a', label: 'Open' },
   assigned:   { color: '#0a84ff', label: 'Covered' },

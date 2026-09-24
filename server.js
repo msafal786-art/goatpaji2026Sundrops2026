@@ -129,7 +129,7 @@ const anthropic = new Anthropic({
 //
 // 'off_duty' is a deliberate choice by a dispatcher, so it is never
 // auto-cleared here — only the available/on_load pair is derived.
-const ACTIVE_LOAD_SQL = "status NOT IN ('delivered','completed')";
+const ACTIVE_LOAD_SQL = "status NOT IN ('delivered','completed','cancelled')";
 
 function syncDriverStatus(driverId) {
   if (!driverId) return;
@@ -356,7 +356,7 @@ async function enrichAuditGeo(auditId, ip) {
 const STATUS_LABELS = {
   open: 'Open', covered: 'Covered', dispatched: 'Dispatched', loading: 'Loading',
   on_route: 'On Route', unloading: 'Unloading', in_yard: 'In Yard',
-  delivered: 'Delivered', completed: 'Completed',
+  delivered: 'Delivered', completed: 'Completed', cancelled: 'Cancelled',
 };
 
 // ── Company scoping — single source of truth for data isolation ──────────────
@@ -480,7 +480,8 @@ app.post('/api/refresh', auth, (req, res) => {
 function buildUserProfile(userId) {
   const user = db.prepare(`
     SELECT u.id, u.username, u.role, u.company_id, u.full_name, u.email, u.phone,
-           u.can_see_revenue, u.must_change_password, u.allowed_company_ids, c.name as company_name
+           u.can_see_revenue, u.must_change_password, u.allowed_company_ids, u.can_manage_team,
+           c.name as company_name
     FROM users u LEFT JOIN companies c ON u.company_id = c.id
     WHERE u.id = ?
   `).get(userId);
@@ -506,6 +507,8 @@ function buildUserProfile(userId) {
   // Whether to show the Broker Inbox: admin always (to connect/manage), or a
   // user who has at least one visible mailbox (their carrier's inbox).
   user.can_see_inbox = scopeCompanyIds(user) === null || visibleMailboxes(user).length > 0;
+  // Carrier owner / carrier admin → gets the Team page.
+  user.can_manage_team = !!teamManagerScope(user);
   return user;
 }
 
@@ -589,7 +592,7 @@ app.put('/api/companies/:id', auth, requireAdmin, (req, res) => {
 app.get('/api/users', auth, requireAdmin, (req, res) => {
   const users = db.prepare(`
     SELECT u.id, u.username, u.role, u.company_id, u.full_name, u.email, u.phone,
-           u.can_see_revenue, u.last_seen_at, u.allowed_company_ids, c.name as company_name
+           u.can_see_revenue, u.last_seen_at, u.allowed_company_ids, u.can_manage_team, c.name as company_name
     FROM users u LEFT JOIN companies c ON u.company_id = c.id
     WHERE u.role != 'driver'
     ORDER BY c.name, u.full_name
@@ -598,14 +601,14 @@ app.get('/api/users', auth, requireAdmin, (req, res) => {
 });
 
 app.post('/api/users', auth, requireAdmin, (req, res) => {
-  const { username, password, role, company_id, full_name, email, phone, can_see_revenue, allowed_company_ids } = req.body;
+  const { username, password, role, company_id, full_name, email, phone, can_see_revenue, allowed_company_ids, can_manage_team } = req.body;
   if (!username || !password || !role) return res.status(400).json({ error: 'username, password, role required' });
   const hash = bcrypt.hashSync(password, 10);
   const acIds = Array.isArray(allowed_company_ids) && allowed_company_ids.length > 0
     ? JSON.stringify(allowed_company_ids) : null;
   try {
-    const r = db.prepare('INSERT INTO users (username,password,role,company_id,full_name,email,phone,can_see_revenue,allowed_company_ids) VALUES (?,?,?,?,?,?,?,?,?)')
-      .run(username, hash, role, company_id || null, full_name || null, email || null, phone || null, can_see_revenue ? 1 : 0, acIds);
+    const r = db.prepare('INSERT INTO users (username,password,role,company_id,full_name,email,phone,can_see_revenue,allowed_company_ids,can_manage_team) VALUES (?,?,?,?,?,?,?,?,?,?)')
+      .run(username, hash, role, company_id || null, full_name || null, email || null, phone || null, can_see_revenue ? 1 : 0, acIds, can_manage_team ? 1 : 0);
     res.json(db.prepare('SELECT u.*, c.name as company_name FROM users u LEFT JOIN companies c ON u.company_id = c.id WHERE u.id = ?').get(r.lastInsertRowid));
   } catch {
     res.status(400).json({ error: 'Username already exists' });
@@ -613,7 +616,7 @@ app.post('/api/users', auth, requireAdmin, (req, res) => {
 });
 
 app.put('/api/users/:id', auth, requireRole('dispatcher'), (req, res) => {
-  const { username, full_name, email, phone, can_see_revenue, password, company_id, role, allowed_company_ids } = req.body;
+  const { username, full_name, email, phone, can_see_revenue, password, company_id, role, allowed_company_ids, can_manage_team } = req.body;
   const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
   if (!existing) return res.status(404).json({ error: 'Not found' });
   const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
@@ -629,6 +632,9 @@ app.put('/api/users/:id', auth, requireRole('dispatcher'), (req, res) => {
   if (password) {
     db.prepare('UPDATE users SET password = ? WHERE id = ?').run(bcrypt.hashSync(password, 10), req.params.id);
   }
+  if (can_manage_team !== undefined) {
+    db.prepare('UPDATE users SET can_manage_team = ? WHERE id = ?').run(can_manage_team ? 1 : 0, req.params.id);
+  }
   const acIds = Array.isArray(allowed_company_ids) && allowed_company_ids.length > 0
     ? JSON.stringify(allowed_company_ids) : null;
   db.prepare('UPDATE users SET full_name=?, email=?, phone=?, can_see_revenue=?, company_id=?, role=?, allowed_company_ids=? WHERE id = ?')
@@ -638,30 +644,162 @@ app.put('/api/users/:id', auth, requireRole('dispatcher'), (req, res) => {
   res.json(db.prepare('SELECT u.*, c.name as company_name FROM users u LEFT JOIN companies c ON u.company_id = c.id WHERE u.id = ?').get(req.params.id));
 });
 
+// foreign_keys is ON and several history tables reference users(id), so a plain
+// DELETE fails for any user who's ever uploaded a doc, logged activity, etc.
+// Detach those references (all nullable) so the login can be removed while the
+// history rows survive.
+const removeUser = db.transaction((uid) => {
+  db.prepare('UPDATE drivers SET user_id = NULL WHERE user_id = ?').run(uid);
+  db.prepare('UPDATE load_docs SET uploaded_by = NULL WHERE uploaded_by = ?').run(uid);
+  db.prepare('UPDATE truck_docs SET uploaded_by = NULL WHERE uploaded_by = ?').run(uid);
+  db.prepare('UPDATE maintenance_records SET created_by = NULL WHERE created_by = ?').run(uid);
+  db.prepare('UPDATE load_activity SET user_id = NULL WHERE user_id = ?').run(uid);
+  return db.prepare('DELETE FROM users WHERE id = ?').run(uid);
+});
+
 app.delete('/api/users/:id', auth, requireRole('dispatcher'), (req, res) => {
   const isAdmin = req.user.role === 'dispatcher' && !req.user.company_id && !req.user.allowed_company_ids;
   if (!isAdmin) return res.status(403).json({ error: 'Admin only' });
   const id = Number(req.params.id);
   if (id === req.user.id) return res.status(400).json({ error: 'Cannot delete yourself' });
   try {
-    // foreign_keys is ON and several history tables reference users(id), so a
-    // plain DELETE fails for any user who's ever uploaded a doc, logged activity,
-    // etc. Detach those references (all nullable) so the login can be removed
-    // while the history rows survive.
-    const removeUser = db.transaction((uid) => {
-      db.prepare('UPDATE drivers SET user_id = NULL WHERE user_id = ?').run(uid);
-      db.prepare('UPDATE load_docs SET uploaded_by = NULL WHERE uploaded_by = ?').run(uid);
-      db.prepare('UPDATE truck_docs SET uploaded_by = NULL WHERE uploaded_by = ?').run(uid);
-      db.prepare('UPDATE maintenance_records SET created_by = NULL WHERE created_by = ?').run(uid);
-      db.prepare('UPDATE load_activity SET user_id = NULL WHERE user_id = ?').run(uid);
-      return db.prepare('DELETE FROM users WHERE id = ?').run(uid);
-    });
     const info = removeUser(id);
     if (info.changes === 0) return res.status(404).json({ error: 'User not found' });
     res.json({ ok: true });
   } catch (e) {
     console.error('Failed to delete user', id, e);
     res.status(500).json({ error: 'Failed to remove user', detail: e.message });
+  }
+});
+
+// ── Team (carrier owners / carrier admins manage their own logins) ──────────
+// A carrier's owner — or a scoped account flagged can_manage_team — may create,
+// edit and remove dispatcher logins for their OWN carrier(s), as either a plain
+// dispatcher or a carrier admin (who can manage the team in turn).
+//
+// Guard rails, all enforced here rather than trusted from the client:
+//  • Every account made here is role='dispatcher' with a NON-EMPTY
+//    allowed_company_ids — an empty scope would make it a global admin.
+//  • Its carriers must be a subset of the manager's own carriers (read from the
+//    DB, so the company switcher's narrowing can't shrink or widen it).
+//  • A manager can only touch accounts wholly inside their carriers, never the
+//    carrier's company_owner login, never themselves (deletion), and never admin.
+
+function userScopeFromRow(u) {
+  if (!u) return [];
+  const s = scopeCompanyIds(u);
+  return s === null ? null : s;
+}
+
+// The manager's full (un-narrowed) carrier list, or false if they can't manage a team.
+function teamManagerScope(reqUser) {
+  const me = db.prepare('SELECT id, role, company_id, allowed_company_ids, can_manage_team, can_see_revenue FROM users WHERE id = ?').get(reqUser.id);
+  if (!me || me.role === 'driver') return false;
+  const scope = userScopeFromRow(me);
+  if (scope === null) return false;               // admin uses the Users page
+  if (!(me.role === 'company_owner' || me.can_manage_team)) return false;
+  if (!scope.length) return false;
+  // A manager can't hand out revenue access they don't have themselves.
+  scope.canRevenue = me.role === 'company_owner' || !!me.can_see_revenue;
+  return scope;
+}
+
+function requireTeamManager(req, res, next) {
+  const scope = teamManagerScope(req.user);
+  if (!scope) return res.status(403).json({ error: 'Not allowed to manage team' });
+  req.teamScope = scope;
+  next();
+}
+
+// True if `target` is a team account inside the manager's carriers.
+function inTeamScope(target, scope) {
+  if (!target || target.role === 'driver') return false;
+  const s = userScopeFromRow(target);
+  if (s === null || s.length === 0) return false;  // admin / unscoped: never
+  return s.every(id => scope.includes(id));
+}
+
+function teamRow(u) {
+  const ids = userScopeFromRow(u) || [];
+  return {
+    id: u.id, username: u.username, full_name: u.full_name, email: u.email, phone: u.phone,
+    role: u.role, last_seen_at: u.last_seen_at, can_see_revenue: !!u.can_see_revenue,
+    access: u.role === 'company_owner' ? 'owner' : (u.can_manage_team ? 'admin' : 'dispatcher'),
+    company_ids: ids,
+  };
+}
+
+// Normalize the requested carriers: must be a non-empty subset of the scope.
+function teamCompanyIds(body, scope) {
+  const raw = Array.isArray(body.company_ids) && body.company_ids.length ? body.company_ids : scope;
+  const ids = [...new Set(raw.map(Number))];
+  if (!ids.length || !ids.every(id => scope.includes(id))) return null;
+  return ids;
+}
+
+app.get('/api/team', auth, requireTeamManager, (req, res) => {
+  const rows = db.prepare(`SELECT id, username, full_name, email, phone, role, company_id,
+      allowed_company_ids, can_manage_team, can_see_revenue, last_seen_at
+    FROM users WHERE role IN ('dispatcher','company_owner') ORDER BY full_name, username`).all();
+  res.json(rows.filter(u => inTeamScope(u, req.teamScope)).map(u => ({ ...teamRow(u), is_me: u.id === req.user.id })));
+});
+
+app.post('/api/team', auth, requireTeamManager, (req, res) => {
+  const { username, password, full_name, email, phone, access, can_see_revenue } = req.body;
+  const uname = typeof username === 'string' ? username.trim() : '';
+  if (!uname || typeof password !== 'string' || password.length < 6)
+    return res.status(400).json({ error: 'Username and a password of at least 6 characters are required' });
+  if (!['dispatcher', 'admin'].includes(access)) return res.status(400).json({ error: 'Access must be dispatcher or admin' });
+  const ids = teamCompanyIds(req.body, req.teamScope);
+  if (!ids) return res.status(403).json({ error: 'You can only add people to your own carrier' });
+  if (db.prepare('SELECT id FROM users WHERE username = ?').get(uname))
+    return res.status(409).json({ error: 'Username already taken' });
+  // Carrier admins see revenue; a plain dispatcher only if the manager ticks it.
+  const revenue = req.teamScope.canRevenue && (access === 'admin' || !!can_see_revenue);
+  const r = db.prepare(`INSERT INTO users
+      (username, password, role, company_id, full_name, email, phone, can_see_revenue, allowed_company_ids, can_manage_team, must_change_password)
+      VALUES (?,?,?,?,?,?,?,?,?,?,1)`)
+    .run(uname, bcrypt.hashSync(password, 10), 'dispatcher', null, full_name || null, email || null, phone || null,
+         revenue ? 1 : 0, JSON.stringify(ids), access === 'admin' ? 1 : 0);
+  logAudit(req, 'team_user_created', `${uname} (${access})`);
+  res.json(teamRow(db.prepare('SELECT * FROM users WHERE id = ?').get(r.lastInsertRowid)));
+});
+
+app.put('/api/team/:id', auth, requireTeamManager, (req, res) => {
+  const target = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (!inTeamScope(target, req.teamScope)) return res.status(404).json({ error: 'Not found' });
+  if (target.role === 'company_owner') return res.status(403).json({ error: "The carrier owner's login can't be changed here" });
+  const { full_name, email, phone, access, can_see_revenue, password } = req.body;
+  if (access !== undefined && !['dispatcher', 'admin'].includes(access)) return res.status(400).json({ error: 'Access must be dispatcher or admin' });
+  if (target.id === req.user.id && access === 'dispatcher') return res.status(400).json({ error: "You can't remove your own admin access" });
+  const ids = req.body.company_ids !== undefined ? teamCompanyIds(req.body, req.teamScope) : userScopeFromRow(target);
+  if (!ids) return res.status(403).json({ error: 'You can only assign your own carriers' });
+  if (password !== undefined && password !== '') {
+    if (typeof password !== 'string' || password.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    db.prepare('UPDATE users SET password = ?, must_change_password = 1 WHERE id = ?').run(bcrypt.hashSync(password, 10), target.id);
+  }
+  const newAccess = access || (target.can_manage_team ? 'admin' : 'dispatcher');
+  const revenue = req.teamScope.canRevenue
+    && (newAccess === 'admin' || (can_see_revenue !== undefined ? !!can_see_revenue : !!target.can_see_revenue));
+  db.prepare(`UPDATE users SET full_name=?, email=?, phone=?, can_manage_team=?, can_see_revenue=?, allowed_company_ids=? WHERE id=?`)
+    .run(full_name ?? target.full_name, email ?? target.email, phone ?? target.phone,
+         newAccess === 'admin' ? 1 : 0, revenue ? 1 : 0, JSON.stringify(ids), target.id);
+  logAudit(req, 'team_user_updated', `${target.username} (${newAccess})`);
+  res.json(teamRow(db.prepare('SELECT * FROM users WHERE id = ?').get(target.id)));
+});
+
+app.delete('/api/team/:id', auth, requireTeamManager, (req, res) => {
+  const target = db.prepare('SELECT * FROM users WHERE id = ?').get(req.params.id);
+  if (!inTeamScope(target, req.teamScope)) return res.status(404).json({ error: 'Not found' });
+  if (target.id === req.user.id) return res.status(400).json({ error: "You can't remove yourself" });
+  if (target.role === 'company_owner') return res.status(403).json({ error: "The carrier owner's login can't be removed here" });
+  try {
+    removeUser(target.id);
+    logAudit(req, 'team_user_removed', target.username);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('Failed to remove team user', target.id, e);
+    res.status(500).json({ error: 'Failed to remove user' });
   }
 });
 
@@ -674,35 +812,13 @@ app.get('/api/drivers', auth, (req, res) => {
            WHEN EXISTS (SELECT 1 FROM loads WHERE driver_id = d.id AND ${ACTIVE_LOAD_SQL})
              THEN 'on_load' ELSE 'available' END as status
     FROM drivers d LEFT JOIN companies c ON d.company_id = c.id`;
-  const params = [];
-  if (req.user.role === 'company_owner') {
-    query += ' WHERE d.company_id = ?';
-    params.push(req.user.company_id);
-  } else if (req.user.allowed_company_ids) {
-    const ids = JSON.parse(req.user.allowed_company_ids);
-    if (ids.length > 0) {
-      query += ` WHERE d.company_id IN (${ids.map(() => '?').join(',')})`;
-      params.push(...ids);
-    }
-  } else if (req.user.company_id) {
-    query += ' WHERE d.company_id = ?';
-    params.push(req.user.company_id);
-  }
-  query += ' ORDER BY d.full_name';
+  const { clause, params } = companyScopeClause(req.user, 'd.company_id');
+  query += ` ${clause} ORDER BY d.full_name`;
   res.json(db.prepare(query).all(...params));
 });
 
 app.get('/api/drivers/board', auth, (req, res) => {
-  let where = '';
-  const params = [];
-  if (req.user.role === 'company_owner') {
-    where = 'WHERE d.company_id = ?'; params.push(req.user.company_id);
-  } else if (req.user.allowed_company_ids) {
-    const ids = JSON.parse(req.user.allowed_company_ids);
-    if (ids.length > 0) { where = `WHERE d.company_id IN (${ids.map(() => '?').join(',')})`; params.push(...ids); }
-  } else if (req.user.company_id) {
-    where = 'WHERE d.company_id = ?'; params.push(req.user.company_id);
-  }
+  const { clause: where, params } = companyScopeClause(req.user, 'd.company_id');
   const rows = db.prepare(`
     SELECT d.id, d.full_name, d.phone, d.is_active, d.company_id,
            -- Availability is derived from the loads, never read from the
@@ -718,8 +834,8 @@ app.get('/api/drivers/board', auth, (req, res) => {
     FROM drivers d
     LEFT JOIN companies c ON d.company_id = c.id
     LEFT JOIN loads l ON l.driver_id = d.id
-      AND l.status NOT IN ('delivered','completed')
-      AND l.id = (SELECT MAX(id) FROM loads WHERE driver_id = d.id AND status NOT IN ('delivered','completed'))
+      AND l.status NOT IN ('delivered','completed','cancelled')
+      AND l.id = (SELECT MAX(id) FROM loads WHERE driver_id = d.id AND status NOT IN ('delivered','completed','cancelled'))
     ${where}
     ORDER BY c.name, d.full_name
   `).all(...params);
@@ -812,7 +928,7 @@ app.post('/api/drivers/bulk-assign-company', auth, requireRole('dispatcher'), (r
   res.json({ updated: driver_ids.length });
 });
 
-app.delete('/api/drivers/:id', auth, requireRole('dispatcher'), (req, res) => {
+app.delete('/api/drivers/:id', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
   const driver = db.prepare('SELECT company_id FROM drivers WHERE id = ?').get(req.params.id);
   if (!driver) return res.status(404).json({ error: 'Driver not found' });
   if (!userCanAccessCompany(req.user, driver.company_id))
@@ -824,21 +940,8 @@ app.delete('/api/drivers/:id', auth, requireRole('dispatcher'), (req, res) => {
 // ── Trucks ───────────────────────────────────────────────────────────────────
 app.get('/api/trucks', auth, (req, res) => {
   let query = 'SELECT t.*, c.name as company_name FROM trucks t LEFT JOIN companies c ON t.company_id = c.id';
-  const params = [];
-  if (req.user.role === 'company_owner') {
-    query += ' WHERE t.company_id = ?';
-    params.push(req.user.company_id);
-  } else if (req.user.allowed_company_ids) {
-    const ids = JSON.parse(req.user.allowed_company_ids);
-    if (ids.length > 0) {
-      query += ` WHERE t.company_id IN (${ids.map(() => '?').join(',')})`;
-      params.push(...ids);
-    }
-  } else if (req.user.company_id) {
-    query += ' WHERE t.company_id = ?';
-    params.push(req.user.company_id);
-  }
-  query += ' ORDER BY t.tractor_number';
+  const { clause, params } = companyScopeClause(req.user, 't.company_id');
+  query += ` ${clause} ORDER BY t.tractor_number`;
   res.json(db.prepare(query).all(...params));
 });
 
@@ -874,7 +977,7 @@ app.put('/api/trucks/:id', auth, requireRole('dispatcher', 'company_owner'), (re
   res.json(db.prepare('SELECT t.*, c.name as company_name FROM trucks t LEFT JOIN companies c ON t.company_id = c.id WHERE t.id = ?').get(req.params.id));
 });
 
-app.delete('/api/trucks/:id', auth, requireRole('dispatcher'), (req, res) => {
+app.delete('/api/trucks/:id', auth, requireRole('dispatcher', 'company_owner'), (req, res) => {
   const truck = db.prepare('SELECT company_id FROM trucks WHERE id = ?').get(req.params.id);
   if (!truck) return res.status(404).json({ error: 'Not found' });
   if (!userCanAccessCompany(req.user, truck.company_id))
@@ -1352,8 +1455,9 @@ app.post('/api/loads/:id/status', auth, (req, res) => {
     checkout_time, bol_sent,
     delivery_checkin_time,
     delivery_checkout_time, delivery_bol_sent,
+    reason,
   } = req.body;
-  const validStatuses = ['open','covered','dispatched','loading','on_route','unloading','in_yard','delivered','completed'];
+  const validStatuses = ['open','covered','dispatched','loading','on_route','unloading','in_yard','delivered','completed','cancelled'];
   if (!validStatuses.includes(status)) return res.status(400).json({ error: 'Invalid status' });
 
   const load = db.prepare('SELECT * FROM loads WHERE id = ?').get(req.params.id);
@@ -1399,6 +1503,8 @@ app.post('/api/loads/:id/status', auth, (req, res) => {
     if (fields.delivery_checkin_time) extras.push(`del in ${fields.delivery_checkin_time}`);
     if (fields.delivery_checkout_time) extras.push(`del out ${fields.delivery_checkout_time}`);
     if (fields.delivery_bol_sent) extras.push('POD sent');
+    // A cancellation keeps the load for the record; note why, if given.
+    if (status === 'cancelled' && typeof reason === 'string' && reason.trim()) extras.push(`reason: ${reason.trim().slice(0, 300)}`);
     const label = `${STATUS_LABELS[load.status] || load.status} → ${STATUS_LABELS[status] || status}`;
     logActivity(req.params.id, req, 'status', extras.length ? `${label} (${extras.join(', ')})` : label);
   }
@@ -1406,7 +1512,7 @@ app.post('/api/loads/:id/status', auth, (req, res) => {
   // Recompute on every status change, not just on delivery — a driver freed by
   // finishing this load may still be running another one.
   syncDriverStatus(load.driver_id);
-  if (['delivered','completed'].includes(status)) {
+  if (['delivered','completed','cancelled'].includes(status)) {
     if (load.truck_id) db.prepare("UPDATE trucks SET status='available' WHERE id=?").run(load.truck_id);
   }
 
@@ -1649,7 +1755,7 @@ Rules:
     }
 
     // Candidate loads, scoped to what this user may see
-    let where = "WHERE l.status NOT IN ('completed')";
+    let where = "WHERE l.status NOT IN ('completed','cancelled')";
     const params = [];
     if (req.user.company_id) { where += ' AND l.company_id = ?'; params.push(req.user.company_id); }
     else if (req.user.allowed_company_ids) {
@@ -1805,7 +1911,7 @@ app.get('/api/dashboard-stats', auth, (req, res) => {
     FROM loads l
     LEFT JOIN drivers d ON l.driver_id = d.id
     WHERE l.pickup_date BETWEEN date('now') AND date('now', '+7 days')
-      AND l.status NOT IN ('delivered','completed')
+      AND l.status NOT IN ('delivered','completed','cancelled')
       ${cWhere}
     ORDER BY l.pickup_date, l.pickup_time
     LIMIT 20
@@ -1833,7 +1939,7 @@ app.get('/api/dashboard-stats', auth, (req, res) => {
     weeklyTrend: weekRows,
     upcoming,
     needsDriver,
-    toInvoice: { count: toInvoice.n, total: toInvoice.total || 0 },
+    toInvoice: { count: toInvoice.n, total: canRevenue ? (toInvoice.total || 0) : 0 },
   });
 });
 

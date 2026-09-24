@@ -25,6 +25,7 @@ const LOAD_STATUSES = {
   in_yard: { label: 'In Yard', color: '#bf5af2' },
   delivered: { label: 'Delivered', color: T.green },
   completed: { label: 'Completed', color: T.green },
+  cancelled: { label: 'Cancelled', color: T.red },
 }
 
 function daysUntil(dateStr) {
@@ -187,7 +188,8 @@ export default function Drivers() {
   function set(k, v) { setForm(f => ({ ...f, [k]: v })) }
 
   const mobile = useIsMobile()
-  const isAdmin = user.role === 'dispatcher' && !user.company_id
+  // Several carriers in view → company filter tabs and a company picker.
+  const multiCo = companies.length > 1
 
   // Companies that actually have drivers in this data set
   const companiesWithDrivers = companies.filter(c =>
@@ -246,7 +248,7 @@ export default function Drivers() {
       </div>
 
       {/* Company filter tabs — only shown to admin dispatcher */}
-      {isAdmin && companiesWithDrivers.length > 1 && (
+      {multiCo && companiesWithDrivers.length > 1 && (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 14 }}>
           <button
             onClick={() => setSelectedCompanyId(null)}
@@ -512,7 +514,7 @@ export default function Drivers() {
                           <button style={smBtn(isDisabled ? T.green : T.orange)} onClick={() => handleToggleActive(r.id)}>
                             {isDisabled ? 'Enable' : 'Disable'}
                           </button>
-                          {isAdmin && <button style={smBtn(T.red)} onClick={() => handleDelete(r.id)}>✕</button>}
+                          <button style={smBtn(T.red)} onClick={() => handleDelete(r.id)}>✕</button>
                         </div>
                       </td>
                     </tr>
@@ -640,7 +642,7 @@ export default function Drivers() {
 
               <Section label="Employment">
                 <Row>
-                  {user.role === 'dispatcher' && (
+                  {multiCo && (
                     <FField label="Company *">
                       <select style={{ ...inputS(), borderColor: !form.company_id ? T.orange : T.sep }} value={form.company_id} onChange={e => set('company_id', e.target.value)}>
                         <option value="">— Select Company —</option>

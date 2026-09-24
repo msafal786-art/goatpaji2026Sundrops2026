@@ -3,7 +3,7 @@ import { api, setViewAs } from '../api.js'
 import { useAuth } from '../AuthContext.jsx'
 import { T } from '../theme.js'
 
-const EMPTY = { username: '', password: '', full_name: '', email: '', phone: '', role: 'dispatcher', company_id: '', can_see_revenue: false, allowed_company_ids: [] }
+const EMPTY = { username: '', password: '', full_name: '', email: '', phone: '', role: 'dispatcher', company_id: '', can_see_revenue: false, allowed_company_ids: [], can_manage_team: false }
 const ROLES = [
   { value: 'dispatcher',    label: 'Dispatcher' },
   { value: 'company_owner', label: 'Company Owner' },
@@ -41,7 +41,7 @@ export default function Users() {
   function openNew() { setForm({ ...EMPTY }); setEditing(null); setShow(true); setError('') }
   function openEdit(u) {
     setForm({
-      ...EMPTY, ...u, password: '', can_see_revenue: !!u.can_see_revenue,
+      ...EMPTY, ...u, password: '', can_see_revenue: !!u.can_see_revenue, can_manage_team: !!u.can_manage_team,
       allowed_company_ids: u.allowed_company_ids ? JSON.parse(u.allowed_company_ids) : []
     });
     setEditing(u); setShow(true); setError('')
@@ -146,6 +146,9 @@ export default function Users() {
                       <span style={{ fontSize: 10, fontWeight: 700, color: T.text3, background: T.bg2, padding: '2px 8px', borderRadius: 20 }}>
                         {u.role === 'company_owner' ? 'Company Owner' : u.allowed_company_ids ? 'Scoped Dispatcher' : u.company_id ? 'Dispatcher' : 'Admin Dispatcher'}
                       </span>
+                      {u.can_manage_team === 1 && u.role !== 'company_owner' && (
+                        <span style={{ fontSize: 10, fontWeight: 700, color: T.blue, background: T.blue + '15', padding: '2px 8px', borderRadius: 20 }}>Carrier Admin</span>
+                      )}
                       {u.can_see_revenue === 1 && (
                         <span style={{ fontSize: 10, fontWeight: 700, color: T.green, background: T.green + '15', padding: '2px 8px', borderRadius: 20 }}>Sees Revenue</span>
                       )}
@@ -318,6 +321,31 @@ export default function Users() {
                   </button>
                 </div>
               </div>
+
+              {/* Carrier admin — may manage their own carrier's logins (Team page) */}
+              {form.role === 'dispatcher' && (form.allowed_company_ids || []).length > 0 && (
+                <div style={{ background: T.bg2, borderRadius: 10, padding: '14px 16px', marginBottom: 16, border: `1px solid ${T.sep}` }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: T.text }}>Carrier Admin</div>
+                      <div style={{ fontSize: 11, color: T.text3, marginTop: 2 }}>
+                        Can add and remove dispatcher logins for their own carrier(s) from the Team page.
+                      </div>
+                    </div>
+                    <button type="button" onClick={() => set('can_manage_team', !form.can_manage_team)}
+                      style={{
+                        width: 44, height: 26, borderRadius: 13, border: 'none', cursor: 'pointer',
+                        background: form.can_manage_team ? T.green : T.bg3,
+                        position: 'relative', flexShrink: 0, transition: 'background 0.2s',
+                      }}>
+                      <span style={{
+                        position: 'absolute', top: 3, left: form.can_manage_team ? 21 : 3,
+                        width: 20, height: 20, borderRadius: '50%', background: '#fff', transition: 'left 0.2s',
+                      }} />
+                    </button>
+                  </div>
+                </div>
+              )}
 
               {error && <div style={{ color: T.red, fontSize: 12, marginBottom: 12, padding: '9px 12px', background: T.red + '12', borderRadius: 8 }}>{error}</div>}
 

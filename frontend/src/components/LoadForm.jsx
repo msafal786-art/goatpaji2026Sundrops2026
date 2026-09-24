@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, createContext, useContext } from 'react'
 import { api } from '../api.js'
 import { useAuth } from '../AuthContext.jsx'
+import { isAdmin as isAdminUser } from '../permissions.js'
 import { T } from '../theme.js'
 
 // Below this width we drop to the single-column "bottom sheet" phone layout;
@@ -37,7 +38,7 @@ const EMPTY_STOP = { name: '', address: '', city: '', state: '', zip: '', date: 
 // form think it is editing, so it never takes the update path.
 export default function LoadForm({ load, initial, onClose, onSave }) {
   const { user } = useAuth()
-  const isAdmin = user.role === 'dispatcher' && !user.company_id && !user.allowed_company_ids
+  const isAdmin = isAdminUser(user)
   const vw = useViewportWidth()
   const isMobile = vw < MOBILE_BP
   const [form, setForm] = useState(load
@@ -75,15 +76,17 @@ export default function LoadForm({ load, initial, onClose, onSave }) {
   const dupTimerRef = useRef()
 
   useEffect(() => {
-    if (isAdmin) api.companies().then(setCompanies)
+    // /companies is server-scoped (and narrowed by the company switcher), so
+    // this is exactly the set of carriers this user may book a load for.
+    api.companies().then(cs => {
+      setCompanies(cs)
+      // Exactly one carrier in view → assign it silently (single-carrier owners,
+      // or a multi-company user who switched to one carrier).
+      if (!load && !isAdmin && cs.length === 1)
+        setForm(f => (f.company_id ? f : { ...f, company_id: String(cs[0].id) }))
+    }).catch(() => {})
     api.drivers().then(setDrivers)
     api.trucks().then(setTrucks)
-    // Auto-assign company for non-admin users
-    if (!load && !isAdmin) {
-      const cid = user.company_id ||
-        (user.allowed_company_ids ? JSON.parse(user.allowed_company_ids)[0] : null)
-      if (cid) setForm(f => ({ ...f, company_id: String(cid) }))
-    }
   }, [])
 
   function set(k, v) {
@@ -287,7 +290,7 @@ export default function LoadForm({ load, initial, onClose, onSave }) {
             </Row>
           </Section>
 
-          {isAdmin && (
+          {(isAdmin || companies.length > 1) && (
             <Section title="Company">
               <Row>
                 <Field label="Company *">

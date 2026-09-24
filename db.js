@@ -479,6 +479,44 @@ if (!userCols.includes('last_seen_at'))            db.prepare('ALTER TABLE users
 if (!userCols.includes('can_see_revenue'))         db.prepare('ALTER TABLE users ADD COLUMN can_see_revenue INTEGER DEFAULT 0').run();
 if (!userCols.includes('must_change_password'))    db.prepare('ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0').run();
 if (!userCols.includes('allowed_company_ids'))     db.prepare('ALTER TABLE users ADD COLUMN allowed_company_ids TEXT DEFAULT NULL').run();
+// Carrier admin: a scoped account that may add/remove its own carrier's
+// dispatcher logins (the Team page). Company owners always can.
+if (!userCols.includes('can_manage_team'))         db.prepare('ALTER TABLE users ADD COLUMN can_manage_team INTEGER DEFAULT 0').run();
+
+// ── Allow a 'cancelled' load status ──────────────────────────────────────────
+// SQLite can't alter a CHECK constraint, so rebuild the loads table from its own
+// current definition (keeps every column added over the years, in order) with
+// 'cancelled' appended to the allowed statuses. Snapshots the DB first and
+// skips the rebuild if the snapshot fails.
+{
+  const cur = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='loads'").get()?.sql || '';
+  if (cur.includes("'completed')") && !cur.includes("'cancelled'")) {
+    const backup = `${DB_PATH}.pre-cancelled-${Date.now()}.bak`;
+    let backedUp = false;
+    try { db.exec(`VACUUM INTO '${backup.replace(/'/g, "''")}'`); backedUp = true; }
+    catch (e) { console.error('[migration] backup failed, skipping cancelled-status rebuild:', e.message); }
+    if (backedUp) {
+      const newSql = cur
+        .replace(/^CREATE TABLE\s+("?\w+"?)/, 'CREATE TABLE loads_rebuild')
+        .replace("'delivered','completed')", "'delivered','completed','cancelled')");
+      const extras = db.prepare("SELECT sql FROM sqlite_master WHERE tbl_name='loads' AND type IN ('index','trigger') AND sql IS NOT NULL").all().map(r => r.sql);
+      db.pragma('foreign_keys = OFF');
+      try {
+        db.transaction(() => {
+          db.exec('DROP TABLE IF EXISTS loads_rebuild');
+          db.exec(newSql);
+          db.exec('INSERT INTO loads_rebuild SELECT * FROM loads');
+          db.exec('DROP TABLE loads');
+          db.exec('ALTER TABLE loads_rebuild RENAME TO loads');
+          extras.forEach(sql => db.exec(sql));
+        })();
+        console.log(`[migration] loads now allow 'cancelled' (backup: ${backup})`);
+      } finally {
+        db.pragma('foreign_keys = ON');
+      }
+    }
+  }
+}
 
 // Seed a default dispatcher account on a brand-new database only.
 // The password comes from SEED_DISPATCHER_PASSWORD; if that isn't set we mint a

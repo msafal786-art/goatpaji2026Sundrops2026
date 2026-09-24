@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { api } from '../api.js'
 import { T, STATUS, carrierColor, carrierKey, ACTIVE_CARRIERS } from '../theme.js'
 import { useAuth } from '../AuthContext.jsx'
+import { seesMultipleCompanies } from '../permissions.js'
 
 function ymd(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -67,12 +68,12 @@ export default function Calendar() {
     api.loads().then(setLoads).catch(() => {}).finally(() => setLoading(false))
   }, [])
 
-  const isAdmin = user.role === 'dispatcher' && !user.company_id && !user.allowed_company_ids
+  const isAdmin = seesMultipleCompanies(user)   // colour by carrier when >1 in view
   const carrierNames = ACTIVE_CARRIERS.filter(name =>
     loads.some(l => carrierKey(l.company_name) === carrierKey(name)))
 
   const visible = loads.filter(l => {
-    if (l.status === 'completed') return false
+    if (l.status === 'completed' || l.status === 'cancelled') return false
     if (!carrier) return true
     return carrierKey(l.company_name) === carrierKey(carrier)
   })

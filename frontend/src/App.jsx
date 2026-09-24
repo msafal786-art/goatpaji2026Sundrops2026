@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, Link, useLocation, useNavigate } from 'react-router-dom'
 import { api, maybeRefreshToken, getActiveCompany, setActiveCompany, clearActiveCompany, getViewAs, clearViewAs } from './api.js'
-import { isAdmin as isAdminUser, canSeeRevenue, userCompanies, isMultiCompany, canSeeInbox } from './permissions.js'
+import { isAdmin as isAdminUser, canSeeRevenue, userCompanies, isMultiCompany, canSeeInbox, canManageTeam } from './permissions.js'
 import { T, applyTheme } from './theme.js'
 import { ThemeProvider } from './ThemeContext.jsx'
 import { AuthContext } from './AuthContext.jsx'
@@ -22,6 +22,7 @@ import Deadhead from './pages/Deadhead.jsx'
 import Revenue from './pages/Revenue.jsx'
 import Payroll from './pages/Payroll.jsx'
 import Users from './pages/Users.jsx'
+import Team from './pages/Team.jsx'
 import ChangePassword from './pages/ChangePassword.jsx'
 import Compliance from './pages/Compliance.jsx'
 import Calendar from './pages/Calendar.jsx'
@@ -210,6 +211,7 @@ function TopNav({ user, onLogout }) {
     { to: '/deadhead', label: 'Deadhead' },
     ...(!showInbox ? [{ to: '/recommendations', label: 'Lanes' }] : []),
     ...(isAdmin ? [{ to: '/companies', label: 'Companies' }, { to: '/users', label: 'Users' }, { to: '/audit', label: 'Access Log' }] : []),
+    ...(canManageTeam(user) ? [{ to: '/team', label: 'Team' }] : []),
     { to: '/settings', label: 'Settings' },
   ]
 
@@ -363,6 +365,7 @@ const MORE_SECTIONS = [
     { to: '/audit',           icon: '⚑', label: 'Access Log' },
   ]},
   { title: 'Account', items: [
+    { to: '/team',            icon: '◉', label: 'Team', team: true },
     { to: '/settings',        icon: '⚙', label: 'Settings' },
   ]},
 ]
@@ -379,7 +382,7 @@ function MoreSheet({ user, onClose, onLogout }) {
   // the item is absent rather than a locked/"not allowed" tile.
   const sections = MORE_SECTIONS
     .filter(s => (!s.admin || isAdmin) && (!s.inbox || canSeeInbox(user)))
-    .map(s => ({ ...s, items: s.items.filter(it => it.to !== '/revenue' || canSeeRevenue(user)) }))
+    .map(s => ({ ...s, items: s.items.filter(it => (it.to !== '/revenue' || canSeeRevenue(user)) && (!it.team || canManageTeam(user))) }))
     .filter(s => s.items.length > 0)
 
   return (
@@ -668,6 +671,7 @@ export default function App() {
               {canSeeInbox(effective) && <Route path="/inbox" element={<Inbox />} />}
               {canSeeInbox(effective) && <Route path="/load-review" element={<LoadReview />} />}
               {isAdminUser(effective) && <Route path="/audit" element={<Audit />} />}
+              {canManageTeam(effective) && <Route path="/team" element={<Team />} />}
               <Route path="/compliance" element={<Compliance />} />
               <Route path="/calendar" element={<Calendar />} />
               <Route path="/search" element={<Search />} />

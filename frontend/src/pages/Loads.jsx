@@ -121,7 +121,7 @@ function parseDeliveryHM(timeStr) {
 // Uses the final drop for multi-stop loads, so a load isn't called late on
 // drop 1's date while it still has stops to make.
 function isLate(load) {
-  if (['delivered', 'completed'].includes(load.status)) return false
+  if (['delivered', 'completed', 'cancelled'].includes(load.status)) return false
   const dest = finalDest(load)
   const date = (dest.date || '').slice(0, 10)
   if (!date) return false
@@ -138,6 +138,7 @@ function urgencyColor(load) {
   if (['dispatched'].includes(load.status)) return T.orange
   if (['delivered'].includes(load.status)) return T.teal
   if (['completed'].includes(load.status)) return T.text3
+  if (load.status === 'cancelled') return T.text3
 
   // Open/covered: check proximity to pickup in pickup city's timezone
   if (load.pickup_date) {
@@ -352,6 +353,7 @@ const STATUS_FLOW = [
   { key: 'in_yard',    label: 'In Yard',    desc: 'In delivery yard' },
   { key: 'delivered',  label: 'Delivered',  desc: 'Load delivered successfully' },
   { key: 'completed',  label: 'Completed',  desc: 'Invoiced & done' },
+  { key: 'cancelled',  label: 'Cancelled',  desc: 'Cancelled — kept on record' },
 ]
 
 // Statuses where drivers must supply extra check-in/out info
@@ -519,6 +521,13 @@ function StatusDrawer({ load, onClose, onSaved, user, onDriverExtra }) {
       return
     }
     setSaving(key)
+    if (key === 'cancelled') {
+      const done = await api.cancelLoad(load.id)
+      setSaving(null)
+      if (!done) return
+      onSaved(); onClose()
+      return
+    }
     await api.updateLoadStatus(load.id, key)
     setSaving(null)
     onSaved()
@@ -614,6 +623,7 @@ const STATUS_TABS = [
   { key: 'covered',    label: 'Covered' },
   { key: 'dispatched', label: 'Dispatched' },
   { key: 'on_route',   label: 'On Route' },
+  { key: 'cancelled',  label: 'Cancelled' },
   { key: 'all',        label: 'All' },
 ]
 
